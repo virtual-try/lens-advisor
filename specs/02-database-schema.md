@@ -1,6 +1,6 @@
 # Spec 02 — Database schema and first migration
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 01
 **Model:** Heavy — `claude-opus-5-5` · `gpt-6-astra` · `gemini-3.1-pro-preview`
 **Issue:** —
@@ -75,7 +75,7 @@ Real, used now: Prisma, `TEST_DATABASE_URL`. Stubbed: none.
   - Self-check 2: holds. The DMMF test finds no `Float` or `Decimal` field. `*Minor` fields are `Int`. Diopter min/max fields are `Int`.
   - Self-check 3: holds. The same test applies `migrate deploy` to an empty schema and to a schema that already contains a template Session row; the row is still there and `Shop` exists. Prisma returns P3005 when that schema has tables but no `_prisma_migrations` table, so the test creates an empty migrations table first and does not mark the migration applied; deploy then runs the SQL. `prisma migrate diff --from-url <fresh schema> --to-schema-datamodel prisma/schema.prisma --exit-code` printed `No difference detected`.
   - Gates, after the last source change (`pnpm test` before the `tsconfig.json` include; `pnpm typecheck` again after it): `pnpm test` → `Test Files  6 passed (6)` / `Tests  29 passed (29)`, including `✓ |db| test/db.test.ts (6 tests)`. `pnpm lint` (`eslint . --max-warnings 0`) exited 0 and printed no findings. `pnpm typecheck` exited 0. `pnpm build` exited 0.
-- **2026-11-07** — Evidence (orchestro spec verify, tree 666ea39b): install pass · typecheck pass · lint pass · build pass · test pass 31/0/0
+- **2026-11-07** — Evidence (orchestro spec verify, tree d8f16919): install pass · typecheck pass · lint pass · build pass · test pass 183/0/0
 - **2026-11-07** — Review fixes R1-F2, R1-F3, R1-F4, R1-F5, R1-F6. The earlier self-check that created `_prisma_migrations` by hand is withdrawn.
   - **Production upgrade (R1-F2).** A database left by spec 01 has the template `Session` table (from `prisma db push` of that model) and no `_prisma_migrations` table. `prisma migrate deploy` on that database stops with P3005. The supported upgrade is two commands, in order:
 
