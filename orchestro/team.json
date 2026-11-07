@@ -8,7 +8,7 @@
     "agy-3": {
       "engine": "agy",
       "model": "gemini-3.8-flash-high",
-      "tier": "Standard",
+      "tier": "Heavy",
       "account": "agy-3"
     },
     "agy-4": {
