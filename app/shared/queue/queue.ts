@@ -142,22 +142,6 @@ export class Queue {
     return this.boss.send(name, parsed as object, this.sendOptions(singletonKey, options));
   }
 
-  /**
-   * Raw pg-boss send for replaying jobs written by an older deploy and for the
-   * receive-validation test. Application code uses `enqueue`.
-   */
-  async enqueueRaw(
-    name: string,
-    payload: object | null,
-    options: EnqueueOptions = {}
-  ): Promise<string | null> {
-    if (!this.registered.has(name)) {
-      throw new JobDefinitionError(`Queue "${name}" has not been registered`);
-    }
-    const singletonKey = options.singletonKey ?? deriveSingletonKey(payload);
-    return this.boss.send(name, payload, this.sendOptions(singletonKey, options));
-  }
-
   async stop(options: { close?: boolean; graceful?: boolean } = {}): Promise<void> {
     await this.boss.stop({ close: options.close ?? true, graceful: options.graceful ?? true });
     if (options.close ?? true) this.started = false;

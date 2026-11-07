@@ -8,8 +8,8 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 |---|------|--------|------------|-------|-------|-------|
 | 00 | [Stack, storage, testing and design decision](./00-stack-and-architecture-decision.md) | Done | — | Heavy | — | Decided in planning |
 | 01 | [App scaffold, workspace and unit harness](./01-scaffold.md) | Done | 00 | Heavy | — | PR #5 |
-| 02 | [Database schema and first migration](./02-database-schema.md) | Not started | 01 | Heavy | — |  |
-| 03 | [rx-core domain types and schemas](./03-rx-core-contracts.md) | Not started | 01 | Heavy | — |  |
+| 02 | [Database schema and first migration](./02-database-schema.md) | Done | 01 | Heavy | — | PR #16 |
+| 03 | [rx-core domain types and schemas](./03-rx-core-contracts.md) | Done | 01 | Heavy | — | PR #14 |
 | 04 | [Configurator package, tokens and theme app block](./04-configurator-package-and-tokens.md) | Not started | 01 | Heavy | — |  |
 | 05 | [Field encryption for prescription data](./05-field-encryption.md) | Not started | 01 | Heavy | — |  |
 | 06 | [S3 storage adapter](./06-s3-storage.md) | Done | 01 | Standard | — | PR #9 |
@@ -65,3 +65,5 @@ Not started · In progress · Blocked · Done
 - **2026-11-07** — Spec 01 merged (PR #5).
 - **2026-11-07** — Spec 06 merged (PR #9).
 - **2026-11-07** — Spec 09 merged (PR #15).
+- **2026-11-07** — Spec 03 merged (PR #14).
+- **2026-11-07** — Spec 02 merged (PR #16).

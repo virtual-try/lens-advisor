@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import type { PgBoss, SendOptions } from "pg-boss";
 import { getTestDatabaseUrl } from "../config.server";
 import { type Queue, createQueue } from "./queue";
 
@@ -59,4 +60,30 @@ export async function waitFor<T>(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`Timed out after ${timeoutMs}ms waiting for condition`);
+}
+
+export interface EnqueueTestRawOptions {
+  singletonKey?: string;
+  retryLimit?: number;
+  retryDelay?: number;
+  retryBackoff?: boolean;
+}
+
+/**
+ * Test-only helper to insert unvalidated or legacy payloads directly into
+ * pg-boss without running enqueue-side validation (R1-F3).
+ */
+export async function enqueueTestRaw(
+  queue: Queue,
+  name: string,
+  payload: object | null,
+  options: EnqueueTestRawOptions = {}
+): Promise<string | null> {
+  const boss = (queue as unknown as { boss: PgBoss }).boss;
+  const singletonKey = options.singletonKey ?? randomUUID();
+  const sendOptions: SendOptions = { singletonKey };
+  if (options.retryLimit !== undefined) sendOptions.retryLimit = options.retryLimit;
+  if (options.retryDelay !== undefined) sendOptions.retryDelay = options.retryDelay;
+  if (options.retryBackoff !== undefined) sendOptions.retryBackoff = options.retryBackoff;
+  return boss.send(name, payload, sendOptions);
 }

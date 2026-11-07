@@ -6,7 +6,7 @@
 **Added by:** spec 08.
 
 ### `define-job`
-`app/shared/queue/define-job.ts` — Factory for typed background jobs (`defineJob`). Enforces INV-2: payload schema must be a zod object containing only ids/keys (string fields matching `/(?:Id|Ids|Key|Keys)$/`), enums, numbers, and booleans. Any string field not ending in `Id`/`Ids`/`Key`/`Keys` causes registration to throw `JobDefinitionError` unless explicitly listed in `allowStringFields`. Validates payloads both on enqueue and on receive.
+`app/shared/queue/define-job.ts` — Factory for typed background jobs (`defineJob`). Enforces INV-2: payload schema must be a zod object containing only ids/keys (string, number, or bigint fields matching `/(?:Id|Ids|Key|Keys)$/`), enums, and booleans. Any string, number, or bigint field not ending in `Id`/`Ids`/`Key`/`Keys` causes registration to throw `JobDefinitionError` unless explicitly listed in `allowStringFields`. Rejects `ZodEffects` and `ZodIntersection` schemas at registration. Validates payloads both on enqueue and on receive.
 **Use instead of:** Unvalidated `pg-boss` send/work calls or hand-rolled retry/dead-letter loops.
 **Added by:** spec 08.
 

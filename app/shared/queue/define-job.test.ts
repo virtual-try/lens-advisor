@@ -41,7 +41,8 @@ describe("defineJob payload guard (INV-2)", () => {
         optionValueIds: z.array(z.string()),
         bundleKey: z.string(),
         mode: z.enum(["send", "skip"]),
-        attempt: z.number().int(),
+        attemptId: z.number().int(),
+        versionKey: z.bigint(),
         urgent: z.boolean(),
       }),
       handler: () => undefined,
@@ -49,6 +50,95 @@ describe("defineJob payload guard (INV-2)", () => {
 
     expect(definition.name).toBe("test.valid-payload");
     expect(definition.retry).toEqual({ retryLimit: 2, retryDelay: 0, retryBackoff: false });
+  });
+
+  it("rejects a numeric Rx field such as sph at registration (R1-F1)", () => {
+    expect(() =>
+      defineJob({
+        name: "test.sph-number",
+        schema: z.object({ orderId: z.string(), sph: z.number() }),
+        handler: () => undefined,
+      })
+    ).toThrowError(/sph.*is a number but does not end in Id\/Ids\/Key\/Keys/);
+  });
+
+  it("rejects a bigint non-id field such as sph at registration (R1-F1)", () => {
+    expect(() =>
+      defineJob({
+        name: "test.sph-bigint",
+        schema: z.object({ orderId: z.string(), sph: z.bigint() }),
+        handler: () => undefined,
+      })
+    ).toThrowError(/sph.*is a bigint but does not end in Id\/Ids\/Key\/Keys/);
+  });
+
+  it("allows a numeric or bigint field if whitelisted in allowStringFields (R1-F1)", () => {
+    expect(() =>
+      defineJob({
+        name: "test.numeric-whitelisted",
+        schema: z.object({ orderId: z.string(), attempt: z.number(), count: z.bigint() }),
+        allowStringFields: ["attempt", "count"],
+        handler: () => undefined,
+      })
+    ).not.toThrow();
+  });
+
+  it("rejects schemas containing ZodEffects at registration (R1-F2)", () => {
+    const fieldTransform = z.object({
+      orderId: z.string().transform((id) => `${id}-transformed`),
+    });
+    expect(() =>
+      defineJob({
+        name: "test.transform-field",
+        schema: fieldTransform,
+        handler: () => undefined,
+      })
+    ).toThrowError(/ZodEffects/);
+
+    const rootTransform = z
+      .object({ orderId: z.string() })
+      .transform((data) => ({ ...data, rxText: "SPH -2.25" }));
+    expect(() =>
+      defineJob({
+        name: "test.transform-root",
+        schema: rootTransform,
+        handler: () => undefined,
+      })
+    ).toThrowError(/ZodEffects/);
+
+    const preprocessSchema = z.object({
+      orderId: z.preprocess((val) => String(val), z.string()),
+    });
+    expect(() =>
+      defineJob({
+        name: "test.preprocess",
+        schema: preprocessSchema,
+        handler: () => undefined,
+      })
+    ).toThrowError(/ZodEffects/);
+  });
+
+  it("rejects schemas containing ZodIntersection at registration (R1-F4)", () => {
+    const base = z.object({ orderId: z.string() });
+    const extra = z.object({ accountId: z.string() });
+
+    expect(() =>
+      defineJob({
+        name: "test.nested-intersection",
+        schema: z.object({
+          nested: z.intersection(base, extra),
+        }),
+        handler: () => undefined,
+      })
+    ).toThrowError(/ZodIntersection/);
+
+    expect(() =>
+      defineJob({
+        name: "test.root-intersection",
+        schema: z.intersection(base, extra) as unknown as z.ZodObject<Record<string, z.ZodTypeAny>>,
+        handler: () => undefined,
+      })
+    ).toThrowError(/ZodIntersection/);
   });
 
   it("allows an explicitly whitelisted string field", () => {

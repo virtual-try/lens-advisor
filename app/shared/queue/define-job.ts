@@ -40,7 +40,7 @@ export interface DefineJobOptions<TSchema extends z.ZodTypeAny> {
   handler: JobHandler<z.infer<TSchema>>;
   retry?: RetryOptions;
   /**
-   * Field names that may hold strings even though they do not end in Id/Ids/Key/Keys.
+   * Field names that may hold strings, numbers, or bigints even though they do not end in Id/Ids/Key/Keys.
    * Keep this list empty for payloads carrying prescription data (INV-2).
    */
   allowStringFields?: readonly string[];
@@ -69,7 +69,6 @@ function unwrapSchema(schema: z.ZodTypeAny): z.ZodTypeAny {
   if (schema instanceof z.ZodNullable) return unwrapSchema(schema.unwrap());
   if (schema instanceof z.ZodDefault) return unwrapSchema(schema.removeDefault());
   if (schema instanceof z.ZodCatch) return unwrapSchema(schema.removeCatch());
-  if (schema instanceof z.ZodEffects) return unwrapSchema(schema.innerType());
   if (schema instanceof z.ZodBranded) return unwrapSchema(schema.unwrap());
   if (schema instanceof z.ZodReadonly) return unwrapSchema(schema.unwrap());
   return schema;
@@ -80,7 +79,29 @@ function schemaPath(path: readonly string[]): string {
 }
 
 function assertPayloadSchema(schema: z.ZodTypeAny, allowStringFields: ReadonlySet<string>): void {
+  if (schema instanceof z.ZodEffects) {
+    throw new JobDefinitionError(
+      `Job payload schema contains ZodEffects (${schema._def.effect.type}); ` +
+        "effects are not permitted in job payload schemas (INV-2)"
+    );
+  }
+  if (schema instanceof z.ZodIntersection) {
+    throw new JobDefinitionError(
+      "Job payload schema contains ZodIntersection; intersections are not permitted in job payload schemas (INV-2)"
+    );
+  }
   const root = unwrapSchema(schema);
+  if (root instanceof z.ZodEffects) {
+    throw new JobDefinitionError(
+      `Job payload schema contains ZodEffects (${root._def.effect.type}); ` +
+        "effects are not permitted in job payload schemas (INV-2)"
+    );
+  }
+  if (root instanceof z.ZodIntersection) {
+    throw new JobDefinitionError(
+      "Job payload schema contains ZodIntersection; intersections are not permitted in job payload schemas (INV-2)"
+    );
+  }
   if (!(root instanceof z.ZodObject)) {
     throw new JobDefinitionError(
       "Job payload schema must be a zod object so pg-boss can store an id/enum payload"
@@ -94,11 +115,21 @@ function assertNode(
   path: readonly string[],
   allowStringFields: ReadonlySet<string>
 ): void {
-  if (schema instanceof z.ZodString) {
+  if (
+    schema instanceof z.ZodString ||
+    schema instanceof z.ZodNumber ||
+    schema instanceof z.ZodBigInt
+  ) {
     const field = path[path.length - 1] ?? "";
     if (field === "" || (!ID_FIELD_PATTERN.test(field) && !allowStringFields.has(field))) {
+      const typeName =
+        schema instanceof z.ZodString
+          ? "string"
+          : schema instanceof z.ZodNumber
+            ? "number"
+            : "bigint";
       throw new JobDefinitionError(
-        `Job payload field "${schemaPath(path)}" is a string but does not end in Id/Ids/Key/Keys ` +
+        `Job payload field "${schemaPath(path)}" is a ${typeName} but does not end in Id/Ids/Key/Keys ` +
           "(INV-2: job payloads carry ids and enums only)"
       );
     }
@@ -109,9 +140,7 @@ function assertNode(
     schema instanceof z.ZodEnum ||
     schema instanceof z.ZodNativeEnum ||
     schema instanceof z.ZodLiteral ||
-    schema instanceof z.ZodNumber ||
     schema instanceof z.ZodBoolean ||
-    schema instanceof z.ZodBigInt ||
     schema instanceof z.ZodNull ||
     schema instanceof z.ZodUndefined ||
     schema instanceof z.ZodVoid ||
@@ -143,8 +172,8 @@ function assertNode(
   }
 
   if (schema instanceof z.ZodTuple) {
-    schema.items.forEach((item: z.ZodTypeAny, index: number) => {
-      assertNode(item, [...path, String(index)], allowStringFields);
+    schema.items.forEach((item: z.ZodTypeAny) => {
+      assertNode(item, path, allowStringFields);
     });
     return;
   }
@@ -164,9 +193,9 @@ function assertNode(
   }
 
   if (schema instanceof z.ZodIntersection) {
-    assertNode(schema._def.left, path, allowStringFields);
-    assertNode(schema._def.right, path, allowStringFields);
-    return;
+    throw new JobDefinitionError(
+      `Job payload field "${schemaPath(path)}" uses ZodIntersection, which is not permitted in job payload schemas (INV-2)`
+    );
   }
 
   if (schema instanceof z.ZodOptional) {
@@ -190,8 +219,9 @@ function assertNode(
   }
 
   if (schema instanceof z.ZodEffects) {
-    assertNode(schema.innerType(), path, allowStringFields);
-    return;
+    throw new JobDefinitionError(
+      `Job payload field "${schemaPath(path)}" uses ZodEffects (${schema._def.effect.type}), which is not permitted in job payload schemas (INV-2)`
+    );
   }
 
   if (schema instanceof z.ZodBranded || schema instanceof z.ZodReadonly) {
@@ -330,10 +360,6 @@ function assertNoUnknownKeys(
   }
   if (schema instanceof z.ZodCatch) {
     assertNoUnknownKeys(schema.removeCatch(), value, path);
-    return;
-  }
-  if (schema instanceof z.ZodEffects) {
-    assertNoUnknownKeys(schema.innerType(), value, path);
     return;
   }
   if (schema instanceof z.ZodBranded || schema instanceof z.ZodReadonly) {

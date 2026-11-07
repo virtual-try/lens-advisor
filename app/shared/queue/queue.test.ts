@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { defineJob } from "./define-job";
-import { waitFor, withTestQueue } from "./test-support";
+import { enqueueTestRaw, waitFor, withTestQueue } from "./test-support";
 
 function jobName(prefix: string): string {
   return `test.${prefix}-${randomUUID()}`;
@@ -117,7 +117,7 @@ describe("Queue on a real Postgres", () => {
 
       await queue.work(definition);
       // Models a job written by an older deploy whose payload the current schema rejects.
-      await queue.enqueueRaw(name, { rxText: "SPH -2.25" }, { singletonKey: "legacy-1" });
+      await enqueueTestRaw(queue, name, { rxText: "SPH -2.25" }, { singletonKey: "legacy-1" });
 
       const deadLetter = await waitFor(
         async () => (await queue.findJobs(`${name}.dead`))[0],
@@ -127,6 +127,44 @@ describe("Queue on a real Postgres", () => {
       expect(handlerCalled).toBe(false);
       expect(deadLetter.data).toEqual({ rxText: "SPH -2.25" });
       expect(deadLetter.sourceName).toBe(name);
+    });
+  });
+
+  it("fails a payload with unexpected keys on receive and moves it to <name>.dead (R1-F4)", async () => {
+    await withTestQueue(async (queue) => {
+      const name = jobName("receive-extra-key");
+      let handlerCalled = false;
+      const definition = defineJob({
+        name,
+        schema: z.object({ orderId: z.string() }),
+        retry: { retryLimit: 0, retryDelay: 0 },
+        handler: () => {
+          handlerCalled = true;
+        },
+      });
+
+      await queue.work(definition);
+      await enqueueTestRaw(
+        queue,
+        name,
+        { orderId: "order-legacy-1", rxText: "SPH -2.25" },
+        { singletonKey: "legacy-extra-1" }
+      );
+
+      const deadLetter = await waitFor(
+        async () => (await queue.findJobs(`${name}.dead`))[0],
+        () => true
+      );
+
+      expect(handlerCalled).toBe(false);
+      expect(deadLetter.data).toEqual({ orderId: "order-legacy-1", rxText: "SPH -2.25" });
+      expect(deadLetter.sourceName).toBe(name);
+    });
+  });
+
+  it("does not expose enqueueRaw on the production Queue class (R1-F3)", async () => {
+    await withTestQueue(async (queue) => {
+      expect((queue as unknown as Record<string, unknown>).enqueueRaw).toBeUndefined();
     });
   });
 
