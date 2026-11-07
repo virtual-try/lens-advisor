@@ -1,6 +1,6 @@
 # Spec 10 — Rx parser and validation
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 03
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —
@@ -102,4 +102,4 @@ Hundredths of a diopter. Steps of 25. Ranges inclusive. Whitespace trimmed. Comm
   - `pnpm typecheck` exit 0
   - `pnpm lint` (`eslint . --max-warnings 0`) exit 0
   - `pnpm build` exit 0
-- **2026-11-07** — Evidence (orchestro spec verify, tree 65271788): install pass · typecheck pass · lint pass · build pass · test pass 227/0/0
+- **2026-11-07** — Evidence (orchestro spec verify, tree b26fccd8): install pass · typecheck pass · lint pass · build pass · test pass 235/0/0

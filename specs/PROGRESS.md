@@ -16,7 +16,7 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | 07 | [Mailer adapter (Resend)](./07-mailer.md) | Not started | 01 | Light | — |  |
 | 08 | [Job queue and worker process (pg-boss)](./08-job-queue.md) | Not started | 01 | Standard | — |  |
 | 09 | [Plan gate (Shopify managed pricing)](./09-plan-gate.md) | Done | 01 | Standard | — | PR #15 |
-| 10 | [Rx parser and validation](./10-rx-parser-validation.md) | Not started | 03 | Standard | — |  |
+| 10 | [Rx parser and validation](./10-rx-parser-validation.md) | Done | 03 | Standard | — | PR #19 |
 | 11 | [Rx limits engine](./11-rx-limits-engine.md) | Not started | 03 | Standard | — |  |
 | 12 | [Lab code compiler](./12-lab-code-compiler.md) | Not started | 03 | Standard | — |  |
 | 13 | [Price calculation](./13-pricing.md) | Not started | 03 | Standard | — |  |
@@ -67,3 +67,4 @@ Not started · In progress · Blocked · Done
 - **2026-11-07** — Spec 09 merged (PR #15).
 - **2026-11-07** — Spec 03 merged (PR #14).
 - **2026-11-07** — Spec 02 merged (PR #16).
+- **2026-11-07** — Spec 10 merged (PR #19).
