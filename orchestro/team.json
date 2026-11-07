@@ -1,0 +1,167 @@
+{
+  "lead": {
+    "engine": "claude",
+    "autonomy": "auto",
+    "model": "claude-opus-5-5"
+  },
+  "coders": {
+    "agy-3": {
+      "engine": "agy",
+      "model": "gemini-3.8-flash-high",
+      "tier": "Standard",
+      "account": "agy-3"
+    },
+    "agy-4": {
+      "engine": "agy",
+      "model": "gemini-3.8-flash-high",
+      "tier": "Standard",
+      "account": "agy-4"
+    },
+    "opencode": {
+      "engine": "opencode",
+      "model": "opencode/big-pickle",
+      "tier": "Standard",
+      "account": "opencode"
+    },
+    "opencode-1": {
+      "engine": "opencode",
+      "model": "opencode/big-pickle",
+      "tier": "Standard",
+      "account": "opencode-1"
+    },
+    "opencode-2": {
+      "engine": "opencode",
+      "model": "opencode/big-pickle",
+      "tier": "Standard",
+      "account": "opencode-2"
+    },
+    "opencode-3": {
+      "engine": "opencode",
+      "model": "opencode/big-pickle",
+      "tier": "Standard",
+      "account": "opencode-3"
+    },
+    "opencode-4": {
+      "engine": "opencode",
+      "model": "opencode/big-pickle",
+      "tier": "Standard",
+      "account": "opencode-4"
+    },
+    "opencode-5": {
+      "engine": "opencode",
+      "model": "opencode/big-pickle",
+      "tier": "Standard",
+      "account": "opencode-5"
+    },
+    "opencode-6": {
+      "engine": "opencode",
+      "model": "opencode/big-pickle",
+      "tier": "Standard",
+      "account": "opencode-6"
+    },
+    "opencode-7": {
+      "engine": "opencode",
+      "model": "opencode/big-pickle",
+      "tier": "Standard",
+      "account": "opencode-7"
+    },
+    "opencode-8": {
+      "engine": "opencode",
+      "model": "opencode/big-pickle",
+      "tier": "Standard",
+      "account": "opencode-8"
+    }
+  },
+  "reviewers": {
+    "rev-grok": {
+      "engine": "grok",
+      "tier": "Hard",
+      "account": "grok",
+      "effort": "high"
+    },
+    "rev-codex": {
+      "engine": "codex",
+      "model": "gpt-5.6-sol",
+      "tier": "Standard",
+      "sandboxMode": "read-only",
+      "effort": "high",
+      "account": "codex"
+    },
+    "rev-codex-1": {
+      "engine": "codex",
+      "model": "gpt-5.6-sol",
+      "tier": "Standard",
+      "sandboxMode": "read-only",
+      "effort": "high",
+      "account": "codex-1"
+    }
+  },
+  "accounts": [
+    {
+      "id": "agy-3",
+      "engine": "agy",
+      "launcherCommand": "agy-3"
+    },
+    {
+      "id": "agy-4",
+      "engine": "agy",
+      "launcherCommand": "agy-4"
+    },
+    {
+      "id": "opencode-1",
+      "engine": "opencode",
+      "launcherCommand": "opencode-1"
+    },
+    {
+      "id": "opencode-2",
+      "engine": "opencode",
+      "launcherCommand": "opencode-2"
+    },
+    {
+      "id": "opencode-3",
+      "engine": "opencode",
+      "launcherCommand": "opencode-3"
+    },
+    {
+      "id": "opencode-4",
+      "engine": "opencode",
+      "launcherCommand": "opencode-4"
+    },
+    {
+      "id": "opencode-5",
+      "engine": "opencode",
+      "launcherCommand": "opencode-5"
+    },
+    {
+      "id": "opencode-6",
+      "engine": "opencode",
+      "launcherCommand": "opencode-6"
+    },
+    {
+      "id": "opencode-7",
+      "engine": "opencode",
+      "launcherCommand": "opencode-7"
+    },
+    {
+      "id": "opencode-8",
+      "engine": "opencode",
+      "launcherCommand": "opencode-8"
+    },
+    {
+      "id": "codex-1",
+      "engine": "codex",
+      "launcherCommand": "codex-1"
+    }
+  ],
+  "policy": {
+    "reviewBeforeMerge": true,
+    "coderCommits": false,
+    "crossEngineReview": true,
+    "chores": "allowed",
+    "approvals": [
+      "account resets and top-ups",
+      "product questions"
+    ]
+  },
+  "_note": "Coders: agy-3, agy-4, opencode, opencode-1..8. QA: grok, codex, codex-1. astra and terra banned on codex. GitHub via gh account mplus-s (https)."
+}

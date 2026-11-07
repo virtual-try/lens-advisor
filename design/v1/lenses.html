@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Harlow – Lenses (Steps 3–4)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500&display=swap">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="configurator.css">
+</head>
+<body>
+<header class="theme-header">
+  <a class="theme-logo" href="product.html">Northwind Optical</a>
+  <nav class="theme-nav" aria-label="Store"><a href="#">Glasses</a><a href="#">Sunglasses</a><a href="#">Eye tests</a></nav>
+  <button class="theme-cart" type="button">Cart (0)</button>
+</header>
+<main class="theme-product">
+  <div class="theme-gallery"><svg viewBox="0 0 240 90" fill="none" stroke="currentColor" stroke-width="5" aria-hidden="true"><rect x="12" y="20" width="88" height="56" rx="24"/><rect x="140" y="20" width="88" height="56" rx="24"/><path d="M100 40c8-10 32-10 40 0M12 34L2 28M228 34l10-6"/></svg></div>
+  <div class="theme-info">
+    <h1>Harlow</h1>
+    <p class="theme-price">$129.00 <span class="theme-meta">frame only</span></p>
+    <p class="theme-meta">Colour: Tortoise</p>
+    <div class="theme-swatches" aria-hidden="true"><span style="background:#6b4a2b"></span><span style="background:#111"></span><span style="background:#c9b8a2"></span></div>
+    <div class="la-root"><button class="la-btn la-btn--primary la-btn--block" type="button" data-open-configurator>Select lenses</button></div>
+    <p class="theme-copy">Hand-polished acetate with a keyhole bridge. Medium fit, 50&#8211;20&#8211;145.</p>
+  </div>
+</main>
+<div class="la-root la-configurator">
+  <div class="la-overlay">
+    <section class="la-sheet" role="dialog" aria-modal="true" aria-labelledby="la-title" data-frame="129">
+      <header class="la-header">
+        <div class="la-grabber" aria-hidden="true"></div>
+        <div class="la-header__top">
+          <p class="la-header__title">Lenses for Harlow<span class="la-header__frame">Tortoise acetate frame</span></p>
+          <button class="la-iconbtn" type="button" data-close-configurator aria-label="Close lens selection"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        </div>
+        <p class="la-steps__count">Steps 3–4 of 7 · Lens</p>
+          <ol class="la-steps" aria-label="Progress"><li class="la-steps__item la-steps__item--done"><a class="la-steps__link" href="product.html">Vision<span class="la-sr"> (done)</span></a></li><li class="la-steps__item la-steps__item--done"><a class="la-steps__link" href="prescription.html">Prescription<span class="la-sr"> (done)</span></a></li><li class="la-steps__item la-steps__item--current"><span class="la-steps__link" aria-current="step">Lens family<span class="la-sr"> (current)</span></span></li><li class="la-steps__item la-steps__item--current"><span class="la-steps__link" aria-current="step">Lens<span class="la-sr"> (current)</span></span></li><li class="la-steps__item "><span class="la-steps__link">Options<span class="la-sr"></span></span></li><li class="la-steps__item "><span class="la-steps__link">Extras<span class="la-sr"></span></span></li><li class="la-steps__item "><span class="la-steps__link">Review<span class="la-sr"></span></span></li></ol>
+      </header>
+      <div class="la-body">
+        <div class="la-step-head">
+          <h2 id="la-title" tabindex="-1">Choose your lens</h2>
+          <p>Every option below works with your progressive prescription unless it says otherwise.</p>
+        </div>
+        <div class="la-groups">
+          <div class="la-group">
+            <button class="la-group__trigger" type="button" data-accordion aria-expanded="true" aria-controls="grp-clear">
+              <span><span class="la-choice__title">Clear</span><span class="la-choice__desc">Everyday lenses with no tint.</span></span>
+              <span class="la-choice__price">from $189</span>
+              <span class="la-chevron" aria-hidden="true"></span>
+            </button>
+            <div class="la-group__panel" id="grp-clear">
+              <div class="la-choices" role="radiogroup" aria-label="Clear lenses">
+              <label class="la-choice">
+                <input type="radio" name="lens" value="essential" data-kind="lens" data-price="189" disabled aria-describedby="why-essential">
+                <span class="la-mark" aria-hidden="true"></span>
+                <span class="la-choice__body"><span class="la-choice__title">Essential progressive</span><span class="la-choice__desc">Standard reading zone. Fine for part-time wear.</span><span class="la-choice__reason" id="why-essential"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 7.2v4M8 4.8v.1" stroke-linecap="round"/></svg><span>Not available for your prescription (left eye SPH −9.00 exceeds −8.00).</span></span></span>
+                <span class="la-choice__price">$189</span>
+              </label>
+              <label class="la-choice">
+                <input type="radio" name="lens" value="plus" data-kind="lens" data-price="239" checked>
+                <span class="la-mark" aria-hidden="true"></span>
+                <span class="la-choice__body"><span class="la-choice__title">Plus progressive<span class="la-badge">Best match</span></span><span class="la-choice__desc">Wider reading and middle zones, easier to get used to.</span></span>
+                <span class="la-choice__price">$239</span>
+              </label>
+              <label class="la-choice">
+                <input type="radio" name="lens" value="pro" data-kind="lens" data-price="319">
+                <span class="la-mark" aria-hidden="true"></span>
+                <span class="la-choice__body"><span class="la-choice__title">Digital pro progressive</span><span class="la-choice__desc">Widest zones, tuned for screens and close work.</span></span>
+                <span class="la-choice__price">$319</span>
+              </label>
+              </div>
+            </div>
+          </div>
+          <div class="la-group">
+            <button class="la-group__trigger" type="button" data-accordion aria-expanded="false" aria-controls="grp-blue">
+              <span><span class="la-choice__title">Blue-light filtering</span><span class="la-choice__desc">Cuts some blue light from screens.</span></span>
+              <span class="la-choice__price">from $229</span>
+              <span class="la-chevron" aria-hidden="true"></span>
+            </button>
+            <div class="la-group__panel" id="grp-blue" hidden>
+              <div class="la-choices" role="radiogroup" aria-label="Blue-light filtering lenses">
+              <label class="la-choice">
+                <input type="radio" name="lens" value="blue-plus" data-kind="lens" data-price="269">
+                <span class="la-mark" aria-hidden="true"></span>
+                <span class="la-choice__body"><span class="la-choice__title">Plus progressive, blue-light</span><span class="la-choice__desc">Wider zones with a blue-light filter.</span></span>
+                <span class="la-choice__price">$269</span>
+              </label>
+              <label class="la-choice">
+                <input type="radio" name="lens" value="blue-pro" data-kind="lens" data-price="349">
+                <span class="la-mark" aria-hidden="true"></span>
+                <span class="la-choice__body"><span class="la-choice__title">Digital pro, blue-light</span><span class="la-choice__desc">Widest zones with a blue-light filter.</span></span>
+                <span class="la-choice__price">$349</span>
+              </label>
+              </div>
+            </div>
+          </div>
+          <div class="la-group">
+            <button class="la-group__trigger" type="button" data-accordion aria-expanded="false" aria-controls="grp-reactive">
+              <span><span class="la-choice__title">Light-reactive</span><span class="la-choice__desc">Clear indoors, darkens in sunlight.</span></span>
+              <span class="la-choice__price">from $289</span>
+              <span class="la-chevron" aria-hidden="true"></span>
+            </button>
+            <div class="la-group__panel" id="grp-reactive" hidden>
+              <div class="la-choices" role="radiogroup" aria-label="Light-reactive lenses">
+              <label class="la-choice">
+                <input type="radio" name="lens" value="react-plus" data-kind="lens" data-price="289">
+                <span class="la-mark" aria-hidden="true"></span>
+                <span class="la-choice__body"><span class="la-choice__title">Plus progressive, light-reactive</span><span class="la-choice__desc">Darkens in about 30 seconds outdoors.</span></span>
+                <span class="la-choice__price">$289</span>
+              </label>
+              <label class="la-choice">
+                <input type="radio" name="lens" value="react-pro" data-kind="lens" data-price="369">
+                <span class="la-mark" aria-hidden="true"></span>
+                <span class="la-choice__body"><span class="la-choice__title">Digital pro, light-reactive</span><span class="la-choice__desc">Widest zones, darkens outdoors.</span></span>
+                <span class="la-choice__price">$369</span>
+              </label>
+              </div>
+            </div>
+          </div>
+          <div class="la-group">
+            <button class="la-group__trigger" type="button" data-accordion aria-expanded="false" aria-controls="grp-sun">
+              <span><span class="la-choice__title">Sun</span><span class="la-choice__desc">Fixed tint for outdoors.</span></span>
+              <span class="la-choice__price">from $259</span>
+              <span class="la-chevron" aria-hidden="true"></span>
+            </button>
+            <div class="la-group__panel" id="grp-sun" hidden>
+              <div class="la-choices" role="radiogroup" aria-label="Sun lenses">
+              <label class="la-choice">
+                <input type="radio" name="lens" value="sun-plus" data-kind="lens" data-price="259">
+                <span class="la-mark" aria-hidden="true"></span>
+                <span class="la-choice__body"><span class="la-choice__title">Plus progressive, sun</span><span class="la-choice__desc">Grey, brown or green tint.</span></span>
+                <span class="la-choice__price">$259</span>
+              </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <footer class="la-footer">
+        <div class="la-total" aria-live="polite">
+          <span class="la-total__parts">Frame <b data-sum="frame">$129.00</b> + lens <b data-sum="lens"></b> + upgrades <b data-sum="upgrades"></b></span>
+          <span class="la-total__amount"><span class="la-total__label">Total</span><strong data-sum="total"></strong></span>
+        </div>
+        <div class="la-footer__actions"><a class="la-btn la-btn--ghost" href="prescription.html">Back</a><a class="la-btn la-btn--primary" href="options.html" data-continue data-requires="lens" aria-disabled="true">Continue</a></div>
+      </footer>
+    </section>
+  </div>
+</div>
+<script src="proto.js"></script>
+</body>
+</html>

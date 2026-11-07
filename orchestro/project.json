@@ -1,0 +1,42 @@
+{
+  "repoPath": "/home/shazy/Documents/pt/lens-advisor",
+  "github": {
+    "ownerRepo": "virtual-try/lens-advisor",
+    "account": "mplus-s"
+  },
+  "specsDir": "specs",
+  "gates": {
+    "install": {
+      "command": "pnpm install --frozen-lockfile",
+      "when": {
+        "exists": "package.json"
+      }
+    },
+    "typecheck": {
+      "command": "pnpm typecheck",
+      "when": {
+        "exists": "package.json"
+      }
+    },
+    "lint": {
+      "command": "pnpm lint",
+      "when": {
+        "exists": "package.json"
+      }
+    },
+    "test": {
+      "command": "pnpm test",
+      "when": {
+        "exists": "package.json"
+      }
+    },
+    "build": {
+      "command": "pnpm build",
+      "when": {
+        "exists": "package.json"
+      }
+    }
+  },
+  "worktreeRoot": "/home/shazy/Documents/pt/lens-advisor-wt",
+  "portBlockBase": 44000
+}

@@ -1,0 +1,155 @@
+/*
+  Motion layer (v2, animate). Loaded after configurator.css. CSS transitions for
+  state changes, CSS keyframes only for one-shot entrances of freshly shown
+  elements, WAAPI (motion.js) for height, step and price changes.
+  Every value comes from tokens.css. Reduced-motion variants at the bottom.
+*/
+
+/* ---------- Hover gating: touch fires sticky hovers on tap ------------------ */
+.la-btn--primary:hover,
+.la-btn--ghost:hover,
+.la-iconbtn:hover,
+.la-choice:hover { transform: none; }
+.la-btn--primary:hover { box-shadow: var(--la-shadow-signature); }
+.la-btn--ghost:hover { background: transparent; color: var(--la-ink); border-color: var(--la-hairline-2); }
+.la-iconbtn:hover { background: transparent; }
+.la-choice:hover { border-color: var(--la-hairline); }
+.la-choice:has(input:checked):hover { border-color: var(--la-ink); }
+@media (hover: hover) and (pointer: fine) {
+  .la-btn--primary:hover { transform: translate(-2px, -2px); box-shadow: var(--la-shadow-signature-hover); }
+  .la-btn--ghost:hover { background: var(--la-ink); color: var(--la-on-ink); border-color: var(--la-ink); }
+  .la-iconbtn:hover { background: var(--la-bg-deep); }
+  .la-choice:hover { border-color: var(--la-hairline-2); }
+  .la-choice:has(input:checked):hover { border-color: var(--la-ink); }
+  .la-choice:has(input:disabled):hover { border-color: var(--la-hairline); }
+}
+
+/* ---------- Press feedback -------------------------------------------------- */
+/* Primary presses down into its own signature shadow. */
+.la-btn--primary:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 var(--la-accent); transition-duration: var(--la-dur-press); }
+.la-btn--ghost:active,
+.la-iconbtn:active,
+.la-tab:active { transform: scale(0.97); transition-duration: var(--la-dur-press); }
+.la-iconbtn,
+.la-tab { transition: transform var(--la-dur-press) var(--la-ease-out), background-color var(--la-transition-duration) var(--la-ease); }
+
+.la-choice { transition: transform var(--la-dur-press) var(--la-ease-out), border-color var(--la-transition-duration) var(--la-ease), background-color var(--la-transition-duration) var(--la-ease), box-shadow var(--la-transition-duration) var(--la-ease); }
+.la-choice:active:not(:has(input:disabled)) { transform: scale(var(--la-press-scale)); }
+
+/* ---------- Selection: the radio dot / tick grows in, never from 0 ---------- */
+.la-mark { transition: background-color var(--la-dur-press) var(--la-ease-out), border-color var(--la-dur-press) var(--la-ease-out); }
+.la-mark::after { transform: scale(0.5); transition: opacity var(--la-dur-press) var(--la-ease-out), transform var(--la-dur-modal) var(--la-ease-out); }
+.la-choice:has(input:checked) .la-mark::after { transform: scale(1); }
+.la-mark--box::after { transform: translateY(-1px) rotate(45deg) scale(0.5); }
+.la-choice:has(input:checked) .la-mark--box::after { transform: translateY(-1px) rotate(45deg) scale(1); }
+
+.la-swatch__chip { transition: box-shadow var(--la-dur-press) var(--la-ease-out); }
+.la-segment label { transition: background-color var(--la-transition-duration) var(--la-ease), color var(--la-transition-duration) var(--la-ease), box-shadow var(--la-transition-duration) var(--la-ease); }
+
+/* chevrons */
+.la-chevron,
+.la-help summary::after { transition: transform var(--la-transition-duration) var(--la-ease-out); }
+
+/* ---------- Sheet / modal open + close -------------------------------------- */
+.la-configurator .la-overlay { transition: opacity var(--la-dur-modal) var(--la-ease-out); }
+.la-configurator .la-sheet { transition: opacity var(--la-dur-modal) var(--la-ease-out), transform var(--la-dur-modal) var(--la-ease-out); }
+.la-configurator[data-state="closed"] .la-overlay { opacity: 0; }
+.la-configurator[data-state="closed"] .la-sheet { opacity: 0; transform: scale(0.96); }
+.la-configurator[data-state="closing"] .la-overlay { opacity: 0; transition-duration: var(--la-dur-fast); }
+.la-configurator[data-state="closing"] .la-sheet { opacity: 0; transform: scale(0.96); transition-duration: var(--la-dur-fast); }
+
+@media (max-width: 640px) {
+  .la-configurator .la-sheet { transition: transform var(--la-dur-sheet) var(--la-ease-drawer); }
+  .la-configurator[data-state="closed"] .la-sheet,
+  .la-configurator[data-state="closing"] .la-sheet { opacity: 1; transform: translateY(100%); }
+  .la-configurator[data-state="closing"] .la-sheet { transition-duration: var(--la-dur-modal); }
+}
+
+/* ---------- Progress: the new current segment fills from the left ---------- */
+/* The link clips overflow (ellipsis), so the fill is a border-box background
+   painted under a transparent top border. background-size on a 3px strip is a
+   paint-only cost on one tiny element; a transform pseudo-element would be clipped. */
+.la-steps__item--current .la-steps__link {
+  border-top-color: transparent;
+  background:
+    linear-gradient(var(--la-accent), var(--la-accent)) 0 0 / 100% 3px no-repeat,
+    linear-gradient(var(--la-hairline), var(--la-hairline)) 0 0 / 100% 3px no-repeat;
+  background-origin: border-box;
+}
+[data-step-enter] .la-steps__item--current .la-steps__link { animation: la-fill var(--la-dur-sheet) var(--la-ease-out) both; }
+@keyframes la-fill { from { background-size: 4% 3px, 100% 3px; } }
+
+/* ---------- Tabs: one sliding indicator instead of two colour swaps -------- */
+.la-tabs { position: relative; }
+.la-tabs::before {
+  content: "";
+  position: absolute;
+  top: var(--la-space-1);
+  bottom: var(--la-space-1);
+  left: var(--la-space-1);
+  width: calc(50% - var(--la-space-1) - var(--la-space-1) / 2);
+  border-radius: var(--la-radius-pill);
+  background: var(--la-surface);
+  box-shadow: 0 0 0 1px var(--la-hairline-2);
+  transition: transform var(--la-dur-modal) var(--la-ease-in-out);
+}
+.la-tabs[data-active="1"]::before { transform: translateX(calc(100% + var(--la-space-1))); }
+.la-tab { position: relative; z-index: 1; }
+.la-tab[aria-selected="true"] { background: transparent; box-shadow: none; }
+.la-tab { transition: color var(--la-dur-modal) var(--la-ease), transform var(--la-dur-press) var(--la-ease-out); }
+
+/* ---------- One-shot entrances for elements that just appeared ------------- */
+.la-error:not([hidden]) { animation: la-drop-in var(--la-dur-fast) var(--la-ease-out) both; }
+.la-file:not([hidden]) { animation: la-pop-in var(--la-dur-modal) var(--la-ease-out) both; }
+.la-choice__reason { animation: la-drop-in var(--la-dur-modal) var(--la-ease-out) var(--la-dur-fast) both; }
+@keyframes la-drop-in { from { opacity: 0; transform: translateY(-4px); } }
+@keyframes la-pop-in { from { opacity: 0; transform: scale(0.96); } }
+
+/* ---------- Cart drawer --------------------------------------------------- */
+.la-drawer-backdrop { transition: opacity var(--la-dur-sheet) var(--la-ease-out); }
+.la-drawer { transition: transform var(--la-dur-sheet) var(--la-ease-drawer); }
+.la-drawer-backdrop[data-state="closed"] { opacity: 0; }
+.la-drawer-backdrop[data-state="closed"] .la-drawer { transform: translateX(100%); }
+.la-drawer-backdrop[data-state="closing"] { opacity: 0; transition-duration: var(--la-dur-modal); }
+.la-drawer-backdrop[data-state="closing"] .la-drawer { transform: translateX(100%); transition-duration: var(--la-dur-modal); }
+/* the "Added" tick draws once, after the drawer has landed (rare moment: delight budget) */
+.la-drawer__added svg path { stroke-dasharray: 14; stroke-dashoffset: 0; }
+.la-drawer-backdrop[data-state="open"] .la-drawer__added svg path { animation: la-tick var(--la-dur-sheet) var(--la-ease-out) var(--la-dur-sheet) both; }
+@keyframes la-tick { from { stroke-dashoffset: 14; } }
+
+/* ---------- Reduced motion: fewer and gentler, not zero -------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .la-btn--primary:active,
+  .la-btn--ghost:active,
+  .la-iconbtn:active,
+  .la-tab:active,
+  .la-choice:active:not(:has(input:disabled)) { transform: none; }
+  @media (hover: hover) and (pointer: fine) {
+    .la-btn--primary:hover { transform: none; }
+  }
+  .la-mark::after,
+  .la-mark--box::after { transition: opacity var(--la-dur-press) linear; }
+  .la-mark::after { transform: none; }
+  .la-mark--box::after,
+  .la-choice:has(input:checked) .la-mark--box::after { transform: translateY(-1px) rotate(45deg); }
+
+  .la-configurator .la-sheet { transition: opacity var(--la-dur-modal) linear; }
+  .la-configurator[data-state="closed"] .la-sheet,
+  .la-configurator[data-state="closing"] .la-sheet { opacity: 0; transform: none; }
+
+  [data-step-enter] .la-steps__item--current .la-steps__link { animation: none; }
+  .la-tabs::before { transition: none; }
+
+  .la-error:not([hidden]),
+  .la-file:not([hidden]),
+  .la-choice__reason { animation-name: la-fade-in; }
+  @keyframes la-fade-in { from { opacity: 0; } }
+
+  .la-drawer { transition: none; }
+  .la-drawer-backdrop[data-state="closed"] .la-drawer,
+  .la-drawer-backdrop[data-state="closing"] .la-drawer { transform: none; }
+  .la-drawer-backdrop[data-state="open"] .la-drawer__added svg path { animation: none; }
+}
+
+/* Room for the disabled-tap highlight to read as a tinted pill around the reason. */
+.la-choice__reason { margin-left: calc(var(--la-space-1) * -1); padding: 2px var(--la-space-1); border-radius: var(--la-space-1); }

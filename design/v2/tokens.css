@@ -1,0 +1,113 @@
+/*
+  Lens configurator design tokens (v1).
+  Brand: VirtualTry brand system (fixed input) —
+    tryon2/virtualtry-latest/app/styles/brand-tokens.css + specs/brand/VirtualTry-Brand-System.html.
+  Every design value lives here; component CSS only reads var(--la-*).
+  Each brand-derived token names its --vtb- source. In the shipped web component
+  these sit on :host; the prototype puts them on :root.
+
+  Merchant-overridable (optional; defaults = brand):
+    --la-accent        Signal Orange by default
+    --la-font-family   Geist stack by default
+    --la-radius        14px by default; sm/lg derive from it
+*/
+:root,
+:host {
+  /* ---- Brand colour --------------------------------------------------- */
+  --la-bg: #F7F4EC;             /* --vtb-bg        Bone: sheet background */
+  --la-bg-deep: #ECE6D5;        /* --vtb-bg-deep   quiet fills, segmented tracks */
+  --la-surface: #FFFFFF;        /* --vtb-surface   cards, inputs, footer */
+  --la-ink: #0A0A09;            /* --vtb-ink       headings, primary button fill */
+  --la-ink-2: #1F1E1B;          /* --vtb-ink-2     body copy */
+  --la-muted: #6B6961;          /* --vtb-muted     meta, helper text */
+  --la-muted-2: #A09C90;        /* --vtb-muted-2   decoration only, never text */
+  --la-hairline: #E0D9C5;       /* --vtb-hairline  borders/dividers at rest */
+  --la-hairline-2: #CFC6AC;     /* --vtb-hairline-2 ghost-button + input edge */
+  --la-accent: #FF3D00;         /* --vtb-accent    Signal Orange: <=10% of surface, never under ink text */
+  --la-accent-2: #C8FF00;       /* --vtb-accent-2  Volt: dots/chips only, never text */
+  --la-accent-soft: #FFE0D2;    /* --vtb-accent-soft focus ring, selected tint */
+  --la-accent-deep: #B82500;    /* --vtb-accent-deep text on accent-soft, error/limit text */
+  --la-positive: #00A85A;       /* --vtb-positive  success states only */
+  --la-on-accent: #FFFFFF;      /* brand rule: white on orange, never ink on orange */
+  --la-on-ink: #F7F4EC;         /* --vtb-bg        text on ink (primary button) */
+  --la-backdrop: rgb(10 10 9 / 0.48); /* --vtb-ink at 48% */
+
+  /* ---- Type -------------------------------------------------------------- */
+  /* --vtb-font-sans. Storefront rule: Geist 400/500 only, or the system stack. */
+  --la-font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --la-font-numeric: tabular-nums;
+  --la-text-xs: 0.8125rem;      /* 13px  meta, step labels (brand .pill 13px) */
+  --la-text-sm: 0.875rem;       /* 14px  helper text (brand .btn--sm 14px) */
+  --la-text-md: 0.9375rem;      /* 15px  body + buttons (brand body/.btn 15px) */
+  --la-text-input: 1rem;        /* 16px  inputs: stops iOS focus zoom */
+  --la-text-lg: 1.125rem;       /* 18px  option titles, totals */
+  --la-text-xl: 1.625rem;       /* 26px  step heading */
+  --la-weight-regular: 400;
+  --la-weight-medium: 500;      /* heaviest weight loaded on the storefront */
+  --la-tracking-tight: -0.02em; /* headings, after brand h-tags (-0.03em at display sizes) */
+  --la-leading-tight: 1.15;
+  --la-leading-body: 1.55;      /* brand body line-height */
+
+  /* ---- Spacing (4px base) ---------------------------------------------- */
+  --la-space-1: 4px;
+  --la-space-2: 8px;
+  --la-space-3: 12px;
+  --la-space-4: 16px;
+  --la-space-5: 24px;
+  --la-space-6: 32px;
+  --la-space-7: 48px;
+
+  /* ---- Shape ------------------------------------------------------------- */
+  --la-radius: 14px;            /* --vtb-radius    cards */
+  --la-radius-lg: 18px;         /* --vtb-radius-lg sheet, drawer */
+  --la-radius-sm: 10px;         /* brand §04 .field input radius */
+  --la-radius-pill: 999px;      /* --vtb-radius-pill buttons, segments, badges */
+  --la-border-width: 1px;
+  --la-border-width-strong: 2px;
+
+  /* ---- Shadows ----------------------------------------------------------- */
+  --la-shadow-signature: 4px 4px 0 var(--la-accent);       /* --vtb-shadow-signature: primary button ONLY */
+  --la-shadow-signature-hover: 6px 6px 0 var(--la-accent); /* --vtb-shadow-signature-hover */
+  --la-shadow-sheet: 0 24px 64px rgb(10 10 9 / 0.22), 0 2px 8px rgb(10 10 9 / 0.08);
+  --la-shadow-footer: 0 -1px 0 var(--la-hairline);
+  --la-focus-ring: 0 0 0 3px var(--la-accent-soft);        /* brand §04 .field:focus */
+
+  /* ---- Sizing ------------------------------------------------------------ */
+  --la-modal-max: 720px;
+  --la-drawer-max: 420px;
+  --la-target: 44px;            /* minimum touch target */
+  --la-icon: 20px;
+  --la-pictogram: 40px;
+  --la-mark: 22px;              /* radio/checkbox indicator */
+  --la-swatch: 36px;
+  --la-thumb: 72px;
+  --la-sheet-gap: 8px;          /* space above the mobile sheet */
+  --la-label-col: 168px;        /* Rx grid label column, desktop */
+  --la-z-overlay: 2147483000;
+
+  /* ---- Motion ------------------------------------------------------------ */
+  --la-transition-duration: 200ms; /* --vtb-transition (.2s ease): every hover, no bounces */
+  --la-ease: ease;                 /* --vtb-transition */
+  /* v2 (animate): extends the brand's .2s ease; entrances/exits get stronger curves, no bounce. */
+  --la-ease-out: cubic-bezier(0.23, 1, 0.32, 1);      /* entering / exiting, selection feedback */
+  --la-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);  /* on-screen movement (tab indicator) */
+  --la-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);   /* mobile sheet + cart drawer */
+  --la-dur-press: 120ms;           /* press feedback, radio dot */
+  --la-dur-fast: 150ms;            /* exits, tab panel fade, inline error */
+  --la-dur-modal: 250ms;           /* desktop modal, step content in, accordion */
+  --la-dur-sheet: 400ms;           /* mobile bottom sheet, cart drawer in */
+  --la-dur-highlight: 700ms;       /* price-change / disabled-tap highlight fade */
+  --la-stagger: 40ms;              /* lens list items inside an opening group */
+  --la-shift: 16px;                /* step content slide distance */
+  --la-press-scale: 0.98;          /* choice-card press */
+
+  /* ---- Stand-in merchant theme (prototype only, never shipped) ---------- */
+  --theme-font: Georgia, "Times New Roman", serif;
+  --theme-bg: #ffffff;
+  --theme-text: #222222;
+  --theme-muted: #6b6b6b;
+  --theme-line: #e6e6e6;
+  --theme-button-bg: #222222;
+  --theme-button-text: #ffffff;
+  --theme-image-bg: #f2f1ef;
+}

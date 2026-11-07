@@ -1,0 +1,1243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!-- Chosen Palette: Warm Modern Optical (Warm slate/zinc background #f8fafc, Deep Navy headers #0f172a, Electric Teal highlights #0d9488, Soft Amber accents #d97706) -->
+<!-- Application Structure Plan: Interactive multi-section application with top navigation tabs: (1) Executive Overview & Metrics; (2) Storefront 7-Step Flow & Rx Limit Simulator; (3) Cart Bundling & Event Architecture; (4) Lab Integrations & Metadata Token Compiler; (5) Merchant ROI & Pricing Calculator; (6) Database Schema & System Architecture; (7) FTC Regulatory & Compliance Engine; (8) 20-Week Execution Roadmap & GTM Strategy. Designed to convert complex technical, optical domain, and business specs into actionable interactive modules. -->
+<!-- Visualization & Content Choices: 
+- Storecensus Merchant Revenue Distribution -> Goal: Inform -> Chart.js Donut Chart -> Highlights target customer profile (84% under $1M ARR).
+- Merchant SaaS Cost Scaling -> Goal: Compare -> Chart.js Line Chart -> Live comparison of LensAdvisor percentage fees vs Proposed Flat-Rate model across order volume.
+- Rx Limit Engine Simulator -> Goal: Interactive Simulation -> Dynamic HTML/JS -> Evaluates SPH/CYL sliders to hide/show lab SKUs in real time.
+- Lab Metadata Compiler Playground -> Goal: Demonstrate Logic -> Dynamic Token Replacer -> Resolves composite lab codes from selected lens upgrades.
+- Database Schema Explorer -> Goal: Organize -> Tabbed JSONB Schema Viewer -> Maps public catalog tables vs HIPAA Encrypted PHI tables.
+- 20-Week Engineering Roadmap -> Goal: Timeline -> Interactive Phase Cards -> Details technical milestones and 1-Click LensAdvisor Migration blueprint.
+Confirming NO SVG graphics used (FontAwesome font icons used), NO Mermaid JS used. -->
+<!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LensAdvisor Platform Analysis & Engineering Blueprint</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<style>
+  .chart-container {
+    position: relative;
+    width: 100%;
+    max-width: 650px;
+    margin-left: auto;
+    margin-right: auto;
+    height: 320px;
+    max-height: 400px;
+  }
+  @media (min-width: 768px) {
+    .chart-container {
+      height: 360px;
+    }
+  }
+  .tab-btn.active {
+    border-bottom: 3px solid #0d9488;
+    color: #0d9488;
+    font-weight: 700;
+  }
+  .sub-tab-btn.active {
+    background-color: #0d9488;
+    color: #ffffff;
+  }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans antialiased min-h-screen flex flex-col">
+
+  <header class="bg-slate-900 text-white sticky top-0 z-50 shadow-md">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-between h-16">
+        <div class="flex items-center space-x-3">
+          <div class="w-9 h-9 rounded-lg bg-teal-600 flex items-center justify-center font-bold text-white text-xl">
+            <i class="fa-solid fa-[#000000] fa-glasses text-white"></i>
+          </div>
+          <div>
+            <h1 class="text-lg font-bold leading-tight">LensAdvisor Deconstruction & App Blueprint</h1>
+            <p class="text-xs text-slate-400">Shopify Optical SaaS Architecture & Strategy</p>
+          </div>
+        </div>
+        <div class="hidden lg:flex items-center space-x-2 text-xs bg-slate-800 px-3 py-1.5 rounded-full border border-slate-700">
+          <span class="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span class="text-slate-300">Targeting 387 Active Stores & POS Terminals</span>
+        </div>
+      </div>
+
+      <nav class="flex space-x-1 overflow-x-auto no-scrollbar border-t border-slate-800 py-1 text-xs sm:text-sm font-medium">
+        <button onclick="switchTab('tab-overview')" id="btn-tab-overview" class="tab-btn active px-3 py-2 whitespace-nowrap text-slate-300 hover:text-white transition">
+          <i class="fa-solid fa-chart-line mr-1.5"></i> Executive Overview
+        </button>
+        <button onclick="switchTab('tab-flow')" id="btn-tab-flow" class="tab-btn px-3 py-2 whitespace-nowrap text-slate-300 hover:text-white transition">
+          <i class="fa-solid fa-sliders mr-1.5"></i> 7-Step Flow & Rx Limits
+        </button>
+        <button onclick="switchTab('tab-cart')" id="btn-tab-cart" class="tab-btn px-3 py-2 whitespace-nowrap text-slate-300 hover:text-white transition">
+          <i class="fa-solid fa-cart-shopping mr-1.5"></i> Cart Bundling & DOM
+        </button>
+        <button onclick="switchTab('tab-labs')" id="btn-tab-labs" class="tab-btn px-3 py-2 whitespace-nowrap text-slate-300 hover:text-white transition">
+          <i class="fa-solid fa-microscope mr-1.5"></i> Lab EDI & Metadata
+        </button>
+        <button onclick="switchTab('tab-roi')" id="btn-tab-roi" class="tab-btn px-3 py-2 whitespace-nowrap text-slate-300 hover:text-white transition">
+          <i class="fa-solid fa-calculator mr-1.5"></i> ROI & Pricing Engine
+        </button>
+        <button onclick="switchTab('tab-arch')" id="btn-tab-arch" class="tab-btn px-3 py-2 whitespace-nowrap text-slate-300 hover:text-white transition">
+          <i class="fa-solid fa-database mr-1.5"></i> Tech Stack & Schema
+        </button>
+        <button onclick="switchTab('tab-compliance')" id="btn-tab-compliance" class="tab-btn px-3 py-2 whitespace-nowrap text-slate-300 hover:text-white transition">
+          <i class="fa-solid fa-shield-halved mr-1.5"></i> FTC & PHI Vault
+        </button>
+        <button onclick="switchTab('tab-roadmap')" id="btn-tab-roadmap" class="tab-btn px-3 py-2 whitespace-nowrap text-slate-300 hover:text-white transition">
+          <i class="fa-solid fa-flag-checkered mr-1.5"></i> 20-Wk Roadmap & GTM
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+    <section id="tab-overview" class="tab-content block space-y-6">
+      <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h2 class="text-xl font-bold text-slate-900 mb-2">Executive Summary & Market Analysis</h2>
+        <p class="text-sm text-slate-600 leading-relaxed">
+          This interactive application synthesizes the operational deconstruction of <strong>LensAdvisor</strong> (developed by Singapore-based LensAdvisor Pte Ltd) and sets forth the complete engineering architecture to build a competing optical platform for Shopify Storefronts and Shopify POS. LensAdvisor bridges retail frame catalogs with back-end optical laboratories by injecting a 7-step prescription configurator modal, enforcing manufacturing range limits, bundling frame/lens line items, and routing formatted job tickets directly to lab systems.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <div class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Active Installations</div>
+          <div class="text-2xl font-black text-slate-900 mt-1">387 Stores</div>
+          <div class="text-xs text-emerald-600 font-medium mt-1"><i class="fa-solid fa-arrow-trend-up mr-1"></i>+12% 90-Day Growth</div>
+        </div>
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <div class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Rating & Reviews</div>
+          <div class="text-2xl font-black text-amber-500 mt-1">5.0 ★</div>
+          <div class="text-xs text-slate-500 mt-1">38 Verified App Reviews</div>
+        </div>
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <div class="text-xs font-semibold text-slate-500 uppercase tracking-wider">SaaS Revenue Model</div>
+          <div class="text-2xl font-black text-slate-900 mt-1">Hybrid %</div>
+          <div class="text-xs text-amber-600 font-medium mt-1">$0-$9,999/mo + 0.49-6.99%</div>
+        </div>
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <div class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Connected Labs</div>
+          <div class="text-2xl font-black text-teal-600 mt-1">9 Protocols</div>
+          <div class="text-xs text-slate-500 mt-1">HOYA, MEI, VisionWeb, Ocuco</div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col justify-between">
+          <div>
+            <h3 class="text-base font-bold text-slate-900 mb-1">Target Merchant Revenue Demographics</h3>
+            <p class="text-xs text-slate-500 mb-4">Distribution of active LensAdvisor installations across annual revenue bands (StoreCensus Data).</p>
+            <div class="chart-container">
+              <canvas id="chart-demographics"></canvas>
+            </div>
+          </div>
+          <div class="mt-4 pt-3 border-t border-slate-100 text-xs text-slate-600 bg-slate-50 p-3 rounded-lg">
+            <strong class="text-slate-800">Strategic Takeaway:</strong> 84% of active users generate under $1M/year (58% under $100K). These growing brands suffer most under LensAdvisor's scaling percentage-based order commissions.
+          </div>
+        </div>
+
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col justify-between">
+          <div>
+            <h3 class="text-base font-bold text-slate-900 mb-2">Core System Pillars</h3>
+            <div class="space-y-3 text-xs">
+              <div class="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <div class="font-bold text-teal-700 flex items-center">
+                  <i class="fa-solid fa-desktop mr-2"></i> 1. Storefront & POS Extension Layer
+                </div>
+                <p class="text-slate-600 mt-1">Theme App Blocks, Web Components, and POS UI Extensions providing unified lens ordering online and in retail locations.</p>
+              </div>
+              <div class="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <div class="font-bold text-teal-700 flex items-center">
+                  <i class="fa-solid fa-filter mr-2"></i> 2. Optical Validation & Rx Limits Engine
+                </div>
+                <p class="text-slate-600 mt-1">Dynamic filtering hiding lenses outside optical lab manufacturing capability based on sphere (SPH) and cylinder (CYL) strength.</p>
+              </div>
+              <div class="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <div class="font-bold text-teal-700 flex items-center">
+                  <i class="fa-solid fa-cubes-stacked mr-2"></i> 3. Wasm Cart Transform Engine
+                </div>
+                <p class="text-slate-600 mt-1">Shopify Cart Transform Functions merging Frame, Lens, and Upgrade line items into single rows across all sales channels.</p>
+              </div>
+              <div class="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <div class="font-bold text-teal-700 flex items-center">
+                  <i class="fa-solid fa-network-wired mr-2"></i> 4. Async Multi-Protocol Lab Router
+                </div>
+                <p class="text-slate-600 mt-1">Token replacement metadata compiler converting shop orders to HOYA XML, MEI OMA/DCS, VisionWeb XML, and Ocuco JSON format.</p>
+              </div>
+            </div>
+          </div>
+          <div class="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center text-xs">
+            <span class="text-slate-500 font-medium">Platform Competitors:</span>
+            <span class="text-slate-700 font-bold">LensPath, VisioncarePro, Ant Lens, SpecForm</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-flow" class="tab-content hidden space-y-6">
+      <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h2 class="text-xl font-bold text-slate-900 mb-2">7-Step Storefront Customer Journey & Rx Limits Engine</h2>
+        <p class="text-sm text-slate-600 leading-relaxed">
+          LensAdvisor guides shoppers through a structured 7-step modal flow. Each step captures specific optical parameters and validates customer entries against merchant-configured prescription rules and lab manufacturing limits.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-7 gap-2">
+        <button onclick="setFlowStep(1)" id="flow-btn-1" class="flow-step-btn bg-teal-700 text-white p-3 rounded-lg text-left text-xs transition">
+          <div class="font-bold">Step 01</div>
+          <div class="truncate text-slate-100">Rx Type</div>
+        </button>
+        <button onclick="setFlowStep(2)" id="flow-btn-2" class="flow-step-btn bg-white border border-slate-200 text-slate-700 p-3 rounded-lg text-left text-xs hover:border-teal-500 transition">
+          <div class="font-bold">Step 02</div>
+          <div class="truncate">Submission</div>
+        </button>
+        <button onclick="setFlowStep(3)" id="flow-btn-3" class="flow-step-btn bg-white border border-slate-200 text-slate-700 p-3 rounded-lg text-left text-xs hover:border-teal-500 transition">
+          <div class="font-bold">Step 03</div>
+          <div class="truncate">Lens Group</div>
+        </button>
+        <button onclick="setFlowStep(4)" id="flow-btn-4" class="flow-step-btn bg-white border border-slate-200 text-slate-700 p-3 rounded-lg text-left text-xs hover:border-teal-500 transition">
+          <div class="font-bold">Step 04</div>
+          <div class="truncate">Specific Lens SKU</div>
+        </button>
+        <button onclick="setFlowStep(5)" id="flow-btn-5" class="flow-step-btn bg-white border border-slate-200 text-slate-700 p-3 rounded-lg text-left text-xs hover:border-teal-500 transition">
+          <div class="font-bold">Step 05</div>
+          <div class="truncate">Options & Matrix</div>
+        </button>
+        <button onclick="setFlowStep(6)" id="flow-btn-6" class="flow-step-btn bg-white border border-slate-200 text-slate-700 p-3 rounded-lg text-left text-xs hover:border-teal-500 transition">
+          <div class="font-bold">Step 06</div>
+          <div class="truncate">Add-Ons</div>
+        </button>
+        <button onclick="setFlowStep(7)" id="flow-btn-7" class="flow-step-btn bg-white border border-slate-200 text-slate-700 p-3 rounded-lg text-left text-xs hover:border-teal-500 transition">
+          <div class="font-bold">Step 07</div>
+          <div class="truncate">Review & Cart</div>
+        </button>
+      </div>
+
+      <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <div id="flow-step-details">
+        </div>
+      </div>
+
+      <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <div class="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-slate-200 mb-4">
+          <div>
+            <h3 class="text-base font-bold text-slate-900">Interactive Rx Limits Engine Simulator</h3>
+            <p class="text-xs text-slate-500">Test how entered SPH and CYL parameters dynamically filter lab lens SKUs in Step 04.</p>
+          </div>
+          <div class="mt-2 md:mt-0 text-xs font-semibold bg-teal-50 text-teal-700 px-3 py-1 rounded-full border border-teal-200">
+            Real-Time Optical Validation
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          <div class="space-y-4 bg-slate-50 p-4 rounded-lg border border-slate-200">
+            <h4 class="text-xs font-bold text-slate-700 uppercase">Customer Prescription Input</h4>
+            <div>
+              <div class="flex justify-between text-xs font-medium mb-1">
+                <span>Sphere Strength (SPH)</span>
+                <span id="sph-val-display" class="font-bold text-teal-700">-2.50 D</span>
+              </div>
+              <input type="range" min="-8.00" max="4.00" step="0.25" value="-2.50" id="sph-slider" oninput="updateRxSimulation()" class="w-full accent-teal-600">
+            </div>
+
+            <div>
+              <div class="flex justify-between text-xs font-medium mb-1">
+                <span>Cylinder Strength (CYL)</span>
+                <span id="cyl-val-display" class="font-bold text-teal-700">-2.25 D</span>
+              </div>
+              <input type="range" min="-5.00" max="0.00" step="0.25" value="-2.25" id="cyl-slider" oninput="updateRxSimulation()" class="w-full accent-teal-600">
+            </div>
+          </div>
+
+          <div class="bg-slate-50 p-4 rounded-lg border border-slate-200">
+            <h4 class="text-xs font-bold text-slate-700 uppercase mb-3">Available Lens SKUs in Step 04</h4>
+            <div id="rx-sku-container" class="space-y-2 text-xs">
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-cart" class="tab-content hidden space-y-6">
+      <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h2 class="text-xl font-bold text-slate-900 mb-2">Cart Bundling Mechanics & Front-End DOM Event API</h2>
+        <p class="text-sm text-slate-600 leading-relaxed">
+          Prescription eyewear consists of multiple line items (Frame + Base Lens + Option Upcharges + Add-ons). LensAdvisor manages bundle cohesion using three distinct cart bundling modes and exposes a client-side JavaScript API with 26 DOM event hooks.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col justify-between">
+          <div>
+            <div class="w-10 h-10 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center font-bold mb-3">
+              <i class="fa-solid fa-list-check"></i>
+            </div>
+            <h3 class="text-sm font-bold text-slate-900">1. Standard Bundling</h3>
+            <span class="inline-block my-2 text-[10px] uppercase tracking-wider font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded">All Shopify Plans</span>
+            <p class="text-xs text-slate-600 leading-relaxed mt-1">
+              Renders Frame, Lens, and Add-ons as separate line items in the cart drawer. Quantity synchronization scripts ensure removing one item purges all associated bundle items. Underscore properties (`_productType`) hide technical metadata.
+            </p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-slate-100 text-xs text-slate-500">
+            Requires custom cart block or theme script snippet.
+          </div>
+        </div>
+
+        <div class="bg-white p-6 rounded-xl shadow-sm border-2 border-teal-600 relative flex flex-col justify-between">
+          <div class="absolute -top-3 right-4 bg-teal-600 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full">
+            Recommended Target
+          </div>
+          <div>
+            <div class="w-10 h-10 rounded-lg bg-teal-100 text-teal-700 flex items-center justify-center font-bold mb-3">
+              <i class="fa-solid fa-wand-magic-sparkles"></i>
+            </div>
+            <h3 class="text-sm font-bold text-slate-900">2. Native Bundling (Cart Transform)</h3>
+            <span class="inline-block my-2 text-[10px] uppercase tracking-wider font-bold bg-teal-100 text-teal-800 px-2 py-0.5 rounded">Modern Storefronts & POS</span>
+            <p class="text-xs text-slate-600 leading-relaxed mt-1">
+              Powered by Shopify's WebAssembly <code>cart.transform.run</code> API. Merges multiple bundle lines into a single displayed item (`linesMerge`) at the platform layer. Operates identically online and inside Shopify POS.
+            </p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-slate-100 text-xs text-teal-700 font-medium">
+            Standardizes cart UX across Online Store, POS, and Headless.
+          </div>
+        </div>
+
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col justify-between">
+          <div>
+            <div class="w-10 h-10 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center font-bold mb-3">
+              <i class="fa-solid fa-crown"></i>
+            </div>
+            <h3 class="text-sm font-bold text-slate-900">3. Single Lineitem Bundling</h3>
+            <span class="inline-block my-2 text-[10px] uppercase tracking-wider font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded">Shopify Plus Only</span>
+            <p class="text-xs text-slate-600 leading-relaxed mt-1">
+              Combines frame, lens, coatings, and add-ons into a single physical cart line using Shopify Plus API access. Cannot be combined simultaneously with Native Cart Transform merging.
+            </p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-slate-100 text-xs text-slate-500">
+            Restricted to enterprise Plus store installations.
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h3 class="text-base font-bold text-slate-900 mb-2">JavaScript Global Event Bus (`window.LensAdvizor`)</h3>
+        <p class="text-xs text-slate-500 mb-4">Click any hook to view event dispatch triggers and payload data structure.</p>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="space-y-1 max-h-72 overflow-y-auto pr-2" id="event-list">
+          </div>
+
+          <div class="md:col-span-2 bg-slate-900 text-slate-200 p-4 rounded-lg font-mono text-xs overflow-x-auto border border-slate-800 flex flex-col justify-between">
+            <div>
+              <div class="text-slate-400 mb-2 flex justify-between items-center text-[11px] pb-2 border-b border-slate-800">
+                <span id="event-title-display" class="font-bold text-teal-400">selectLensModal:open</span>
+                <span class="bg-slate-800 px-2 py-0.5 rounded text-slate-400">CustomEvent</span>
+              </div>
+              <pre id="event-code-display" class="text-slate-300 leading-relaxed">
+document.addEventListener('selectLensModal:open', (e) => {
+  console.log('Lens configurator opened for product:', e.detail.productId);
+  gtag('event', 'begin_checkout_flow', {
+    product_id: e.detail.productId,
+    variant_id: e.detail.variantId
+  });
+});</pre>
+            </div>
+            <div class="mt-4 pt-2 border-t border-slate-800 text-[10px] text-slate-500">
+              Dispatched on <code>document</code> element. Integrates with GA4, Klaviyo, and AJAX cart drawers.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-labs" class="tab-content hidden space-y-6">
+      <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h2 class="text-xl font-bold text-slate-900 mb-2">Optical Lab Integrations & Metadata Replacement Compiler</h2>
+        <p class="text-sm text-slate-600 leading-relaxed">
+          LensAdvisor maps consumer cart selections directly to optical laboratory management systems (LMS) and lens edging machinery across 9 core integrations, translating frame geometry and prescription values into industry-standard formats.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-bold text-sm text-slate-900">HOYA Optical</span>
+            <span class="text-[10px] bg-slate-100 font-bold px-2 py-0.5 rounded text-slate-700">HOYA XML</span>
+          </div>
+          <div class="text-xs text-slate-600">Transport: SFTP (Read/Write folders)</div>
+          <div class="text-[11px] text-slate-500 mt-2">Tracks 8 order states (Received, In Progress, Edging, Complete, etc.)</div>
+        </div>
+
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-bold text-sm text-slate-900">MEI Edgers</span>
+            <span class="text-[10px] bg-teal-100 font-bold px-2 py-0.5 rounded text-teal-800">OMA / DCS</span>
+          </div>
+          <div class="text-xs text-slate-600">Transport: TCP via LMS Host</div>
+          <div class="text-[11px] text-slate-500 mt-2">Direct machine integration; barcode scan triggers OMA geometry retrieval</div>
+        </div>
+
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-bold text-sm text-slate-900">VisionWeb</span>
+            <span class="text-[10px] bg-slate-100 font-bold px-2 py-0.5 rounded text-slate-700">VisionWeb XML</span>
+          </div>
+          <div class="text-xs text-slate-600">Transport: VisionWeb API</div>
+          <div class="text-[11px] text-slate-500 mt-2">Connects with over 400 independent optical labs on VisionWeb network</div>
+        </div>
+
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-bold text-sm text-slate-900">Ocuco LMS</span>
+            <span class="text-[10px] bg-slate-100 font-bold px-2 py-0.5 rounded text-slate-700">Ocuco Format</span>
+          </div>
+          <div class="text-xs text-slate-600">Transport: Ocuco Direct API</div>
+          <div class="text-[11px] text-slate-500 mt-2">Maps frame shape (A, B, ED, DBL) and treatment codes (MISC, COAT, TINT)</div>
+        </div>
+
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-bold text-sm text-slate-900">Gino Optical</span>
+            <span class="text-[10px] bg-slate-100 font-bold px-2 py-0.5 rounded text-slate-700">Gino JSON</span>
+          </div>
+          <div class="text-xs text-slate-600">Transport: Direct REST API</div>
+          <div class="text-[11px] text-slate-500 mt-2">Deep optical geometry (pantoscopic tilt, corridor, atoric, Base64 OMA trace)</div>
+        </div>
+
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-bold text-sm text-slate-900">Optivision / EyeHub / HKO</span>
+            <span class="text-[10px] bg-slate-100 font-bold px-2 py-0.5 rounded text-slate-700">REST & SOAP</span>
+          </div>
+          <div class="text-xs text-slate-600">Transport: API / Web Services</div>
+          <div class="text-[11px] text-slate-500 mt-2">Barcodes, SKUs, Solenzara SOAP services, and custom lab query routes</div>
+        </div>
+      </div>
+
+      <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h3 class="text-base font-bold text-slate-900 mb-1">Hierarchical Lab Metadata Override & Token Compiler</h3>
+        <p class="text-xs text-slate-500 mb-4">
+          To prevent creating thousands of distinct Shopify variants, base lenses store generic lab code templates. Step 05 upgrades dynamically override parent keys or replace bracketed tokens.
+        </p>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-50 p-4 rounded-lg border border-slate-200">
+          <div class="space-y-4">
+            <h4 class="text-xs font-bold text-slate-700 uppercase">Customer Upgrade Selections (Step 05)</h4>
+            <div>
+              <label class="block text-xs font-medium text-slate-600 mb-1">Lens Material (Refractive Index)</label>
+              <select id="compiler-material" onchange="runTokenCompiler()" class="w-full text-xs p-2 rounded border border-slate-300 bg-white">
+                <option value="1.50 Standard (PO-58)">1.50 Poly (PO-58)</option>
+                <option value="1.67 High Index (PO-67)">1.67 High Index (PO-67)</option>
+                <option value="1.74 Ultra High (PO-74)">1.74 Ultra High Index (PO-74)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-600 mb-1">Lens Tint Type</label>
+              <select id="compiler-tint" onchange="runTokenCompiler()" class="w-full text-xs p-2 rounded border border-slate-300 bg-white">
+                <option value="NONE">Clear (No Tint - NONE)</option>
+                <option value="POLR">Polarized (POLR)</option>
+                <option value="PHOT">Photochromic (PHOT)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-600 mb-1">Lens Color</label>
+              <select id="compiler-color" onchange="runTokenCompiler()" class="w-full text-xs p-2 rounded border border-slate-300 bg-white">
+                <option value="NONE">Clear (NONE)</option>
+                <option value="GREY">Grey (GREY)</option>
+                <option value="BRWN">Brown (BRWN)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="space-y-3 font-mono text-xs flex flex-col justify-between">
+            <div>
+              <div class="text-slate-500 text-[11px] mb-1">Base Parent Lens Template Code:</div>
+              <div class="bg-white p-2 rounded border border-slate-300 text-slate-700">
+                PO-58-[lens_type=NONE]-[lens_color=NONE]-00
+              </div>
+            </div>
+
+            <div>
+              <div class="text-slate-500 text-[11px] mb-1">Option Replacement Tokens Triggered:</div>
+              <div id="compiler-tokens" class="bg-amber-50 p-2 rounded border border-amber-200 text-amber-800">
+                {{lens_type=NONE}}{{lens_color=NONE}}
+              </div>
+            </div>
+
+            <div>
+              <div class="text-slate-500 text-[11px] mb-1">Compiled Lab EDI Job Payload Key:</div>
+              <div id="compiler-output" class="bg-teal-900 text-teal-200 p-3 rounded font-bold">
+                RELensMaterial = PO-58-NONE-NONE-00
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-roi" class="tab-content hidden space-y-6">
+      <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h2 class="text-xl font-bold text-slate-900 mb-2">Merchant ROI & Financial Comparison Calculator</h2>
+        <p class="text-sm text-slate-600 leading-relaxed">
+          LensAdvisor charges merchants a base subscription plus a percentage-based order commission (0.49% to 6.99% of total line-item revenue) once monthly quotas are exceeded. Our proposed platform offers flat-rate subscription tiers with <strong>0% order commissions</strong>.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
+          <h3 class="text-base font-bold text-slate-900">Store Revenue & Volume Inputs</h3>
+          <div>
+            <div class="flex justify-between text-xs font-medium mb-1">
+              <span>Monthly Prescription Orders</span>
+              <span id="roi-orders-display" class="font-bold text-teal-700">450 Orders</span>
+            </div>
+            <input type="range" min="50" max="1500" step="25" value="450" id="roi-orders-slider" oninput="calculateROI()" class="w-full accent-teal-600">
+          </div>
+
+          <div>
+            <div class="flex justify-between text-xs font-medium mb-1">
+              <span>Average Order Value (AOV)</span>
+              <span id="roi-aov-display" class="font-bold text-teal-700">$220 USD</span>
+            </div>
+            <input type="range" min="80" max="500" step="10" value="220" id="roi-aov-slider" oninput="calculateROI()" class="w-full accent-teal-600">
+          </div>
+
+          <div class="p-4 bg-slate-50 rounded-lg border border-slate-200 space-y-2 text-xs">
+            <div class="flex justify-between">
+              <span class="text-slate-600">Monthly Prescription GMV:</span>
+              <span id="roi-gmv" class="font-bold text-slate-900">$99,000</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-slate-600">LensAdvisor Monthly Fee:</span>
+              <span id="roi-la-cost" class="font-bold text-rose-600">$1,844</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-slate-600">Proposed Platform Fee:</span>
+              <span id="roi-our-cost" class="font-bold text-teal-600">$199</span>
+            </div>
+            <div class="pt-2 border-t border-slate-200 flex justify-between font-bold text-sm">
+              <span class="text-slate-900">Merchant Monthly Savings:</span>
+              <span id="roi-savings" class="text-emerald-600">$1,645 / mo</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col justify-between">
+          <div>
+            <h3 class="text-base font-bold text-slate-900 mb-1">SaaS Cost Scaling Comparison</h3>
+            <p class="text-xs text-slate-500 mb-4">Monthly app cost vs order volume at $220 AOV (Pro Tier baseline).</p>
+            <div class="chart-container">
+              <canvas id="chart-roi"></canvas>
+            </div>
+          </div>
+          <div class="mt-4 pt-3 border-t border-slate-100 text-xs text-slate-600 flex items-center justify-between">
+            <span><i class="fa-solid fa-lightbulb text-amber-500 mr-1.5"></i> High-volume stores saving $1,500+/mo represent prime migration targets.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h3 class="text-base font-bold text-slate-900 mb-3">LensAdvisor Pricing Matrix Reference</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr class="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                <th class="p-3">Plan Tier</th>
+                <th class="p-3">Base Fee / Mo</th>
+                <th class="p-3">Included Orders</th>
+                <th class="p-3">Over-Quota Commission</th>
+                <th class="p-3">Key Tier Features</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 text-slate-600">
+              <tr>
+                <td class="p-3 font-bold text-slate-800">Free</td>
+                <td class="p-3">$0 / mo</td>
+                <td class="p-3">30 orders</td>
+                <td class="p-3">0% (Hard cap)</td>
+                <td class="p-3">Max 3 products, LensAdvisor mark on checkout</td>
+              </tr>
+              <tr>
+                <td class="p-3 font-bold text-slate-800">Commission</td>
+                <td class="p-3">$0 / mo</td>
+                <td class="p-3">0 orders</td>
+                <td class="p-3 text-rose-600 font-bold">6.99%</td>
+                <td class="p-3">Unlimited orders, removes checkout branding</td>
+              </tr>
+              <tr>
+                <td class="p-3 font-bold text-slate-800">Standard</td>
+                <td class="p-3">$169 / mo</td>
+                <td class="p-3">100 orders</td>
+                <td class="p-3 text-rose-600 font-bold">3.99%</td>
+                <td class="p-3">Core Rx flows, manual + upload submission</td>
+              </tr>
+              <tr class="bg-teal-50/50">
+                <td class="p-3 font-bold text-teal-900">Pro (Popular)</td>
+                <td class="p-3 font-bold text-teal-900">$199 / mo</td>
+                <td class="p-3 text-teal-900 font-bold">200 orders</td>
+                <td class="p-3 text-rose-600 font-bold">2.99%</td>
+                <td class="p-3 text-teal-900 font-medium">Bulk collections, Rx Limits, Picture Matrix, API access</td>
+              </tr>
+              <tr>
+                <td class="p-3 font-bold text-slate-800">Enterprise</td>
+                <td class="p-3">$999 / mo</td>
+                <td class="p-3">1,000 orders</td>
+                <td class="p-3 text-rose-600 font-bold">0.99%</td>
+                <td class="p-3">Advanced lab integrations, 3 hrs/mo custom dev</td>
+              </tr>
+              <tr>
+                <td class="p-3 font-bold text-slate-800">Mission Critical</td>
+                <td class="p-3">$9,999 / mo</td>
+                <td class="p-3">10,000 orders</td>
+                <td class="p-3 text-rose-600 font-bold">0.49%</td>
+                <td class="p-3">Dedicated 24/7 SLA, 10 hrs/mo custom dev</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-arch" class="tab-content hidden space-y-6">
+      <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h2 class="text-xl font-bold text-slate-900 mb-2">Technical Stack & Database Schema Architecture</h2>
+        <p class="text-sm text-slate-600 leading-relaxed">
+          Building an enterprise replica requires strict isolation between public catalog tables (for high-speed storefront rendering) and HIPAA/GDPR-compliant encrypted prescription vaults.
+        </p>
+      </div>
+
+      <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <div class="flex space-x-2 overflow-x-auto pb-3 mb-4 border-b border-slate-200 text-xs font-bold" id="schema-tabs">
+          <button onclick="setSchemaTab('shops')" id="sch-btn-shops" class="sub-tab-btn active px-3 py-1.5 rounded-lg transition">shops</button>
+          <button onclick="setSchemaTab('lens_flows')" id="sch-btn-lens_flows" class="sub-tab-btn bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg transition">lens_flows</button>
+          <button onclick="setSchemaTab('lenses')" id="sch-btn-lenses" class="sub-tab-btn bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg transition">lenses</button>
+          <button onclick="setSchemaTab('prescriptions')" id="sch-btn-prescriptions" class="sub-tab-btn bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg transition">prescriptions (PHI Vault)</button>
+          <button onclick="setSchemaTab('lab_orders')" id="sch-btn-lab_orders" class="sub-tab-btn bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg transition">lab_orders (PHI Vault)</button>
+        </div>
+
+        <div id="schema-display-container">
+        </div>
+      </div>
+
+      <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h3 class="text-base font-bold text-slate-900 mb-3">System Blueprint Tech Stack Specifications</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+          <div class="p-4 bg-slate-50 rounded-lg border border-slate-200">
+            <div class="font-bold text-slate-900 mb-1">Storefront Layer</div>
+            <div class="text-teal-700 font-medium">Preact Web Component</div>
+            <p class="text-slate-500 mt-1">Theme App Extension & Quick Buy Embed (&lt;lensadvizor-quick-buy&gt;).</p>
+          </div>
+          <div class="p-4 bg-slate-50 rounded-lg border border-slate-200">
+            <div class="font-bold text-slate-900 mb-1">Cart Bundling</div>
+            <div class="text-teal-700 font-medium">Wasm Cart Transform</div>
+            <p class="text-slate-500 mt-1">Rust/AssemblyScript compiled function using <code>linesMerge</code> operation.</p>
+          </div>
+          <div class="p-4 bg-slate-50 rounded-lg border border-slate-200">
+            <div class="font-bold text-slate-900 mb-1">POS Extension</div>
+            <div class="text-teal-700 font-medium">Shopify POS UI SDK</div>
+            <p class="text-slate-500 mt-1">Smart Grid Tile & POS Modal Extension under strict 64 KB bundle ceiling.</p>
+          </div>
+          <div class="p-4 bg-slate-50 rounded-lg border border-slate-200">
+            <div class="font-bold text-slate-900 mb-1">Async Lab Router</div>
+            <div class="text-teal-700 font-medium">Redis + Node.js Workers</div>
+            <p class="text-slate-500 mt-1">Multi-protocol dispatchers for OMA/TCP, HOYA SFTP, and REST/SOAP APIs.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-compliance" class="tab-content hidden space-y-6">
+      <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h2 class="text-xl font-bold text-slate-900 mb-2">FTC Ophthalmic Compliance & HIPAA PHI Security</h2>
+        <p class="text-sm text-slate-600 leading-relaxed">
+          Handling prescription optical data requires strict security controls to protect Patient Health Information (PHI) and automated compliance modules to enforce US FTC Eyeglass and Contact Lens Regulations.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
+          <div class="flex items-center space-x-3">
+            <div class="w-10 h-10 rounded-lg bg-teal-100 text-teal-700 flex items-center justify-center font-bold">
+              <i class="fa-solid fa-lock"></i>
+            </div>
+            <div>
+              <h3 class="text-base font-bold text-slate-900">HIPAA / GDPR PHI Security Isolation</h3>
+              <span class="text-xs text-slate-500">Merchant Settings Privacy Toggle</span>
+            </div>
+          </div>
+          <p class="text-xs text-slate-600 leading-relaxed">
+            Replicating LensAdvisor's compliance model, merchants can disable <em>"Save manually entered prescription details in Shopify order properties"</em>. When active, raw Rx parameters are stripped from Shopify line items and stored in an encrypted US PostgreSQL vault and encrypted S3 file bucket.
+          </p>
+          <div class="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs space-y-2">
+            <div class="flex items-center text-emerald-700 font-bold">
+              <i class="fa-solid fa-check-circle mr-2"></i> Encrypted AWS S3 US Storage (Rx Uploads)
+            </div>
+            <div class="flex items-center text-emerald-700 font-bold">
+              <i class="fa-solid fa-check-circle mr-2"></i> AES-256 PostgreSQL Encryption at Rest
+            </div>
+            <div class="flex items-center text-emerald-700 font-bold">
+              <i class="fa-solid fa-check-circle mr-2"></i> Standard Business Associate Agreement (BAA) Support
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
+          <div class="flex items-center space-x-3">
+            <div class="w-10 h-10 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center font-bold">
+              <i class="fa-solid fa-gavel"></i>
+            </div>
+            <div>
+              <h3 class="text-base font-bold text-slate-900">US FTC Regulatory Enforcement Engine</h3>
+              <span class="text-xs text-slate-500">Eyeglass & Contact Lens Rules</span>
+            </div>
+          </div>
+          <div class="space-y-3 text-xs">
+            <div class="p-3 bg-slate-50 rounded-lg border border-slate-200">
+              <div class="font-bold text-slate-800 mb-1">1. FTC Contact Lens Rule (16 CFR Part 315)</div>
+              <p class="text-slate-600">Enforces an automated <strong>8-business-hour verification hold</strong> for manually entered contact lens orders before dispatching to labs.</p>
+            </div>
+            <div class="p-3 bg-slate-50 rounded-lg border border-slate-200">
+              <div class="font-bold text-slate-800 mb-1">2. 2024 FTC Eyeglass Rule Update (16 CFR Part 456)</div>
+              <p class="text-slate-600">Captures digital signatures for in-store eye exams on POS and archives confirmation records for <strong>3 years minimum</strong>.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-roadmap" class="tab-content hidden space-y-6">
+      <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h2 class="text-xl font-bold text-slate-900 mb-2">20-Week Engineering Roadmap & Go-To-Market Playbook</h2>
+        <p class="text-sm text-slate-600 leading-relaxed">
+          A structured 4-phase development schedule to build the platform and capture market share from LensAdvisor using automated migration tools and strategic feature differentiation.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div class="bg-white p-5 rounded-xl shadow-sm border-t-4 border-teal-600 border-x border-b border-slate-200">
+          <div class="text-xs font-bold text-teal-700 uppercase">Phase 1 • Weeks 1-6</div>
+          <h3 class="text-sm font-bold text-slate-900 mt-1">Core MVP & Cart Bundling</h3>
+          <ul class="text-xs text-slate-600 mt-3 space-y-2 list-disc list-inside">
+            <li>Multi-tenant Node/Remix app</li>
+            <li>Storefront Web Component modal</li>
+            <li>Rx Limits filtering engine</li>
+            <li>Wasm Cart Transform merging</li>
+          </ul>
+        </div>
+
+        <div class="bg-white p-5 rounded-xl shadow-sm border-t-4 border-slate-800 border-x border-b border-slate-200">
+          <div class="text-xs font-bold text-slate-700 uppercase">Phase 2 • Weeks 7-11</div>
+          <h3 class="text-sm font-bold text-slate-900 mt-1">AI OCR & Layered Matrix</h3>
+          <ul class="text-xs text-slate-600 mt-3 space-y-2 list-disc list-inside">
+            <li>Multimodal AI Rx file extraction</li>
+            <li>Picture Matrix canvas compositor</li>
+            <li>Contact lens per-eye spreadsheet importer</li>
+            <li>FittingBox camera PD integration</li>
+          </ul>
+        </div>
+
+        <div class="bg-white p-5 rounded-xl shadow-sm border-t-4 border-slate-800 border-x border-b border-slate-200">
+          <div class="text-xs font-bold text-slate-700 uppercase">Phase 3 • Weeks 12-16</div>
+          <h3 class="text-sm font-bold text-slate-900 mt-1">POS & Core Lab Adapters</h3>
+          <ul class="text-xs text-slate-600 mt-3 space-y-2 list-disc list-inside">
+            <li>Shopify POS UI Extension</li>
+            <li>Lab metadata override engine</li>
+            <li>HOYA XML SFTP & VisionWeb APIs</li>
+            <li>Ocuco & Optivision REST adapters</li>
+          </ul>
+        </div>
+
+        <div class="bg-white p-5 rounded-xl shadow-sm border-t-4 border-amber-500 border-x border-b border-slate-200">
+          <div class="text-xs font-bold text-amber-600 uppercase">Phase 4 • Weeks 17-20</div>
+          <h3 class="text-sm font-bold text-slate-900 mt-1">Edgers & GTM Launch</h3>
+          <ul class="text-xs text-slate-600 mt-3 space-y-2 list-disc list-inside">
+            <li>MEI TCP OMA/DCS integration</li>
+            <li>In-Store Exam Booking module</li>
+            <li>Arabic / RTL layout support</li>
+            <li>1-Click LensAdvisor Migrator</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h3 class="text-base font-bold text-slate-900 mb-3">Market Conquest Playbook: 3 Differentiators</h3>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs">
+          <div class="p-4 bg-slate-50 rounded-lg border border-slate-200">
+            <div class="font-bold text-teal-800 text-sm mb-1">1. 1-Click Metafield Migrator</div>
+            <p class="text-slate-600 leading-relaxed">
+              Target LensAdvisor's 387 installed stores by reading existing <code>lensadvisor.options</code> and lab frame metafields (<code>lensadvizor.hoya-frame</code>), migrating lens catalogs instantly without manual data re-entry.
+            </p>
+          </div>
+          <div class="p-4 bg-slate-50 rounded-lg border border-slate-200">
+            <div class="font-bold text-teal-800 text-sm mb-1">2. Zero Percentage Tax</div>
+            <p class="text-slate-600 leading-relaxed">
+              Offer predictable flat-rate monthly plans ($99-$299/mo) with zero percentage revenue commissions, instantly saving high-volume optical merchants thousands of dollars per month.
+            </p>
+          </div>
+          <div class="p-4 bg-slate-50 rounded-lg border border-slate-200">
+            <div class="font-bold text-teal-800 text-sm mb-1">3. In-Store Exam & RTL Support</div>
+            <p class="text-slate-600 leading-relaxed">
+              Close LensAdvisor's documented product gaps by including native eye-exam booking for prescription-less shoppers and native Arabic/RTL storefront localization.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="bg-slate-900 text-slate-400 text-xs py-6 border-t border-slate-800">
+    <div class="max-w-7xl mx-auto px-4 text-center space-y-2">
+      <p>LensAdvisor Technical Analysis & Competitor Engineering Blueprint • Generated November 2026</p>
+      <p class="text-slate-600">Built for Optical SaaS Founders, Technical Architects, and Shopify Platform Engineers</p>
+    </div>
+  </footer>
+
+  <script>
+    const flowStepsData = {
+      1: {
+        title: "Step 01 — Choose Prescription Type",
+        subtitle: "Initial branching logic determining prescription fields and valid categories.",
+        fields: "Single Vision (Distance, Near, Reading), Progressive, Bifocal, Non-Prescription, Frame-Only, Contact Lenses",
+        mechanics: "Selecting 'Contact Lenses' branches flow into per-eye box quantity (OD/OS) selector and parameters (BC, DIA).",
+        modalHtml: "<div class='space-y-2'><div class='font-bold text-slate-800'>Select Lens Type:</div><div class='grid grid-cols-2 gap-2'><div class='p-3 border-2 border-teal-600 rounded-lg bg-teal-50 font-bold text-teal-900'>Single Vision</div><div class='p-3 border border-slate-200 rounded-lg'>Progressive</div><div class='p-3 border border-slate-200 rounded-lg'>Non-Prescription</div><div class='p-3 border border-slate-200 rounded-lg'>Frame Only</div></div></div>"
+      },
+      2: {
+        title: "Step 02 — Prescription Submission Method",
+        subtitle: "Multi-pathway prescription capture engine supporting AI OCR and live PD measurement.",
+        fields: "Upload File (PNG/JPG/PDF), Manual Entry (SPH, CYL, Axis, ADD, PD, Dual PD, Seg Height, Prism), Email Later, Saved Rx on File, Live Camera PD Scan",
+        mechanics: "Upload triggers Vision AI OCR extraction. 'Find my PD' launches FittingBox camera SDK modal ($1.69 scan usage fee).",
+        modalHtml: "<div class='space-y-2'><div class='font-bold text-slate-800'>How would you like to provide your prescription?</div><div class='grid grid-cols-2 gap-2'><div class='p-3 border border-slate-200 rounded-lg'>Upload File / AI Scan</div><div class='p-3 border-2 border-teal-600 rounded-lg bg-teal-50 font-bold text-teal-900'>Enter Manually</div><div class='p-3 border border-slate-200 rounded-lg'>Email After Checkout</div><div class='p-3 border border-slate-200 rounded-lg'>Use Saved Rx on File</div></div></div>"
+      },
+      3: {
+        title: "Step 03 — Lens Group Selection",
+        subtitle: "Categorizes merchant optical catalog into top-level functional groups.",
+        fields: "Clear Lenses, Blue-Light Blocking, Photochromic (Transitions), Non-Polarized Sun, Polarized Sun",
+        mechanics: "Groups assigned to flows in merchant admin. Tooltips present functional lens benefits to customer.",
+        modalHtml: "<div class='space-y-2'><div class='font-bold text-slate-800'>Select Lens Category:</div><div class='space-y-2'><div class='p-3 border-2 border-teal-600 rounded-lg bg-teal-50 font-bold text-teal-900 flex justify-between'><span>Everyday Clear Lenses</span><span>From $40</span></div><div class='p-3 border border-slate-200 rounded-lg flex justify-between'><span>Blue Light Defense</span><span>From $65</span></div><div class='p-3 border border-slate-200 rounded-lg flex justify-between'><span>Polarized Sun Lenses</span><span>From $90</span></div></div></div>"
+      },
+      4: {
+        title: "Step 04 — Specific Lens SKU Selection & Rx Limits",
+        subtitle: "Evaluates prescription values against lab bounds to filter visible lenses.",
+        fields: "Base Lens SKUs (Standard 1.50, Poly 1.59, Poly Extended, 1.67 High Index, 1.74 Ultra High)",
+        mechanics: "Rx Limits engine checks entered SPH/CYL bounds. Automatically hides SKUs outside manufacturing capability.",
+        modalHtml: "<div class='space-y-2'><div class='font-bold text-slate-800'>Recommended Lenses for your Rx:</div><div class='p-3 border-2 border-teal-600 rounded-lg bg-teal-50'><div class='font-bold text-teal-900'>1.59 Polycarbonate Extended</div><div class='text-slate-600 text-xs'>Impact resistant, suitable for your -2.25 CYL prescription.</div></div></div>"
+      },
+      5: {
+        title: "Step 05 — Lens Options, Upgrades & Picture Matrix",
+        subtitle: "Configures coatings, index upgrades, and dynamic layered image preview.",
+        fields: "Refractive Index (1.50, 1.60, 1.67, 1.74), Anti-Reflective Coating, Scratch Defense, Tint Color (Grey/Brown/Green)",
+        mechanics: "Picture Matrix layers lens tint swatch behind transparent frame PNG. Option metadata overrides base lab SKU.",
+        modalHtml: "<div class='space-y-2'><div class='font-bold text-slate-800'>Choose Premium Coatings:</div><div class='p-3 border-2 border-teal-600 rounded-lg bg-teal-50 font-bold text-teal-900 flex justify-between'><span>Anti-Reflective Coating</span><span>+$30</span></div><div class='p-3 border border-slate-200 rounded-lg flex justify-between'><span>Hydrophobic Anti-Fog</span><span>+$45</span></div></div>"
+      },
+      6: {
+        title: "Step 06 — In-Flow Add-Ons & Cross-Sells",
+        subtitle: "Presents targeted accessory upsells mapped to chosen lens to boost AOV.",
+        fields: "Hard Protective Case, Lens Cleaning Kit, Warranty Plan, Second Pair Discount",
+        mechanics: "Pushes programmatic add-ons into LensAdvizor.customAddOns array for single-click bundle addition.",
+        modalHtml: "<div class='space-y-2'><div class='font-bold text-slate-800'>Add Eyewear Protection:</div><div class='p-3 border border-slate-200 rounded-lg flex items-center justify-between'><div><div class='font-bold'>Complete Care Kit</div><div class='text-slate-500 text-xs'>Spray cleaner + microfiber cloth</div></div><button class='bg-slate-900 text-white px-3 py-1 rounded'>+ $15</button></div></div>"
+      },
+      7: {
+        title: "Step 07 — Review & Add to Cart",
+        subtitle: "Final itemized summary before dispatching cart add API request.",
+        fields: "Frame line item, Lens line item, Option upgrades, Selected add-ons, Complete prescription summary",
+        mechanics: "Dispatches 'addToCart:success' DOM event. Wasm Cart Transform merges lines into unified cart display.",
+        modalHtml: "<div class='space-y-2'><div class='font-bold text-slate-800'>Order Review:</div><div class='p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs space-y-1'><div><strong>Frame:</strong> Classic Wayfarer ($150)</div><div><strong>Lens:</strong> 1.59 Polycarbonate ($50)</div><div><strong>Coating:</strong> Anti-Reflective ($30)</div><div class='pt-2 border-t font-bold text-sm text-teal-700 flex justify-between'><span>Total:</span><span>$230.00</span></div></div></div>"
+      }
+    };
+
+    const eventHooksData = {
+      "selectLensModal:open": {
+        code: "document.addEventListener('selectLensModal:open', (e) => {\n  console.log('Modal opened for product:', e.detail.productId);\n  gtag('event', 'begin_checkout_flow', { product_id: e.detail.productId });\n});",
+        desc: "Fires immediately when customer clicks 'Select Lenses' trigger button."
+      },
+      "prescriptionTypes:rendered": {
+        code: "document.addEventListener('prescriptionTypes:rendered', (e) => {\n  console.log('Step 01 rendered with types:', e.detail.availableTypes);\n});",
+        desc: "Fires when Step 01 Rx type choices are rendered in DOM."
+      },
+      "prescription:updated": {
+        code: "document.addEventListener('prescription:updated', (e) => {\n  console.log('Rx entered:', e.detail.od, e.detail.os);\n});",
+        desc: "Dispatches whenever customer modifies manual Rx form fields."
+      },
+      "lens:rendered": {
+        code: "document.addEventListener('lens:rendered', (e) => {\n  console.log('Available lenses calculated:', e.detail.lenses);\n});",
+        desc: "Fires after Rx Limits engine evaluates valid Step 04 lens SKUs."
+      },
+      "addToCart:success": {
+        code: "document.addEventListener('addToCart:success', (e) => {\n  console.log('Bundle added successfully:', e.detail.cartBundleId);\n  myCustomCartDrawer.refreshAndOpen();\n});",
+        desc: "Triggers after line items are successfully added to Shopify cart."
+      },
+      "Cart:Stable": {
+        code: "document.addEventListener('Cart:Stable', () => {\n  console.log('Cart quantities synchronized across bundle lines.');\n});",
+        desc: "Dispatches after Standard Bundling script verifies quantity sync."
+      }
+    };
+
+    const schemaData = {
+      shops: {
+        zone: "Public App Core",
+        cols: [
+          { name: "id", type: "UUID (PK)", desc: "Unique shop identifier" },
+          { name: "shopify_domain", type: "VARCHAR(255)", desc: "Merchant myshopify.domain string" },
+          { name: "access_token", type: "TEXT (Encrypted)", desc: "Offline Shopify Admin GraphQL access token" },
+          { name: "plan_tier", type: "VARCHAR(50)", desc: "Free, Commission, Standard, Pro, Enterprise" },
+          { name: "save_rx_in_order_properties", type: "BOOLEAN", desc: "HIPAA setting: false disables raw Rx in Shopify properties" }
+        ]
+      },
+      lens_flows: {
+        zone: "Public Catalog Cache",
+        cols: [
+          { name: "id", type: "UUID (PK)", desc: "Lens flow configuration ID" },
+          { name: "shop_id", type: "UUID (FK)", desc: "Belongs to shop" },
+          { name: "name", type: "VARCHAR(255)", desc: "Internal flow name (e.g., Everyday Eyeglasses)" },
+          { name: "assigned_collection_ids", type: "JSONB", desc: "List of Shopify collection IDs mapped to flow" },
+          { name: "bundling_mode", type: "VARCHAR(50)", desc: "standard | native | single_lineitem" }
+        ]
+      },
+      lenses: {
+        zone: "Public Catalog Cache",
+        cols: [
+          { name: "id", type: "UUID (PK)", desc: "Specific lens SKU identifier" },
+          { name: "shopify_variant_id", type: "BIGINT", desc: "Unlisted Shopify variant ID" },
+          { name: "rx_limits", type: "JSONB", desc: "{ sph_min: -4.0, sph_max: 2.0, cyl_min: -4.0, cyl_max: 0.0 }" },
+          { name: "lab_metadata", type: "JSONB", desc: "Base lab codes (e.g. RELensMaterial: PO-58-[lens_type=NONE])" }
+        ]
+      },
+      prescriptions: {
+        zone: "HIPAA ENCRYPTED PHI VAULT",
+        cols: [
+          { name: "id", type: "UUID (PK)", desc: "Prescription record ID" },
+          { name: "shopify_customer_id", type: "BIGINT", desc: "Customer ID reference" },
+          { name: "s3_file_key", type: "TEXT (Encrypted)", desc: "Encrypted S3 URI for uploaded Rx image/PDF" },
+          { name: "encrypted_rx_payload", type: "BYTEA (AES-256)", desc: "Encrypted OD/OS SPH, CYL, Axis, ADD, PD, Prism JSON payload" }
+        ]
+      },
+      lab_orders: {
+        zone: "HIPAA ENCRYPTED PHI VAULT",
+        cols: [
+          { name: "id", type: "UUID (PK)", desc: "Optical lab order job ticket ID" },
+          { name: "shopify_order_id", type: "BIGINT", desc: "Shopify order reference" },
+          { name: "lab_provider", type: "VARCHAR(50)", desc: "hoya | mei | visionweb | ocuco | optivision | gino" },
+          { name: "compiled_payload", type: "TEXT (Encrypted)", desc: "Final compiled XML / OMA / DCS / JSON payload" },
+          { name: "lab_status", type: "VARCHAR(50)", desc: "Received, In Progress, Edging, Shipped, Rejected" }
+        ]
+      }
+    };
+
+    let chartDemographics = null;
+    let chartROI = null;
+
+    function initCharts() {
+      const ctxDemo = document.getElementById('chart-demographics').getContext('2d');
+      chartDemographics = new Chart(ctxDemo, {
+        type: 'doughnut',
+        data: {
+          labels: ['< $100K Annual GMV', '$100K - $1M Annual GMV', '> $1M Annual GMV', 'Unknown / Early Stage'],
+          datasets: [{
+            data: [58, 26, 8, 8],
+            backgroundColor: ['#0d9488', '#38bdf8', '#0f172a', '#cbd5e1'],
+            borderWidth: 2,
+            borderColor: '#ffffff'
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+            tooltip: {
+              callbacks: {
+                label: function(context) { return context.label + ': ' + context.raw + '% of stores'; }
+              }
+            }
+          }
+        }
+      });
+
+      const ctxROI = document.getElementById('chart-roi').getContext('2d');
+      chartROI = new Chart(ctxROI, {
+        type: 'line',
+        data: {
+          labels: ['100 Orders', '300 Orders', '500 Orders', '750 Orders', '1000 Orders', '1500 Orders'],
+          datasets: [
+            {
+              label: 'LensAdvisor SaaS Fee ($199 + 2.99% Commission)',
+              data: [199, 856, 2176, 3826, 5476, 8776],
+              borderColor: '#e11d48',
+              backgroundColor: 'rgba(225, 29, 72, 0.05)',
+              borderWidth: 3,
+              fill: true,
+              tension: 0.2
+            },
+            {
+              label: 'Proposed Platform Flat Rate ($199 Flat)',
+              data: [199, 199, 199, 199, 199, 199],
+              borderColor: '#0d9488',
+              backgroundColor: 'rgba(13, 148, 136, 0.1)',
+              borderWidth: 3,
+              fill: true,
+              tension: 0
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+            tooltip: {
+              callbacks: {
+                label: function(ctx) { return ctx.dataset.label.split(' (')[0] + ': $' + ctx.raw.toLocaleString() + '/mo'; }
+              }
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: { callback: function(val) { return '$' + val; } }
+            }
+          }
+        }
+      });
+    }
+
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      
+      document.getElementById(tabId).classList.remove('hidden');
+      document.getElementById('btn-' + tabId).classList.add('active');
+
+      if (tabId === 'tab-overview' && chartDemographics) {
+        chartDemographics.resize();
+      }
+      if (tabId === 'tab-roi' && chartROI) {
+        chartROI.resize();
+      }
+    }
+
+    function setFlowStep(stepNum) {
+      document.querySelectorAll('.flow-step-btn').forEach(btn => {
+        btn.classList.remove('bg-teal-700', 'text-white');
+        btn.classList.add('bg-white', 'text-slate-700', 'border-slate-200');
+      });
+
+      const activeBtn = document.getElementById('flow-btn-' + stepNum);
+      activeBtn.classList.remove('bg-white', 'text-slate-700', 'border-slate-200');
+      activeBtn.classList.add('bg-teal-700', 'text-white');
+
+      const data = flowStepsData[stepNum];
+      document.getElementById('flow-step-details').innerHTML = `
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div class="space-y-3">
+            <h3 class="text-base font-bold text-slate-900">${data.title}</h3>
+            <p class="text-xs text-slate-600 leading-relaxed">${data.subtitle}</p>
+            <div class="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs">
+              <strong class="text-slate-800">Fields / Options Captured:</strong>
+              <div class="text-teal-700 mt-1 font-medium">${data.fields}</div>
+            </div>
+            <div class="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs">
+              <strong class="text-slate-800">Underlying Mechanics & APIs:</strong>
+              <div class="text-slate-600 mt-1">${data.mechanics}</div>
+            </div>
+          </div>
+          <div class="bg-slate-100 p-4 rounded-xl border border-slate-300 text-xs flex flex-col justify-between">
+            <div class="text-[11px] font-bold text-slate-400 uppercase mb-2">Modal Flow Mock Preview</div>
+            <div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+              ${data.modalHtml}
+            </div>
+            <div class="mt-4 text-[10px] text-slate-400 text-right">Step ${stepNum} of 7</div>
+          </div>
+        </div>
+      `;
+    }
+
+    function updateRxSimulation() {
+      const sph = parseFloat(document.getElementById('sph-slider').value);
+      const cyl = parseFloat(document.getElementById('cyl-slider').value);
+
+      document.getElementById('sph-val-display').innerText = (sph > 0 ? '+' : '') + sph.toFixed(2) + ' D';
+      document.getElementById('cyl-val-display').innerText = cyl.toFixed(2) + ' D';
+
+      const skus = [
+        { name: "1.50 Standard Clear", minSph: -3.00, maxSph: 2.00, minCyl: -2.00, maxCyl: 0.00 },
+        { name: "1.59 Polycarbonate", minSph: -5.00, maxSph: 3.00, minCyl: -2.00, maxCyl: 0.00 },
+        { name: "1.59 Poly Extended Range", minSph: -6.00, maxSph: 3.00, minCyl: -4.00, maxCyl: -2.25 },
+        { name: "1.67 High Index", minSph: -8.00, maxSph: 4.00, minCyl: -3.00, maxCyl: 0.00 },
+        { name: "1.74 Ultra High Index", minSph: -10.00, maxSph: 4.00, minCyl: -4.00, maxCyl: 0.00 }
+      ];
+
+      let html = "";
+      skus.forEach(sku => {
+        const passSph = (sph >= sku.minSph && sph <= sku.maxSph);
+        const passCyl = (cyl >= sku.minCyl && cyl <= sku.maxCyl);
+        const passes = passSph && passCyl;
+
+        if (passes) {
+          html += `
+            <div class="p-2.5 bg-emerald-50 border border-emerald-300 rounded flex items-center justify-between">
+              <span class="font-bold text-emerald-900">${sku.name}</span>
+              <span class="bg-emerald-600 text-white font-bold text-[10px] px-2 py-0.5 rounded"><i class="fa-solid fa-check mr-1"></i> PASS (Visible)</span>
+            </div>
+          `;
+        } else {
+          html += `
+            <div class="p-2.5 bg-slate-100 border border-slate-200 rounded opacity-60 flex items-center justify-between line-through">
+              <span class="text-slate-500">${sku.name}</span>
+              <span class="bg-slate-300 text-slate-700 font-bold text-[10px] px-2 py-0.5 rounded"><i class="fa-solid fa-ban mr-1"></i> EXCLUDED (Rx Limit)</span>
+            </div>
+          `;
+        }
+      });
+
+      document.getElementById('rx-sku-container').innerHTML = html;
+    }
+
+    function initEventBusInspector() {
+      const keys = Object.keys(eventHooksData);
+      let listHtml = "";
+      keys.forEach((key, idx) => {
+        const active = idx === 0 ? 'bg-teal-50 border-teal-500 font-bold text-teal-800' : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100';
+        listHtml += `
+          <button onclick="showEventDetails('${key}')" id="evt-btn-${key}" class="evt-item-btn w-full text-left p-2 rounded text-xs border transition truncate ${active}">
+            ${key}
+          </button>
+        `;
+      });
+      document.getElementById('event-list').innerHTML = listHtml;
+      showEventDetails(keys[0]);
+    }
+
+    function showEventDetails(key) {
+      document.querySelectorAll('.evt-item-btn').forEach(b => {
+        b.classList.remove('bg-teal-50', 'border-teal-500', 'font-bold', 'text-teal-800');
+        b.classList.add('bg-slate-50', 'border-slate-200', 'text-slate-700');
+      });
+
+      const btn = document.getElementById('evt-btn-' + key);
+      if (btn) {
+        btn.classList.remove('bg-slate-50', 'border-slate-200', 'text-slate-700');
+        btn.classList.add('bg-teal-50', 'border-teal-500', 'font-bold', 'text-teal-800');
+      }
+
+      const info = eventHooksData[key];
+      document.getElementById('event-title-display').innerText = key;
+      document.getElementById('event-code-display').innerText = info.code;
+    }
+
+    function runTokenCompiler() {
+      const mat = document.getElementById('compiler-material').value;
+      const tint = document.getElementById('compiler-tint').value;
+      const color = document.getElementById('compiler-color').value;
+
+      let matCode = "PO-58";
+      if (mat.includes("1.67")) matCode = "PO-67";
+      if (mat.includes("1.74")) matCode = "PO-74";
+
+      const tokens = `{{lens_type=${tint}}}{{lens_color=${color}}}`;
+      const compiled = `RELensMaterial = ${matCode}-${tint}-${color}-00`;
+
+      document.getElementById('compiler-tokens').innerText = tokens;
+      document.getElementById('compiler-output').innerText = compiled;
+    }
+
+    function calculateROI() {
+      const orders = parseInt(document.getElementById('roi-orders-slider').value);
+      const aov = parseFloat(document.getElementById('roi-aov-slider').value);
+
+      document.getElementById('roi-orders-display').innerText = orders + " Orders";
+      document.getElementById('roi-aov-display').innerText = "$" + aov.toFixed(0) + " USD";
+
+      const gmv = orders * aov;
+      document.getElementById('roi-gmv').innerText = "$" + gmv.toLocaleString();
+
+      let laBase = 199;
+      let included = 200;
+      let overageRate = 0.0299;
+
+      let overageOrders = Math.max(0, orders - included);
+      let laCommission = overageOrders * aov * overageRate;
+      let laTotal = laBase + laCommission;
+
+      let ourTotal = 199;
+      let monthlySavings = Math.max(0, laTotal - ourTotal);
+
+      document.getElementById('roi-la-cost').innerText = "$" + Math.round(laTotal).toLocaleString();
+      document.getElementById('roi-our-cost').innerText = "$" + ourTotal;
+      document.getElementById('roi-savings').innerText = "$" + Math.round(monthlySavings).toLocaleString() + " / mo";
+
+      if (chartROI) {
+        const vols = [100, 300, 500, 750, 1000, 1500];
+        const newLaData = vols.map(v => {
+          let ov = Math.max(0, v - 200);
+          return Math.round(199 + (ov * aov * 0.0299));
+        });
+        chartROI.data.datasets[0].data = newLaData;
+        chartROI.update();
+      }
+    }
+
+    function setSchemaTab(tableName) {
+      document.querySelectorAll('.sub-tab-btn').forEach(btn => {
+        btn.classList.remove('active', 'bg-teal-600', 'text-white');
+        btn.classList.add('bg-slate-100', 'text-slate-700');
+      });
+
+      const btn = document.getElementById('sch-btn-' + tableName);
+      btn.classList.remove('bg-slate-100', 'text-slate-700');
+      btn.classList.add('active', 'bg-teal-600', 'text-white');
+
+      const data = schemaData[tableName];
+      let rowsHtml = "";
+      data.cols.forEach(c => {
+        rowsHtml += `
+          <tr>
+            <td class="p-3 font-mono font-bold text-teal-800">${c.name}</td>
+            <td class="p-3 font-mono text-slate-600">${c.type}</td>
+            <td class="p-3 text-slate-600">${c.desc}</td>
+          </tr>
+        `;
+      });
+
+      document.getElementById('schema-display-container').innerHTML = `
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <h4 class="text-sm font-bold text-slate-900">Table: <code class="text-teal-700">${tableName}</code></h4>
+            <span class="text-xs font-bold px-2 py-0.5 rounded ${tableName === 'prescriptions' || tableName === 'lab_orders' ? 'bg-rose-100 text-rose-800' : 'bg-slate-100 text-slate-700'}">
+              ${data.zone}
+            </span>
+          </div>
+          <div class="overflow-x-auto border border-slate-200 rounded-lg">
+            <table class="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr class="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                  <th class="p-3">Column Name</th>
+                  <th class="p-3">Data Type</th>
+                  <th class="p-3">Description & Security Notes</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                ${rowsHtml}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      initCharts();
+      setFlowStep(1);
+      updateRxSimulation();
+      initEventBusInspector();
+      runTokenCompiler();
+      calculateROI();
+      setSchemaTab('shops');
+    });
+  </script>
+</body>
+</html>

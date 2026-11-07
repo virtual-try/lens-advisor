@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Harlow – Options and extras (Steps 5–6)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500&display=swap">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="configurator.css">
+<link rel="stylesheet" href="motion.css">
+</head>
+<body>
+<header class="theme-header">
+  <a class="theme-logo" href="product.html">Northwind Optical</a>
+  <nav class="theme-nav" aria-label="Store"><a href="#">Glasses</a><a href="#">Sunglasses</a><a href="#">Eye tests</a></nav>
+  <button class="theme-cart" type="button">Cart (0)</button>
+</header>
+<main class="theme-product">
+  <div class="theme-gallery"><svg viewBox="0 0 240 90" fill="none" stroke="currentColor" stroke-width="5" aria-hidden="true"><rect x="12" y="20" width="88" height="56" rx="24"/><rect x="140" y="20" width="88" height="56" rx="24"/><path d="M100 40c8-10 32-10 40 0M12 34L2 28M228 34l10-6"/></svg></div>
+  <div class="theme-info">
+    <h1>Harlow</h1>
+    <p class="theme-price">$129.00 <span class="theme-meta">frame only</span></p>
+    <p class="theme-meta">Colour: Tortoise</p>
+    <div class="theme-swatches" aria-hidden="true"><span style="background:#6b4a2b"></span><span style="background:#111"></span><span style="background:#c9b8a2"></span></div>
+    <div class="la-root"><button class="la-btn la-btn--primary la-btn--block" type="button" data-open-configurator>Select lenses</button></div>
+    <p class="theme-copy">Hand-polished acetate with a keyhole bridge. Medium fit, 50&#8211;20&#8211;145.</p>
+  </div>
+</main>
+<div class="la-root la-configurator">
+  <div class="la-overlay">
+    <section class="la-sheet" role="dialog" aria-modal="true" aria-labelledby="la-title" data-frame="129" data-lens="239">
+      <header class="la-header">
+        <div class="la-grabber" aria-hidden="true"></div>
+        <div class="la-header__top">
+          <p class="la-header__title">Lenses for Harlow<span class="la-header__frame">Tortoise acetate frame</span></p>
+          <button class="la-iconbtn" type="button" data-close-configurator aria-label="Close lens selection"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        </div>
+        <p class="la-steps__count">Steps 5–6 of 7 · Options</p>
+          <ol class="la-steps" aria-label="Progress"><li class="la-steps__item la-steps__item--done"><a class="la-steps__link" href="product.html">Vision<span class="la-sr"> (done)</span></a></li><li class="la-steps__item la-steps__item--done"><a class="la-steps__link" href="prescription.html">Prescription<span class="la-sr"> (done)</span></a></li><li class="la-steps__item la-steps__item--done"><a class="la-steps__link" href="lenses.html">Lens family<span class="la-sr"> (done)</span></a></li><li class="la-steps__item la-steps__item--done"><a class="la-steps__link" href="lenses.html">Lens<span class="la-sr"> (done)</span></a></li><li class="la-steps__item la-steps__item--current"><span class="la-steps__link" aria-current="step">Options<span class="la-sr"> (current)</span></span></li><li class="la-steps__item la-steps__item--current"><span class="la-steps__link" aria-current="step">Extras<span class="la-sr"> (current)</span></span></li><li class="la-steps__item "><span class="la-steps__link">Review<span class="la-sr"></span></span></li></ol>
+      </header>
+      <div class="la-body">
+        <div class="la-step-head">
+          <h2 id="la-title" tabindex="-1">Fine-tune your lenses</h2>
+          <p>Thickness and tint first, then any extras you want. Prices update as you go.</p>
+        </div>
+        <fieldset class="la-fieldset la-section">
+          <legend class="la-section__title">Lens thickness</legend>
+          <p class="la-section__hint">Stronger prescriptions look better in thinner lenses.</p>
+          <div class="la-grid-2">
+            <label class="la-choice">
+              <input type="radio" name="index" value="150" data-kind="upgrade" data-price="0" disabled aria-describedby="why-150">
+              <span class="la-mark" aria-hidden="true"></span>
+              <span class="la-choice__body"><span class="la-choice__title">Standard</span><span class="la-choice__desc">1.50 index</span><span class="la-choice__reason" id="why-150"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 7.2v4M8 4.8v.1" stroke-linecap="round"/></svg><span>Too thick for your prescription. Choose 1.60 or thinner.</span></span></span>
+              <span class="la-choice__price">Included</span>
+            </label>
+            <label class="la-choice">
+              <input type="radio" name="index" value="160" data-kind="upgrade" data-price="40">
+              <span class="la-mark" aria-hidden="true"></span>
+              <span class="la-choice__body"><span class="la-choice__title">Thin</span><span class="la-choice__desc">1.60 index</span></span>
+              <span class="la-choice__price">+$40</span>
+            </label>
+            <label class="la-choice">
+              <input type="radio" name="index" value="167" data-kind="upgrade" data-price="80" checked>
+              <span class="la-mark" aria-hidden="true"></span>
+              <span class="la-choice__body"><span class="la-choice__title">Thinner<span class="la-badge">Best match</span></span><span class="la-choice__desc">1.67 index</span></span>
+              <span class="la-choice__price">+$80</span>
+            </label>
+            <label class="la-choice">
+              <input type="radio" name="index" value="174" data-kind="upgrade" data-price="140">
+              <span class="la-mark" aria-hidden="true"></span>
+              <span class="la-choice__body"><span class="la-choice__title">Thinnest</span><span class="la-choice__desc">1.74 index</span></span>
+              <span class="la-choice__price">+$140</span>
+            </label>
+          </div>
+        </fieldset>
+        <fieldset class="la-fieldset la-section">
+          <legend class="la-section__title">Tint</legend>
+          <p class="la-section__hint">A tint adds colour to the whole lens. Gradient fades from top to bottom.</p>
+          <div class="la-choices">
+            <label class="la-choice">
+              <input type="radio" name="tint" value="none" data-kind="upgrade" data-price="0">
+              <span class="la-mark" aria-hidden="true"></span>
+              <span class="la-choice__body"><span class="la-choice__title">No tint</span><span class="la-choice__desc">Clear lenses.</span></span>
+              <span class="la-choice__price">Included</span>
+            </label>
+            <label class="la-choice">
+              <input type="radio" name="tint" value="solid" data-kind="upgrade" data-price="25" checked>
+              <span class="la-mark" aria-hidden="true"></span>
+              <span class="la-choice__body"><span class="la-choice__title">Solid tint</span><span class="la-choice__desc">Even colour across the lens.</span></span>
+              <span class="la-choice__price">+$25</span>
+            </label>
+            <label class="la-choice">
+              <input type="radio" name="tint" value="gradient" data-kind="upgrade" data-price="35">
+              <span class="la-mark" aria-hidden="true"></span>
+              <span class="la-choice__body"><span class="la-choice__title">Gradient tint</span><span class="la-choice__desc">Darker at the top, clear at the bottom.</span></span>
+              <span class="la-choice__price">+$35</span>
+            </label>
+          </div>
+          <fieldset class="la-fieldset" style="margin-top:var(--la-space-4)">
+            <legend class="la-section__hint" style="color:var(--la-ink);font-weight:var(--la-weight-medium)">Tint colour</legend>
+            <div class="la-swatches">
+              <label class="la-swatch"><input type="radio" name="tint-colour" value="grey" checked><span class="la-swatch__chip" style="--swatch:#5f625f"></span>Grey</label>
+              <label class="la-swatch"><input type="radio" name="tint-colour" value="brown"><span class="la-swatch__chip" style="--swatch:#7a5236"></span>Brown</label>
+              <label class="la-swatch"><input type="radio" name="tint-colour" value="green"><span class="la-swatch__chip" style="--swatch:#4f6149"></span>Green</label>
+              <label class="la-swatch"><input type="radio" name="tint-colour" value="rose"><span class="la-swatch__chip" style="--swatch:#b9837f"></span>Rose</label>
+            </div>
+          </fieldset>
+        </fieldset>
+        <fieldset class="la-fieldset la-section" id="extras">
+          <legend class="la-section__title">Extras</legend>
+          <p class="la-section__hint">Optional. Add only what you want.</p>
+          <div class="la-choices">
+            <label class="la-choice">
+              <input type="checkbox" name="addon-ar" value="ar" data-kind="upgrade" data-price="35">
+              <span class="la-mark la-mark--box" aria-hidden="true"></span>
+              <span class="la-choice__body"><span class="la-choice__title">Anti-reflective coating</span><span class="la-choice__desc">Less glare from screens and headlights at night.</span></span>
+              <span class="la-choice__price">+$35</span>
+            </label>
+            <label class="la-choice">
+              <input type="checkbox" name="addon-hard" value="hard" data-kind="upgrade" data-price="15">
+              <span class="la-mark la-mark--box" aria-hidden="true"></span>
+              <span class="la-choice__body"><span class="la-choice__title">Scratch-resistant coating</span><span class="la-choice__desc">A harder surface for everyday knocks.</span></span>
+              <span class="la-choice__price">+$15</span>
+            </label>
+            <label class="la-choice">
+              <input type="checkbox" name="addon-case" value="case" data-kind="upgrade" data-price="12">
+              <span class="la-mark la-mark--box" aria-hidden="true"></span>
+              <span class="la-choice__body"><span class="la-choice__title">Hard case</span><span class="la-choice__desc">Your frame already comes with a soft pouch.</span></span>
+              <span class="la-choice__price">+$12</span>
+            </label>
+          </div>
+        </fieldset>
+      </div>
+      <footer class="la-footer">
+        <div class="la-total" aria-live="polite">
+          <span class="la-total__parts">Frame <b data-sum="frame">$129.00</b> + lens <b data-sum="lens"></b> + upgrades <b data-sum="upgrades"></b></span>
+          <span class="la-total__amount"><span class="la-total__label">Total</span><strong data-sum="total"></strong></span>
+        </div>
+        <div class="la-footer__actions"><a class="la-btn la-btn--ghost" href="lenses.html">Back</a><a class="la-btn la-btn--primary" href="review.html" data-continue>Continue</a></div>
+      </footer>
+    </section>
+  </div>
+</div>
+<script src="motion.js"></script>
+<script src="proto.js"></script>
+</body>
+</html>

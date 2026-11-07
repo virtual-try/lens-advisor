@@ -1,0 +1,155 @@
+{
+  "updated": "2026-11-07T16:18:49.003Z",
+  "accounts": [
+    {
+      "id": "agy-3",
+      "engine": "agy",
+      "label": "agy-3",
+      "status": "ok",
+      "backAt": null,
+      "reserved": false,
+      "parallelLimit": 1,
+      "bannedModels": []
+    },
+    {
+      "id": "agy-4",
+      "engine": "agy",
+      "label": "agy-4",
+      "status": "ok",
+      "backAt": null,
+      "reserved": false,
+      "parallelLimit": 1,
+      "bannedModels": []
+    },
+    {
+      "id": "opencode",
+      "engine": "opencode",
+      "label": "opencode",
+      "status": "ok",
+      "backAt": null,
+      "reserved": false,
+      "parallelLimit": 1,
+      "bannedModels": []
+    },
+    {
+      "id": "opencode-1",
+      "engine": "opencode",
+      "label": "opencode-1",
+      "status": "ok",
+      "backAt": null,
+      "reserved": false,
+      "parallelLimit": 1,
+      "bannedModels": []
+    },
+    {
+      "id": "opencode-2",
+      "engine": "opencode",
+      "label": "opencode-2",
+      "status": "ok",
+      "backAt": null,
+      "reserved": false,
+      "parallelLimit": 1,
+      "bannedModels": []
+    },
+    {
+      "id": "opencode-3",
+      "engine": "opencode",
+      "label": "opencode-3",
+      "status": "ok",
+      "backAt": null,
+      "reserved": false,
+      "parallelLimit": 1,
+      "bannedModels": []
+    },
+    {
+      "id": "opencode-4",
+      "engine": "opencode",
+      "label": "opencode-4",
+      "status": "ok",
+      "backAt": null,
+      "reserved": false,
+      "parallelLimit": 1,
+      "bannedModels": []
+    },
+    {
+      "id": "opencode-5",
+      "engine": "opencode",
+      "label": "opencode-5",
+      "status": "ok",
+      "backAt": null,
+      "reserved": false,
+      "parallelLimit": 1,
+      "bannedModels": []
+    },
+    {
+      "id": "opencode-6",
+      "engine": "opencode",
+      "label": "opencode-6",
+      "status": "ok",
+      "backAt": null,
+      "reserved": false,
+      "parallelLimit": 1,
+      "bannedModels": []
+    },
+    {
+      "id": "opencode-7",
+      "engine": "opencode",
+      "label": "opencode-7",
+      "status": "ok",
+      "backAt": null,
+      "reserved": false,
+      "parallelLimit": 1,
+      "bannedModels": []
+    },
+    {
+      "id": "opencode-8",
+      "engine": "opencode",
+      "label": "opencode-8",
+      "status": "ok",
+      "backAt": null,
+      "reserved": false,
+      "parallelLimit": 1,
+      "bannedModels": []
+    },
+    {
+      "id": "grok",
+      "engine": "grok",
+      "label": "grok",
+      "status": "ok",
+      "backAt": null,
+      "reserved": false,
+      "parallelLimit": 1,
+      "bannedModels": []
+    },
+    {
+      "id": "codex",
+      "engine": "codex",
+      "label": "codex",
+      "status": "ok",
+      "backAt": null,
+      "reserved": false,
+      "parallelLimit": 1,
+      "bannedModels": [
+        "gpt-6-astra",
+        "gpt-5.6-astra",
+        "gpt-6-terra",
+        "gpt-5.6-terra"
+      ]
+    },
+    {
+      "id": "codex-1",
+      "engine": "codex",
+      "label": "codex-1",
+      "status": "ok",
+      "backAt": null,
+      "reserved": false,
+      "parallelLimit": 1,
+      "bannedModels": [
+        "gpt-6-astra",
+        "gpt-5.6-astra",
+        "gpt-6-terra",
+        "gpt-5.6-terra"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+/* Stand-in merchant theme. Not part of the configurator; it only exists so the
+   configurator can be judged sitting inside "someone else's" storefront. */
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--theme-font);
+  color: var(--theme-text);
+  background: var(--theme-bg);
+  overflow-x: clip;
+}
+
+.theme-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--la-space-4);
+  padding: var(--la-space-4) var(--la-space-5);
+  border-bottom: 1px solid var(--theme-line);
+}
+.theme-logo { font-weight: 700; letter-spacing: 0.02em; text-decoration: none; color: inherit; }
+.theme-nav { display: flex; gap: var(--la-space-5); font-size: var(--la-text-sm); }
+.theme-nav a { color: inherit; text-decoration: none; }
+.theme-cart { background: none; border: 0; font: inherit; color: inherit; cursor: pointer; min-height: var(--la-target); }
+
+.theme-product {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: var(--la-space-7);
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: var(--la-space-7) var(--la-space-5);
+}
+.theme-gallery {
+  aspect-ratio: 4 / 3;
+  background: var(--theme-image-bg);
+  display: grid;
+  place-items: center;
+}
+.theme-gallery svg { width: 70%; height: auto; color: var(--theme-text); }
+.theme-info h1 { font-size: 2rem; font-weight: 500; margin: 0 0 var(--la-space-2); }
+.theme-price { font-size: var(--la-text-lg); margin: 0 0 var(--la-space-5); }
+.theme-meta { color: var(--theme-muted); font-size: var(--la-text-sm); margin: 0 0 var(--la-space-5); }
+.theme-swatches { display: flex; gap: var(--la-space-2); margin-bottom: var(--la-space-5); }
+.theme-swatches span { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--theme-line); }
+.theme-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 52px;
+  border: 0;
+  background: var(--theme-button-bg);
+  color: var(--theme-button-text);
+  font: inherit;
+  font-size: var(--la-text-md);
+  cursor: pointer;
+}
+.theme-copy { color: var(--theme-muted); font-size: var(--la-text-sm); line-height: 1.6; margin-top: var(--la-space-5); }
+
+@media (max-width: 760px) {
+  .theme-nav { display: none; }
+  .theme-product { grid-template-columns: minmax(0, 1fr); gap: var(--la-space-5); padding: var(--la-space-4); }
+}

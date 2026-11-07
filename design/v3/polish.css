@@ -1,0 +1,141 @@
+/*
+  v3 polish layer (impeccable critique + audit). Loaded last. Only reads tokens.
+  Each block names the finding it fixes; see NOTES.md for the full list.
+*/
+
+/* ---- A11y: visible keyboard focus (WCAG 2.4.7 / 1.4.11) -------------------- */
+.la-root :focus-visible { outline: var(--la-focus-outline); outline-offset: var(--la-focus-offset); }
+/* v2/v1 painted focus as a box-shadow; drop it everywhere except the primary, whose shadow is its signature */
+.la-root :focus-visible:not(.la-btn--primary):not(.la-control) { box-shadow: none; }
+.la-root .la-control:focus-visible { outline: none; border-color: var(--la-accent); box-shadow: var(--la-focus-ring), inset 0 0 0 1px var(--la-accent); }
+.la-choice:has(input:focus-visible) { outline: var(--la-focus-outline); outline-offset: var(--la-focus-offset); box-shadow: none; }
+.la-choice:has(input:checked:focus-visible) { box-shadow: inset 0 0 0 1px var(--la-ink); }
+.la-segment label:has(input:focus-visible) { outline: var(--la-focus-outline); outline-offset: var(--la-focus-offset); }
+.la-swatch:has(input:focus-visible) .la-swatch__chip { outline: var(--la-focus-outline); outline-offset: 4px; }
+.la-btn--primary:focus-visible { outline-offset: 5px; }
+.la-help summary:focus-visible { outline-offset: 0; border-radius: var(--la-radius-sm); }
+
+/* ---- A11y: form-control edges readable (WCAG 1.4.11) ----------------------- */
+.la-control { border-color: var(--la-control-edge); }
+.la-mark { border-color: var(--la-control-edge); }
+.la-qty { border-color: var(--la-control-edge); }
+.la-control[aria-invalid="true"] { border-color: var(--la-accent-deep); }
+
+/* ---- A11y: inactive tab / segment text was 4.41:1 on Bone Deep -------------- */
+.la-tab,
+.la-segment label { color: var(--la-ink-2); }
+.la-tab[aria-selected="true"],
+.la-segment label:has(input:checked) { color: var(--la-ink); }
+
+/* ---- Hierarchy: card titles one step below section titles ----------------- */
+.la-choice__title { font-size: var(--la-text-base); }
+.la-section__title { font-size: var(--la-text-lg); }
+.la-group__trigger .la-choice__title { font-size: var(--la-text-lg); }
+.la-section__hint { max-width: 60ch; }
+.la-step-head p { max-width: 60ch; }
+
+/* ---- Touch targets: 44px everywhere a finger goes -------------------------- */
+.la-segment label { min-height: var(--la-segment-h); }
+.la-qty button { width: var(--la-target); height: var(--la-target); }
+.la-swatch { min-height: var(--la-target); }
+
+/* ---- Tokenised one-offs (theming audit) ------------------------------------ */
+.la-mark--box { border-radius: var(--la-mark-radius-box); }
+.la-swatch__chip { box-shadow: inset 0 0 0 1px var(--la-swatch-edge); }
+.la-choice__reason svg,
+.la-error svg { width: var(--la-icon-sm); height: var(--la-icon-sm); }
+.la-note svg,
+.la-drawer__added svg { width: var(--la-icon-md); height: var(--la-icon-md); }
+
+/* ---- Disabled options: read as "not for you", not as broken ---------------- */
+.la-choice:has(input:disabled) { border-style: dashed; border-color: var(--la-control-edge); }
+.la-choice:has(input:disabled) .la-choice__desc { color: var(--la-muted); }
+
+/* ---- Tint colour sub-group (was inline styles) ------------------------------ */
+.la-subgroup { margin-top: var(--la-space-4); }
+.la-subgroup > legend { margin-bottom: var(--la-space-2); font-size: var(--la-text-sm); font-weight: var(--la-weight-medium); color: var(--la-ink); }
+.la-pd .la-section__hint { margin: 0; }
+
+/* ---- Step-level error summary (Continue pressed with a problem) ------------ */
+.la-alert {
+  display: flex;
+  gap: var(--la-space-2);
+  align-items: flex-start;
+  margin: 0 0 var(--la-space-4);
+  padding: var(--la-space-3) var(--la-space-4);
+  border-radius: var(--la-radius-sm);
+  background: var(--la-accent-soft);
+  color: var(--la-accent-deep);
+  font-size: var(--la-text-sm);
+  font-weight: var(--la-weight-medium);
+}
+.la-alert[hidden] { display: none; }
+.la-alert svg { width: var(--la-icon-sm); height: var(--la-icon-sm); flex: none; margin-top: 3px; }
+.la-alert .la-link { color: var(--la-accent-deep); font-size: inherit; text-decoration-color: currentColor; }
+
+/* ---- Upload: empty vs filled, and the rejected-file error ------------------- */
+.la-drop + .la-error { justify-content: center; }
+
+/* ---- Footer: the price line no longer wraps at 375px ------------------------ */
+@media (max-width: 640px) {
+  .la-total {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "amount" "parts";
+    gap: 0;
+  }
+  .la-total__amount { grid-area: amount; justify-content: space-between; }
+  .la-total__parts { grid-area: parts; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* the 3px progress links are not usable targets on a phone; the count line carries progress */
+  .la-steps__link { pointer-events: none; }
+  .la-review__item { padding: var(--la-space-3) var(--la-space-4); }
+  .la-rxtable th, .la-rxtable td { padding: var(--la-space-1); }
+}
+
+/* ---- Selection colour belongs to the brand too ----------------------------- */
+.la-root ::selection { background: var(--la-accent-soft); color: var(--la-ink); }
+
+/* ---- Critique P1: step 1 prices were clipped at 375px ---------------------- */
+@media (max-width: 640px) {
+  .la-choice .la-pict { display: block; width: var(--la-pictogram-sm); height: var(--la-pictogram-sm); }
+  .la-step-head h2 { font-size: var(--la-text-xl-sm); }
+  /* keep the eye names in view while scrolling the Rx rows */
+  .la-rx__head { position: sticky; top: calc(var(--la-space-5) * -1); z-index: 1; background: var(--la-surface); }
+}
+
+/* ---- Critique: "not available" is information, not an error --------------- */
+.la-choice__reason { color: var(--la-ink-2); }
+.la-choice__reason svg { color: var(--la-muted); }
+
+/* ---- Critique: a neutral heads-up where the Rx is entered ------------------ */
+.la-rx__hint {
+  display: flex;
+  gap: var(--la-space-1);
+  margin: var(--la-space-1) 0 0;
+  font-size: var(--la-text-xs);
+  color: var(--la-ink-2);
+}
+.la-rx__hint svg { width: var(--la-icon-sm); height: var(--la-icon-sm); flex: none; margin-top: 1px; color: var(--la-muted); }
+.la-rx__check {
+  display: flex;
+  gap: var(--la-space-2);
+  margin: 0 0 var(--la-space-2);
+  padding: var(--la-space-3) 0 var(--la-space-1);
+  border-top: var(--la-border-width) solid var(--la-hairline);
+  font-size: var(--la-text-sm);
+  color: var(--la-ink-2);
+}
+.la-rx__check[hidden] { display: none; }
+.la-rx__check svg { width: var(--la-icon-sm); height: var(--la-icon-sm); flex: none; margin-top: 3px; color: var(--la-muted); }
+
+/* ---- Critique: an uploaded file replaces the big empty dropzone ------------ */
+.la-drop[data-has-file] { padding: var(--la-space-4); grid-template-columns: 1fr; }
+.la-drop[data-has-file] > svg,
+.la-drop[data-has-file] .la-drop__title,
+.la-drop[data-has-file] .la-drop__hint { display: none; }
+.la-panel-note { margin: 0 0 var(--la-space-4); }
+
+/* ---- Review: Edit links get horizontal room; no duplicate total ------------ */
+.la-review__item .la-link { padding: 0 var(--la-space-2); margin-right: calc(var(--la-space-2) * -1); }
+.la-step-head p,
+.la-choice__desc,
+.la-reassure { text-wrap: pretty; }

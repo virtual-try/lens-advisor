@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Harlow – Prescription (Step 2)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- v3: non-blocking Geist 400/500 (brand storefront rule); system stack until it lands -->
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500&display=swap"></noscript>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="configurator.css">
+<link rel="stylesheet" href="motion.css">
+<link rel="stylesheet" href="polish.css">
+</head>
+<body>
+<header class="theme-header">
+  <a class="theme-logo" href="product.html">Northwind Optical</a>
+  <nav class="theme-nav" aria-label="Store"><a href="#">Glasses</a><a href="#">Sunglasses</a><a href="#">Eye tests</a></nav>
+  <button class="theme-cart" type="button">Cart (0)</button>
+</header>
+<main class="theme-product">
+  <div class="theme-gallery"><svg viewBox="0 0 240 90" fill="none" stroke="currentColor" stroke-width="5" aria-hidden="true"><rect x="12" y="20" width="88" height="56" rx="24"/><rect x="140" y="20" width="88" height="56" rx="24"/><path d="M100 40c8-10 32-10 40 0M12 34L2 28M228 34l10-6"/></svg></div>
+  <div class="theme-info">
+    <h1>Harlow</h1>
+    <p class="theme-price">$129.00 <span class="theme-meta">frame only</span></p>
+    <p class="theme-meta">Colour: Tortoise</p>
+    <div class="theme-swatches" aria-hidden="true"><span style="background:#6b4a2b"></span><span style="background:#111"></span><span style="background:#c9b8a2"></span></div>
+    <div class="la-root"><button class="la-btn la-btn--primary la-btn--block" type="button" data-open-configurator>Select lenses</button></div>
+    <p class="theme-copy">Hand-polished acetate with a keyhole bridge. Medium fit, 50&#8211;20&#8211;145.</p>
+  </div>
+</main>
+<div class="la-root la-configurator">
+  <div class="la-overlay">
+    <section class="la-sheet" role="dialog" aria-modal="true" aria-labelledby="la-title" data-frame="129">
+      <header class="la-header">
+        <div class="la-grabber" aria-hidden="true"></div>
+        <div class="la-header__top">
+          <p class="la-header__title">Lenses for Harlow<span class="la-header__frame">Tortoise acetate frame</span></p>
+          <button class="la-iconbtn" type="button" data-close-configurator aria-label="Close lens selection"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        </div>
+        <p class="la-steps__count">Step 2 of 7 · Prescription</p>
+          <ol class="la-steps" aria-label="Progress"><li class="la-steps__item la-steps__item--done"><a class="la-steps__link" href="product.html">Vision<span class="la-sr"> (done)</span></a></li><li class="la-steps__item la-steps__item--current"><span class="la-steps__link" aria-current="step">Prescription<span class="la-sr"> (current)</span></span></li><li class="la-steps__item "><span class="la-steps__link">Lens family<span class="la-sr"></span></span></li><li class="la-steps__item "><span class="la-steps__link">Lens<span class="la-sr"></span></span></li><li class="la-steps__item "><span class="la-steps__link">Options<span class="la-sr"></span></span></li><li class="la-steps__item "><span class="la-steps__link">Extras<span class="la-sr"></span></span></li><li class="la-steps__item "><span class="la-steps__link">Review<span class="la-sr"></span></span></li></ol>
+      </header>
+      <div class="la-body">
+        <div class="la-step-head">
+          <h2 id="la-title" tabindex="-1">Add your prescription</h2>
+          <p>Copy the numbers from your prescription, or send us a photo of it. An optician checks every order.</p>
+        </div>
+        <div class="la-tabs" role="tablist" aria-label="How to add your prescription">
+          <button class="la-tab" role="tab" id="tab-manual" aria-controls="panel-manual" aria-selected="true" type="button">Type it in</button>
+          <button class="la-tab" role="tab" id="tab-upload" aria-controls="panel-upload" aria-selected="false" tabindex="-1" type="button">Upload a photo</button>
+        </div>
+
+        <div class="la-tabpanel" role="tabpanel" id="panel-manual" aria-labelledby="tab-manual">
+          <p class="la-alert" id="step-alert" role="alert" tabindex="-1" hidden><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.6v4.2M8 11.2v.1" stroke-linecap="round"/></svg><span>One thing to fix before you continue: <button class="la-link" type="button" data-goto-invalid>add the right eye's axis</button>.</span></p>
+          <div class="la-rx">
+            <div class="la-rx__head" aria-hidden="true">
+              <span></span>
+              <span class="la-rx__eye" id="eye-od">Right eye<small>OD</small></span>
+              <span class="la-rx__eye" id="eye-os">Left eye<small>OS</small></span>
+            </div>
+            <div class="la-rx__row">
+              <div class="la-rx__label" id="lbl-sph"><strong>Sphere</strong><span>SPH · main strength</span></div>
+              <div class="la-rx__cell"><select class="la-control" id="od-sph" data-range="sph" data-value="-2.25" aria-labelledby="lbl-sph eye-od"></select></div>
+              <div class="la-rx__cell"><select class="la-control" id="os-sph" data-range="sph" data-value="-9" aria-labelledby="lbl-sph eye-os" aria-describedby="os-sph-hint"></select>
+                <p class="la-rx__hint" id="os-sph-hint"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 7.2v4M8 4.8v.1" stroke-linecap="round"/></svg><span>Strong prescription. We'll only show lenses that suit it.</span></p></div>
+            </div>
+            <div class="la-rx__row">
+              <div class="la-rx__label" id="lbl-cyl"><strong>Cylinder</strong><span>CYL · for astigmatism</span></div>
+              <div class="la-rx__cell"><select class="la-control" id="od-cyl" data-range="cyl" data-value="-0.75" aria-labelledby="lbl-cyl eye-od"></select></div>
+              <div class="la-rx__cell"><select class="la-control" id="os-cyl" data-range="cyl" data-value="0" aria-labelledby="lbl-cyl eye-os"></select></div>
+            </div>
+            <div class="la-rx__row">
+              <div class="la-rx__label" id="lbl-axis"><strong>Axis</strong><span>Only if CYL is filled in</span></div>
+              <div class="la-rx__cell"><input class="la-control" id="od-axis" type="text" inputmode="numeric" maxlength="3" value="" aria-labelledby="lbl-axis eye-od" aria-describedby="od-axis-error">
+                <p class="la-error" id="od-axis-error" hidden><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true" width="16" height="16" style="flex:none;margin-top:3px"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.6v4.2M8 11.2v.1" stroke-linecap="round"/></svg><span></span></p></div>
+              <div class="la-rx__cell"><input class="la-control" id="os-axis" type="text" inputmode="numeric" maxlength="3" value="" aria-labelledby="lbl-axis eye-os" aria-describedby="os-axis-error">
+                <p class="la-error" id="os-axis-error" hidden><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true" width="16" height="16" style="flex:none;margin-top:3px"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.6v4.2M8 11.2v.1" stroke-linecap="round"/></svg><span></span></p></div>
+            </div>
+            <div class="la-rx__row">
+              <div class="la-rx__label" id="lbl-add"><strong>Add</strong><span>For progressive and reading</span></div>
+              <div class="la-rx__cell"><select class="la-control" id="od-add" data-range="add" data-value="2" aria-labelledby="lbl-add eye-od"></select></div>
+              <div class="la-rx__cell"><select class="la-control" id="os-add" data-range="add" data-value="2" aria-labelledby="lbl-add eye-os"></select></div>
+            </div>
+            <p class="la-rx__check" id="rx-check" role="status"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 7.2v4M8 4.8v.1" stroke-linecap="round"/></svg><span>Right −2.25, left −9.00 is a big difference between eyes. Worth a quick check against your paper; if it matches, you're all set.</span></p>
+          </div>
+          <button class="la-link la-copy" type="button" data-copy-eye>Same as right eye? Copy to left</button>
+
+          <fieldset class="la-fieldset la-pd">
+            <legend class="la-section__title">Pupillary distance (PD)</legend>
+            <p class="la-section__hint">The distance between your pupils, in millimetres. It is often written as one number, sometimes as two.</p>
+            <div class="la-segment">
+              <label><input type="radio" name="pd-mode" value="single" checked>One number</label>
+              <label><input type="radio" name="pd-mode" value="dual">Two numbers</label>
+            </div>
+            <div class="la-pd__fields">
+              <label data-pd="single">PD (mm)<input class="la-control" type="text" inputmode="decimal" value="63"></label>
+              <label data-pd="dual" hidden>Right (mm)<input class="la-control" type="text" inputmode="decimal"></label>
+              <label data-pd="dual" hidden>Left (mm)<input class="la-control" type="text" inputmode="decimal"></label>
+            </div>
+          </fieldset>
+
+          <details class="la-help">
+            <summary>What do these numbers mean?</summary>
+            <dl>
+              <div><dt>Sphere (SPH)</dt><dd>The main strength. A minus number corrects short sight, a plus number long sight.</dd></div>
+              <div><dt>Cylinder (CYL) and Axis</dt><dd>Correct astigmatism. They always come as a pair: if there is a cylinder, there is an axis between 1 and 180.</dd></div>
+              <div><dt>Add</dt><dd>Extra strength for reading, used in progressive and reading lenses. Usually the same for both eyes.</dd></div>
+              <div><dt>PD</dt><dd>Centres the lenses on your eyes. Not on your prescription? Measure it with a ruler and a mirror, or leave it blank and we'll email you a quick guide after checkout.</dd></div>
+            </dl>
+          </details>
+        </div>
+
+        <div class="la-tabpanel" role="tabpanel" id="panel-upload" aria-labelledby="tab-upload" hidden>
+          <p class="la-note la-panel-note"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="4" y="9" width="12" height="8" rx="2"/><path d="M7 9V6.5a3 3 0 016 0V9"/></svg><span>Stored encrypted. Only the optician checking your order can see it.</span></p>
+          <div class="la-drop" data-has-file>
+            <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="7" y="5" width="26" height="30" rx="4"/><path d="M20 26V14M15 18.5l5-5 5 5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <p class="la-drop__title">Add a photo or PDF of your prescription</p>
+            <p class="la-drop__hint"><span class="la-drop__desktop-only">Drag it here, or choose a file. </span>JPG, PNG, HEIC or PDF, up to 10 MB.</p>
+            <div class="la-drop__actions">
+              <label class="la-btn la-btn--ghost" data-pick-file tabindex="0"><span data-pick-label>Replace file</span><input class="la-sr" type="file" accept="image/jpeg,image/png,image/heic,application/pdf"></label>
+              <label class="la-btn la-btn--ghost" tabindex="0">Take a photo<input class="la-sr" type="file" accept="image/*" capture="environment"></label>
+            </div>
+          </div>
+          <p class="la-error" id="upload-error" role="alert" hidden><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.6v4.2M8 11.2v.1" stroke-linecap="round"/></svg><span></span></p>
+          <div class="la-file">
+            <svg class="la-file__icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 2.5h6.5L15 6v11.5H5z"/><path d="M11.5 2.5V6H15"/></svg>
+            <span class="la-file__name">prescription-may-2026.jpg</span>
+            <span class="la-file__size">1.2 MB</span>
+            <button class="la-iconbtn" type="button" data-remove-file aria-label="Remove prescription-may-2026.jpg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+          </div>
+          <p class="la-section__hint">If your PD isn't on the photo, we'll ask for it after checkout.</p>
+        </div>
+      </div>
+      <footer class="la-footer">
+        <div class="la-total">
+          <span class="la-total__parts">Frame <b data-sum="frame">$129.00</b> + lens <b data-sum="lens"></b> + upgrades <b data-sum="upgrades"></b></span>
+          <span class="la-total__amount" aria-live="polite" aria-atomic="true"><span class="la-total__label">Total</span><strong data-sum="total"></strong></span>
+        </div>
+        <div class="la-footer__actions"><a class="la-btn la-btn--ghost" href="product.html">Back</a><a class="la-btn la-btn--primary" href="lenses.html" data-continue>Continue</a></div>
+      </footer>
+    </section>
+  </div>
+</div>
+<script src="motion.js"></script>
+<script src="proto.js"></script>
+</body>
+</html>
