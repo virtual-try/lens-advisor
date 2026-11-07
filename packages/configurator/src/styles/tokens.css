@@ -1,0 +1,106 @@
+/*
+  Storefront configurator tokens, transcribed from specs/DESIGN-SYSTEM.md.
+  The only file in this package with raw colour, size, or duration values.
+
+  :host matches inside the <lens-configurator> shadow root (spec 16).
+  .la-block matches the theme app block, which renders the trigger outside that shadow root.
+  Custom properties inherit into the shadow tree, so a merchant value set on .la-block
+  reaches :host.
+
+  Merchant overrides (outer wins, brand value is the fallback):
+    --la-merchant-accent
+    --la-merchant-font-family
+    --la-merchant-radius
+*/
+
+:host,
+.la-block {
+  --la-bg: #F7F4EC;
+  --la-bg-deep: #ECE6D5;
+  --la-surface: #FFFFFF;
+  --la-ink: #0A0A09;
+  --la-ink-2: #1F1E1B;
+  --la-muted: #6B6961;
+  --la-muted-2: #A09C90;
+  --la-hairline: #E0D9C5;
+  --la-hairline-2: #CFC6AC;
+  --la-control-edge: color-mix(in srgb, var(--la-muted) 70%, var(--la-hairline-2));
+  --la-accent: var(--la-merchant-accent, #FF3D00);
+  --la-accent-2: #C8FF00;
+  --la-accent-soft: #FFE0D2;
+  --la-accent-deep: #B82500;
+  --la-positive: #00A85A;
+  --la-on-accent: #FFFFFF;
+  --la-on-ink: #F7F4EC;
+  --la-swatch-edge: rgb(10 10 9 / 0.16);
+  --la-backdrop: rgb(10 10 9 / 0.48);
+
+  --la-font-family: var(--la-merchant-font-family, 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+  --la-font-numeric: tabular-nums;
+  --la-text-xs: 0.8125rem;
+  --la-text-sm: 0.875rem;
+  --la-text-md: 0.9375rem;
+  --la-text-base: 1rem;
+  --la-text-input: 1rem;
+  --la-text-lg: 1.125rem;
+  --la-text-xl: 1.625rem;
+  --la-text-xl-sm: 1.375rem;
+  --la-weight-regular: 400;
+  --la-weight-medium: 500;
+  --la-tracking-tight: -0.02em;
+  --la-leading-tight: 1.15;
+  --la-leading-body: 1.55;
+
+  --la-space-1: 4px;
+  --la-space-2: 8px;
+  --la-space-3: 12px;
+  --la-space-4: 16px;
+  --la-space-5: 24px;
+  --la-space-6: 32px;
+  --la-space-7: 48px;
+
+  --la-radius: var(--la-merchant-radius, 14px);
+  --la-radius-lg: 18px;
+  --la-radius-sm: 10px;
+  --la-radius-pill: 999px;
+  --la-mark-radius-box: 6px;
+  --la-border-width: 1px;
+  --la-border-width-strong: 2px;
+  --la-shadow-signature: 4px 4px 0 var(--la-accent);
+  --la-shadow-signature-hover: 6px 6px 0 var(--la-accent);
+  --la-shadow-sheet: 0 24px 64px rgb(10 10 9 / 0.22), 0 2px 8px rgb(10 10 9 / 0.08);
+  --la-shadow-footer: 0 -1px 0 var(--la-hairline);
+  --la-z-overlay: 2147483000;
+
+  --la-modal-max: 720px;
+  --la-drawer-max: 420px;
+  --la-sheet-gap: 8px;
+  --la-label-col: 168px;
+  --la-target: 44px;
+  --la-segment-h: 44px;
+  --la-icon: 20px;
+  --la-icon-sm: 16px;
+  --la-icon-md: 18px;
+  --la-pictogram: 40px;
+  --la-pictogram-sm: 32px;
+  --la-mark: 22px;
+  --la-swatch: 36px;
+  --la-thumb: 72px;
+
+  --la-focus-ring: 0 0 0 3px var(--la-accent-soft);
+  --la-focus-outline: 2px solid var(--la-ink);
+  --la-focus-offset: 3px;
+  --la-transition-duration: 200ms;
+  --la-ease: ease;
+  --la-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --la-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --la-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --la-dur-press: 120ms;
+  --la-dur-fast: 150ms;
+  --la-dur-modal: 250ms;
+  --la-dur-sheet: 400ms;
+  --la-dur-highlight: 700ms;
+  --la-stagger: 40ms;
+  --la-shift: 16px;
+  --la-press-scale: 0.98;
+}
