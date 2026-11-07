@@ -1,6 +1,6 @@
 # Spec 13 — Price calculation
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 03
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —
@@ -92,4 +92,4 @@ Minor units, USD unless stated.
   - `pnpm lint` (`eslint . --max-warnings 0`) exit 0
   - `pnpm build` exit 0
   - `git diff --check` exit 0
-- **2026-11-07** — Evidence (orchestro spec verify, tree 77c449e4): install pass · typecheck pass · lint pass · build pass · test pass 312/0/0
+- **2026-11-07** — Evidence (orchestro spec verify, tree 799888aa): install pass · typecheck pass · lint pass · build pass · test pass 312/0/0
