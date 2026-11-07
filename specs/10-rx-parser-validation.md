@@ -1,6 +1,6 @@
 # Spec 10 — Rx parser and validation
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 03
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —
@@ -77,10 +77,29 @@ Hundredths of a diopter. Steps of 25. Ranges inclusive. Whitespace trimmed. Comm
 
 ## Done when
 
-- [ ] `pnpm vitest run packages/rx-core/src/rx/parse.test.ts` passes: every Examples parse row is a case; round-trip property test over all legal SPH values. [unit]
-- [ ] `pnpm vitest run packages/rx-core/src/rx/validate.test.ts` passes: every cross-field row is a case; a prescription with three errors returns all three. [unit]
-- [ ] INV-5: parsers return integers only; a test asserts `Number.isInteger` on every parsed output. [unit]
-- [ ] `pnpm test` passes with 0 failures. [unit]
-- [ ] `specs/inventory/10-rx-parser-validation.md` lists the parsers, validator and error-code enum. [static]
-- [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
-- [ ] `pnpm build` passes. [static]
+- [x] `pnpm vitest run packages/rx-core/src/rx/parse.test.ts` passes: every Examples parse row is a case; round-trip property test over all legal SPH values. [unit]
+- [x] `pnpm vitest run packages/rx-core/src/rx/validate.test.ts` passes: every cross-field row is a case; a prescription with three errors returns all three. [unit]
+- [x] INV-5: parsers return integers only; a test asserts `Number.isInteger` on every parsed output. [unit]
+- [x] `pnpm test` passes with 0 failures. [unit]
+- [x] `specs/inventory/10-rx-parser-validation.md` lists the parsers, validator and error-code enum. [static]
+- [x] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
+- [x] `pnpm build` passes. [static]
+
+## Log
+
+- **2026-11-08** — Spec 10 implemented by coder agy-4 (engine agy) in worktree `spec-10` on branch `spec/10-rx-parser-validation`. No git writes (lead commits). GitHub issue skipped: dispatch brief forbids git writes.
+- **2026-11-08** — Landed `packages/rx-core/src/rx/{parse.ts,parse.test.ts,validate.ts,validate.test.ts}` and inventory fragment `specs/inventory/10-rx-parser-validation.md`.
+- **2026-11-08** — Decisions: (1) `parseDiopterText` supports Unicode minus (U+2212, U+2013, U+2014, U+FE63, U+FF0D), comma decimals, plano strings (`PL`, `plano`, `0`), and leading decimal points (`.75`, `-.75`) via string splitting into integer hundredths without floating-point arithmetic. (2) `parseDiopterText` normalizes `-0` and `"-0.00"` to strictly `+0` (`Object.is(val, 0) === true`, `Object.is(val, -0) === false`, `1 / val === Infinity`). (3) `parseAxis` parses 1–180 integer degrees; `parsePd` parses 0.5 mm steps (5 tenths) for single PD (50.0–80.0 mm / 500–800 tenths) and dual PD (25.0–40.0 mm / 250–400 tenths). `parseDualPd` parses both eyes. (4) `validatePrescription` collects and returns all validation errors (`RxValidationError[]`), with each eye error tagged with `eye: "od" | "os"` and `path` for UI / API mapping. (5) `normalizePrescription` drops `axis` when `cyl` is 0 or absent, drops `add` when `rxType === "SINGLE_VISION"`, and resets fields for `NON_PRESCRIPTION`. `validateAndNormalizePrescription` provides an ergonomic result union. (6) `RX_VALIDATION_CODES` (and alias `RX_ERROR_CODES`) exported from both `validate.ts` and `parse.ts`.
+- **2026-11-08** — Self-check 1: Float error avoidance tested with `-0.75` (yielding integer `-75`), leading decimals (`-.75`, `.75`), quarter steps; `Number.isInteger` holds on all parsed values.
+- **2026-11-08** — Self-check 2: `"-0"`, `"-0.00"`, `"−0"`, and `"-0,00"` tested; `Object.is(res.value, -0)` is false, `Object.is(res.value, 0)` is true, `1 / res.value === Infinity`.
+- **2026-11-08** — Self-check 3: Errors carry `eye: "od"` or `eye: "os"` on all eye-specific fields (SPH, CYL, AXIS, ADD, dual PD), enabling row-level highlighting.
+- **2026-11-08** — Self-check 4: Parser checklist (`spec-quality.md` §8) checked and holds: deterministic behavior, no unhandled exceptions on hostile input (empty, "abc", 500 chars), integer units internally (INV-5), step checks (quarter diopter, 0.5 mm PD), boundary checks inclusive.
+- **2026-11-08** — Sabotage: (1) In `parse.ts`: sabotage signed calculation to always positive (`let signedHundredths = absHundredths`) → red (12 failed tests, including negative diopter and round-trip); restored. (2) In `validate.ts`: sabotage `AXIS_REQUIRED` check when `cyl !== 0` → red (7 failed tests, including cross-field and multi-error tests); restored.
+- **2026-11-08** — Gates after last code change:
+  - `pnpm vitest run packages/rx-core/src/rx/parse.test.ts` → `Test Files  1 passed (1)` / `Tests  30 passed (30)`
+  - `pnpm vitest run packages/rx-core/src/rx/validate.test.ts` → `Test Files  1 passed (1)` / `Tests  18 passed (18)`
+  - `pnpm test` → `Test Files  14 passed (14)` / `Tests  223 passed (223)`
+  - `pnpm typecheck` exit 0
+  - `pnpm lint` (`eslint . --max-warnings 0`) exit 0
+  - `pnpm build` exit 0
+- **2026-11-07** — Evidence (orchestro spec verify, tree b26fccd8): install pass · typecheck pass · lint pass · build pass · test pass 235/0/0
