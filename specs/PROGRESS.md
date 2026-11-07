@@ -7,7 +7,7 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | # | Spec | Status | Depends on | Model | Issue | Notes |
 |---|------|--------|------------|-------|-------|-------|
 | 00 | [Stack, storage, testing and design decision](./00-stack-and-architecture-decision.md) | Done | — | Heavy | — | Decided in planning |
-| 01 | [App scaffold, workspace and unit harness](./01-scaffold.md) | Not started | 00 | Heavy | — |  |
+| 01 | [App scaffold, workspace and unit harness](./01-scaffold.md) | Done | 00 | Heavy | — | PR #5 |
 | 02 | [Database schema and first migration](./02-database-schema.md) | Not started | 01 | Heavy | — |  |
 | 03 | [rx-core domain types and schemas](./03-rx-core-contracts.md) | Not started | 01 | Heavy | — |  |
 | 04 | [Configurator package, tokens and theme app block](./04-configurator-package-and-tokens.md) | Not started | 01 | Heavy | — |  |
@@ -62,3 +62,4 @@ Not started · In progress · Blocked · Done
   including two brand deviations: `--la-control-edge` (#898578) for 3:1 control edges, and an ink focus
   outline on non-input controls. `DESIGN-SYSTEM.md` transcribed from v3. Validator: 35 specs · 0 errors ·
   34 warnings, all accepted in README → Known gaps (`../docs/planning/validator.md`).
+- **2026-11-07** — Spec 01 merged (PR #5).

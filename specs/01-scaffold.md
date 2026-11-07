@@ -1,6 +1,6 @@
 # Spec 01 — App scaffold, workspace and unit harness
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 00
 **Model:** Heavy — `claude-opus-5-5` · `gpt-6-astra` · `gemini-3.1-pro-preview`
 **Issue:** —
