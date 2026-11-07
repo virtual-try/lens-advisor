@@ -157,6 +157,39 @@ describe("formatPd (Examples)", () => {
 });
 
 describe("bundle properties, storeRxInOrder=false (INV-3)", () => {
+  it("Examples: storeRxInOrder=false, Rx SPH -2.25 — no value contains 2.25 or -2.25; Prescription is Prescription on file", () => {
+    const rx = prescriptionSchema.parse({
+      od: { sph: -225 },
+      os: { sph: -225 },
+      pd: { single: 635 },
+    });
+    expect(formatDiopter(rx.od.sph)).toBe("-2.25");
+    expect(formatEye(rx.od)).toBe("-2.25");
+    expect(formatEye(rx.os)).toBe("-2.25");
+
+    const properties = buildBundleLineProperties({
+      role: "lens",
+      bundleId: "bundle-off",
+      itemId: "lens-off",
+      optionIds: ["opt-clear"],
+      addonIds: ["addon-case"],
+      rxRef: "rx-off",
+      storeRxInOrder: false,
+      prescription: rx,
+    });
+
+    expect(properties[BUNDLE_PROPERTY_KEYS.prescription]).toBe(
+      PRESCRIPTION_ON_FILE,
+    );
+
+    const values = propertyValues(properties);
+    expect(values.length).toBeGreaterThan(0);
+    for (const value of values) {
+      expect(value).not.toContain("2.25");
+      expect(value).not.toContain("-2.25");
+    }
+  });
+
   it("writes Prescription on file and no property value contains a formatted Rx number", () => {
     const properties = buildBundleLineProperties({
       role: "lens",

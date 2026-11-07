@@ -142,7 +142,7 @@ Normalized snapshot — the `x` in `read(build(x)) == x`:
   - `pnpm typecheck` exit 0
   - `pnpm lint` (`eslint . --max-warnings 0`) exit 0
   - `pnpm build` exit 0
-- **2026-11-07** — Evidence (orchestro spec verify, tree 6110a78b): install pass · typecheck pass · lint pass · build pass · test pass 115/0/0
+- **2026-11-07** — Evidence (orchestro spec verify, tree b657bd74): install pass · typecheck pass · lint pass · build pass · test pass 116/0/0
 - **2026-11-07** — Fix round (accepted R1). `_option_ids` / `_addon_ids` are JSON arrays, so comma, quote, non-ASCII, and empty-looking ids round-trip. `iso4217CurrencySchema` accepts only codes from `Intl.supportedValuesOf("currency")`. `read(build(x))` is compared to the normalized snapshot in Examples over 200 generated bundles. Float rejection is one case per money and diopter field on every exported schema that has one. Inventory names all 58 root exports. Examples gained empty input, single item, hostile ids, whitespace-only, very long, and non-ASCII reader rows; tie does not apply. Supersedes the earlier round-trip decision that compared `build(parsedToBuildInput(read(build(x))))` to `build(x)`.
 - **2026-11-07** — Sabotage, then restored: comma-join ids → hostile-id test and the 200-bundle test red; drop the ISO-4217 refine → both `LOL` tests red; reader sets `storeRxInOrder` for any role → frame-line test red; `addMin: z.number()` → the `addMin` float cases red.
 - **2026-11-07** — Gates after the last code change, from `pnpm test` / `pnpm typecheck` / `pnpm lint` / `pnpm build`:
