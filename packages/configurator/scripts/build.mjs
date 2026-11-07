@@ -1,6 +1,6 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { build } from "vite";
-import { assetsOutDir, entryConfigs } from "../vite.config.ts";
+import { assetsOutDir, entryConfigs } from "../vite.entries.mjs";
 
 const configs = entryConfigs();
 if (configs.length === 0) {

@@ -3,8 +3,7 @@
     "name": "Select lenses",
     "settings": {
       "button_label": {
-        "label": "Button label",
-        "default": "Select lenses"
+        "label": "Button label"
       },
       "accent_color": {
         "label": "Accent colour"

@@ -6,7 +6,7 @@
 **Added by:** spec 04.
 
 ### `configurator-entries`
-`packages/configurator/vite.config.ts` — `listEntryNames` and `entryConfigs`: every `src/entries/*.ts` except tests builds to one unhashed IIFE at `extensions/lens-configurator/assets/<name>.js`. `assetsOutDir` is that flat directory. `scripts/build.mjs` runs the configs one at a time.
+`packages/configurator/vite.entries.mjs` — `listEntryNames` and `entryConfigs`: every `src/entries/*.ts` except tests builds to one unhashed IIFE at `extensions/lens-configurator/assets/<name>.js`. `assetsOutDir` is that flat directory. `vite.config.ts` re-exports the module. `scripts/build.mjs` imports the `.mjs` file and runs the configs one at a time, so Node 22.12 can build without type stripping.
 **Use instead of:** A second storefront bundler, hashed filenames, or ES module output the theme block cannot load.
 **Added by:** spec 04.
 
@@ -21,7 +21,7 @@
 **Added by:** spec 04.
 
 ### `select-lenses-block`
-`extensions/lens-configurator/blocks/select-lenses.liquid` — Product-template app block. The mount exposes `data-product-json` (product id, variant ids, price in minor units, currency), `data-proxy="/apps/lens-advisor"`, and `data-configurator-src`. Button text is `block.settings.button_label`, or `select_lenses.button_label` from `locales/en.default.json`. Schema `javascript` loads `loader.js`; `stylesheet` loads `loader.css`. Settings write `--la-merchant-accent` and `--la-merchant-radius` on `.la-block`.
+`extensions/lens-configurator/blocks/select-lenses.liquid` — Product-template app block. The mount exposes `data-product-json` (product id, variant ids, price in minor units, currency), `data-proxy="/apps/lens-advisor"`, and `data-configurator-src`. Button text is `block.settings.button_label` when the merchant set one. The setting has no schema default, so a new block leaves it blank and the button uses `select_lenses.button_label` from `locales/en.default.json`. The schema keeps the `button_label` label translation key. Schema `javascript` loads `loader.js`; `stylesheet` loads `loader.css`. Settings write `--la-merchant-accent` and `--la-merchant-radius` on `.la-block`.
 **Use instead of:** A hard-coded button label, a script tag in the Liquid body, or a second product mount.
 **Added by:** spec 04.
 

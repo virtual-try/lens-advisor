@@ -43,16 +43,18 @@ describe("select lenses block", () => {
     readFileSync(join(extensionRoot, "locales/en.default.schema.json"), "utf8"),
   ) as {
     select_lenses: {
-      settings: { button_label: { default: string } };
+      settings: { button_label: { label: string } };
     };
   };
   const label = storefront.select_lenses.button_label;
 
   it("takes the button label from the block setting, with the storefront locale as the empty fallback", () => {
     expect(label.length).toBeGreaterThan(0);
-    expect(schemaLocale.select_lenses.settings.button_label.default).toBe(label);
+    expect(schemaLocale.select_lenses.settings.button_label.label.length).toBeGreaterThan(0);
+    expect(schemaLocale.select_lenses.settings.button_label).not.toHaveProperty("default");
+    expect(liquid).toContain("block.settings.button_label != blank");
+    expect(liquid).toContain("{{ 'select_lenses.button_label' | t }}");
     expect(liquid).toContain("block.settings.button_label");
-    expect(liquid).toContain("select_lenses.button_label");
     expect(liquid.includes(label)).toBe(false);
     const packageSrc = join(root, "packages/configurator/src");
     const leaks = filesUnder(packageSrc).filter((path) => readFileSync(path, "utf8").includes(label));
@@ -71,7 +73,8 @@ describe("select lenses block", () => {
       "corner_radius",
     ]);
     const buttonSetting = schema.settings.find((setting) => setting.id === "button_label");
-    expect(buttonSetting?.default).toBe("t:select_lenses.settings.button_label.default");
+    expect(buttonSetting?.label).toBe("t:select_lenses.settings.button_label.label");
+    expect(buttonSetting).not.toHaveProperty("default");
     expect(liquid).toContain('data-proxy="/apps/lens-advisor"');
     expect(liquid).toContain("data-product-json");
     expect(liquid).toContain("data-configurator-src");
