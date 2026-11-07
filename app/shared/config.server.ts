@@ -45,6 +45,10 @@ export interface AppProxyConfig {
   subpath: string;
 }
 
+export interface BillingConfig {
+  appHandle: string;
+}
+
 export interface AppConfig {
   nodeEnv: string;
   isProduction: boolean;
@@ -55,6 +59,7 @@ export interface AppConfig {
   s3: S3Config;
   resend: ResendConfig;
   appProxy: AppProxyConfig;
+  billing: BillingConfig;
 }
 
 let cachedDatabase: DatabaseConfig | undefined;
@@ -63,6 +68,7 @@ let cachedRx: RxConfig | undefined;
 let cachedS3: S3Config | undefined;
 let cachedResend: ResendConfig | undefined;
 let cachedAppProxy: AppProxyConfig | undefined;
+let cachedBilling: BillingConfig | undefined;
 
 export function resetConfigCache(): void {
   cachedDatabase = undefined;
@@ -71,6 +77,7 @@ export function resetConfigCache(): void {
   cachedS3 = undefined;
   cachedResend = undefined;
   cachedAppProxy = undefined;
+  cachedBilling = undefined;
 }
 
 function validateWithZod<T>(
@@ -343,6 +350,28 @@ export function getAppProxyConfig(): AppProxyConfig {
   return config;
 }
 
+const billingSchema = z.object({
+  SHOPIFY_APP_HANDLE: z
+    .string()
+    .trim()
+    .min(1)
+    .default("lens-advisor"),
+});
+
+export function getBillingConfig(): BillingConfig {
+  if (cachedBilling) return cachedBilling;
+
+  const parsed = validateWithZod(billingSchema, {
+    SHOPIFY_APP_HANDLE: process.env.SHOPIFY_APP_HANDLE?.trim() || undefined,
+  });
+
+  const config: BillingConfig = {
+    appHandle: parsed.SHOPIFY_APP_HANDLE,
+  };
+  cachedBilling = config;
+  return config;
+}
+
 const baseEnvSchema = z.object({
   NODE_ENV: z
     .string()
@@ -389,6 +418,9 @@ export function getConfig(): AppConfig {
     },
     get appProxy() {
       return getAppProxyConfig();
+    },
+    get billing() {
+      return getBillingConfig();
     },
   };
 }
