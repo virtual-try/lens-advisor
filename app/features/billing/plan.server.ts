@@ -1,6 +1,7 @@
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { z } from "zod";
 
+import { getBillingConfig } from "../../shared/config.server";
 import { AppError } from "../../shared/http/errors.server";
 
 /**
@@ -15,12 +16,28 @@ export interface PlanStatus {
   test: boolean;
 }
 
+/** Matches the app's Admin API version (`ApiVersion.October26`). */
+export const PARTNER_API_VERSION = "2026-10";
+
 /**
- * Shopify App Pricing subscriptions are exposed on the current app
- * installation. `activeSubscriptions` only returns active ones, but the status
- * is still checked so a mixed/partial payload can never grant access.
+ * The Partner API needs the numeric shop GID, which is not in the session.
+ * Fetch it from the Admin API; the same call also gives us the legacy fallback
+ * subscriptions below.
  */
-export const PLAN_STATUS_QUERY = `#graphql
+export const SHOP_ID_QUERY = `#graphql
+  query AppPlanShopId {
+    shop {
+      id
+    }
+  }
+`;
+
+/**
+ * Legacy Billing API fallback. Shopify App Pricing subscriptions are canonical
+ * through the Partner API, but a shop migrated from the Billing API may still
+ * be active only here. It is consulted only when the Partner API returns null.
+ */
+export const ADMIN_PLAN_STATUS_QUERY = `#graphql
   query AppPlanStatus {
     currentAppInstallation {
       activeSubscriptions {
@@ -33,6 +50,27 @@ export const PLAN_STATUS_QUERY = `#graphql
   }
 `;
 
+/** Backward-compatible alias for ADMIN_PLAN_STATUS_QUERY. */
+export const PLAN_STATUS_QUERY = ADMIN_PLAN_STATUS_QUERY;
+
+/**
+ * Canonical Shopify App Pricing lookup. `activeSubscription` returns null when
+ * the shop has no active subscription through Shopify App Pricing or the
+ * Billing API.
+ */
+export const PARTNER_SUBSCRIPTION_QUERY = `#graphql
+  query ActiveSubscription($appId: ID!, $shopId: ID!) {
+    activeSubscription(appId: $appId, shopId: $shopId) {
+      items {
+        handle
+        description
+      }
+    }
+  }
+`;
+
+const graphQLErrorsSchema = z.array(z.object({ message: z.string() })).optional();
+
 const appSubscriptionSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -40,13 +78,38 @@ const appSubscriptionSchema = z.object({
   test: z.boolean(),
 });
 
-const planResponseSchema = z.object({
+const shopIdResponseSchema = z.object({
+  data: z.object({
+    shop: z.object({
+      id: z.string().min(1),
+    }),
+  }),
+  errors: graphQLErrorsSchema,
+});
+
+const adminPlanResponseSchema = z.object({
   data: z.object({
     currentAppInstallation: z.object({
       activeSubscriptions: z.array(appSubscriptionSchema),
     }),
   }),
-  errors: z.array(z.object({ message: z.string() })).optional(),
+  errors: graphQLErrorsSchema,
+});
+
+const partnerSubscriptionSchema = z.object({
+  items: z.array(
+    z.object({
+      handle: z.string().min(1).nullish(),
+      description: z.string().min(1).nullish(),
+    })
+  ),
+});
+
+const partnerResponseSchema = z.object({
+  data: z.object({
+    activeSubscription: partnerSubscriptionSchema.nullable(),
+  }),
+  errors: graphQLErrorsSchema,
 });
 
 function billingUnavailable(): AppError {
@@ -57,19 +120,15 @@ function billingUnavailable(): AppError {
   );
 }
 
-/**
- * Reads the shop's plan from the Admin GraphQL API.
- *
- * Deliberately uncached: a plan change must be visible on the next request.
- * Every failure (network, HTTP, malformed body, GraphQL errors) throws
- * `AppError 502 BILLING_UNAVAILABLE` rather than reporting "no plan", so a
- * Shopify outage can never redirect a paying merchant out of the app.
- */
-export async function getPlanStatus(admin: PlanAdminClient): Promise<PlanStatus> {
+function hasGraphQLErrors(body: { errors?: { message: string }[] }): boolean {
+  return (body.errors?.length ?? 0) > 0;
+}
+
+async function adminGraphql(admin: PlanAdminClient, query: string): Promise<unknown> {
   let body: unknown;
 
   try {
-    const response = await admin.graphql(PLAN_STATUS_QUERY);
+    const response = await admin.graphql(query);
 
     if (!response.ok) {
       throw billingUnavailable();
@@ -83,8 +142,25 @@ export async function getPlanStatus(admin: PlanAdminClient): Promise<PlanStatus>
     throw billingUnavailable();
   }
 
-  const parsed = planResponseSchema.safeParse(body);
-  if (!parsed.success || (parsed.data.errors?.length ?? 0) > 0) {
+  return body;
+}
+
+async function getShopId(admin: PlanAdminClient): Promise<string> {
+  const body = await adminGraphql(admin, SHOP_ID_QUERY);
+  const parsed = shopIdResponseSchema.safeParse(body);
+
+  if (!parsed.success || hasGraphQLErrors(parsed.data)) {
+    throw billingUnavailable();
+  }
+
+  return parsed.data.data.shop.id;
+}
+
+async function getAdminFallbackPlan(admin: PlanAdminClient): Promise<PlanStatus | undefined> {
+  const body = await adminGraphql(admin, ADMIN_PLAN_STATUS_QUERY);
+  const parsed = adminPlanResponseSchema.safeParse(body);
+
+  if (!parsed.success || hasGraphQLErrors(parsed.data)) {
     throw billingUnavailable();
   }
 
@@ -93,7 +169,7 @@ export async function getPlanStatus(admin: PlanAdminClient): Promise<PlanStatus>
   );
 
   if (!activeSubscription) {
-    return { active: false, test: false };
+    return undefined;
   }
 
   return {
@@ -101,6 +177,142 @@ export async function getPlanStatus(admin: PlanAdminClient): Promise<PlanStatus>
     planName: activeSubscription.name,
     test: activeSubscription.test,
   };
+}
+
+async function getPartnerPlan(shopId: string): Promise<PlanStatus | undefined> {
+  let partnerOrganizationId: string;
+  let partnerAccessToken: string;
+  let appGid: string;
+
+  try {
+    const config = getBillingConfig();
+    partnerOrganizationId = config.partnerOrganizationId;
+    partnerAccessToken = config.partnerAccessToken;
+    appGid = config.appGid;
+  } catch {
+    // A missing Partner credential is a billing outage, not proof of no plan.
+    throw billingUnavailable();
+  }
+
+  const url = `https://partners.shopify.com/${encodeURIComponent(
+    partnerOrganizationId
+  )}/api/${PARTNER_API_VERSION}/graphql.json`;
+
+  let body: unknown;
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": partnerAccessToken,
+      },
+      body: JSON.stringify({
+        query: PARTNER_SUBSCRIPTION_QUERY,
+        variables: {
+          appId: appGid,
+          shopId,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      throw billingUnavailable();
+    }
+
+    body = await response.json();
+  } catch (error) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    throw billingUnavailable();
+  }
+
+  const parsed = partnerResponseSchema.safeParse(body);
+
+  if (!parsed.success || hasGraphQLErrors(parsed.data)) {
+    throw billingUnavailable();
+  }
+
+  const subscription = parsed.data.data.activeSubscription;
+
+  if (!subscription) {
+    return undefined;
+  }
+
+  const item = subscription.items[0];
+  const planName = item?.description ?? item?.handle;
+
+  return {
+    active: true,
+    ...(planName ? { planName } : {}),
+    test: false,
+  };
+}
+
+async function loadPlanStatus(admin: PlanAdminClient): Promise<PlanStatus> {
+  const shopId = await getShopId(admin);
+  const partnerPlan = await getPartnerPlan(shopId);
+
+  if (partnerPlan) {
+    return partnerPlan;
+  }
+
+  // The Partner API is canonical; the Admin API is only a legacy fallback.
+  const fallbackPlan = await getAdminFallbackPlan(admin);
+  return fallbackPlan ?? { active: false, test: false };
+}
+
+/**
+ * Memoized per request. A page that checks the plan twice must issue one
+ * upstream lookup and see a consistent answer; the next request re-queries.
+ */
+const planStatusByRequest = new WeakMap<Request, Promise<PlanStatus>>();
+
+/**
+ * Reads the shop's plan from the Partner API, falling back to the Admin API
+ * only when the Partner API reports no active subscription.
+ *
+ * When called with a `Request`, results are memoized per request.
+ * Every failure (network, HTTP, malformed body, GraphQL errors, missing
+ * credentials) throws `AppError 502 BILLING_UNAVAILABLE` rather than reporting
+ * "no plan", so a Shopify outage can never redirect a paying merchant out of
+ * the app.
+ */
+export function getPlanStatus(
+  request: Request,
+  admin: PlanAdminClient
+): Promise<PlanStatus>;
+export function getPlanStatus(
+  admin: PlanAdminClient
+): Promise<PlanStatus>;
+export function getPlanStatus(
+  requestOrAdmin: Request | PlanAdminClient,
+  maybeAdmin?: PlanAdminClient
+): Promise<PlanStatus> {
+  let request: Request | undefined;
+  let admin: PlanAdminClient;
+
+  if (requestOrAdmin instanceof Request) {
+    request = requestOrAdmin;
+    admin = maybeAdmin!;
+  } else {
+    admin = requestOrAdmin;
+  }
+
+  if (request) {
+    const cached = planStatusByRequest.get(request);
+
+    if (cached) {
+      return cached;
+    }
+
+    const pending = loadPlanStatus(admin);
+    planStatusByRequest.set(request, pending);
+    return pending;
+  }
+
+  return loadPlanStatus(admin);
 }
 
 /**

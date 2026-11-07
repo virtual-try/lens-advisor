@@ -47,6 +47,9 @@ export interface AppProxyConfig {
 
 export interface BillingConfig {
   appHandle: string;
+  partnerOrganizationId: string;
+  partnerAccessToken: string;
+  appGid: string;
 }
 
 export interface AppConfig {
@@ -69,6 +72,9 @@ let cachedS3: S3Config | undefined;
 let cachedResend: ResendConfig | undefined;
 let cachedAppProxy: AppProxyConfig | undefined;
 let cachedBilling: BillingConfig | undefined;
+let cachedPartnerCredentials:
+  | { partnerOrganizationId: string; partnerAccessToken: string; appGid: string }
+  | undefined;
 
 export function resetConfigCache(): void {
   cachedDatabase = undefined;
@@ -78,6 +84,7 @@ export function resetConfigCache(): void {
   cachedResend = undefined;
   cachedAppProxy = undefined;
   cachedBilling = undefined;
+  cachedPartnerCredentials = undefined;
 }
 
 function validateWithZod<T>(
@@ -350,7 +357,7 @@ export function getAppProxyConfig(): AppProxyConfig {
   return config;
 }
 
-const billingSchema = z.object({
+const billingHandleSchema = z.object({
   SHOPIFY_APP_HANDLE: z
     .string()
     .trim()
@@ -358,15 +365,61 @@ const billingSchema = z.object({
     .default("lens-advisor"),
 });
 
+const partnerCredentialsSchema = z.object({
+  PARTNER_ORGANIZATION_ID: z
+    .string({ required_error: "PARTNER_ORGANIZATION_ID is required" })
+    .trim()
+    .min(1, "PARTNER_ORGANIZATION_ID is required"),
+  PARTNER_API_ACCESS_TOKEN: z
+    .string({ required_error: "PARTNER_API_ACCESS_TOKEN is required" })
+    .trim()
+    .min(1, "PARTNER_API_ACCESS_TOKEN is required"),
+  SHOPIFY_APP_GID: z
+    .string({ required_error: "SHOPIFY_APP_GID is required" })
+    .trim()
+    .min(1, "SHOPIFY_APP_GID is required"),
+});
+
+function getPartnerCredentials(): {
+  partnerOrganizationId: string;
+  partnerAccessToken: string;
+  appGid: string;
+} {
+  if (cachedPartnerCredentials) return cachedPartnerCredentials;
+
+  const parsed = validateWithZod(partnerCredentialsSchema, {
+    PARTNER_ORGANIZATION_ID: process.env.PARTNER_ORGANIZATION_ID?.trim() || undefined,
+    PARTNER_API_ACCESS_TOKEN: process.env.PARTNER_API_ACCESS_TOKEN?.trim() || undefined,
+    SHOPIFY_APP_GID: process.env.SHOPIFY_APP_GID?.trim() || undefined,
+  });
+
+  const credentials = {
+    partnerOrganizationId: parsed.PARTNER_ORGANIZATION_ID,
+    partnerAccessToken: parsed.PARTNER_API_ACCESS_TOKEN,
+    appGid: parsed.SHOPIFY_APP_GID,
+  };
+  cachedPartnerCredentials = credentials;
+  return credentials;
+}
+
 export function getBillingConfig(): BillingConfig {
   if (cachedBilling) return cachedBilling;
 
-  const parsed = validateWithZod(billingSchema, {
+  const parsed = validateWithZod(billingHandleSchema, {
     SHOPIFY_APP_HANDLE: process.env.SHOPIFY_APP_HANDLE?.trim() || undefined,
   });
 
   const config: BillingConfig = {
     appHandle: parsed.SHOPIFY_APP_HANDLE,
+    get partnerOrganizationId() {
+      return getPartnerCredentials().partnerOrganizationId;
+    },
+    get partnerAccessToken() {
+      return getPartnerCredentials().partnerAccessToken;
+    },
+    get appGid() {
+      return getPartnerCredentials().appGid;
+    },
   };
   cachedBilling = config;
   return config;

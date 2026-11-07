@@ -15,6 +15,7 @@ vi.mock("../../shopify.server", () => ({
 
 vi.mock("../../shared/config.server", () => ({
   getConfig: mocks.getConfig,
+  getBillingConfig: () => mocks.getConfig().billing,
 }));
 
 const PRICING_URL =
@@ -22,9 +23,15 @@ const PRICING_URL =
 
 function adminReturning(payload: unknown): PlanAdminClient {
   return {
-    graphql: vi.fn(
-      async () => new Response(JSON.stringify(payload), { status: 200 })
-    ),
+    graphql: vi.fn(async (query: string) => {
+      if (typeof query === "string" && query.includes("AppPlanShopId")) {
+        return new Response(
+          JSON.stringify({ data: { shop: { id: "gid://shopify/Shop/123" } } }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify(payload), { status: 200 });
+    }),
   } as unknown as PlanAdminClient;
 }
 
@@ -63,7 +70,20 @@ async function captureError(promise: Promise<unknown>): Promise<unknown> {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.getConfig.mockReturnValue({ billing: { appHandle: "lens-advisor" } });
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify({ data: { activeSubscription: null } }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })
+  );
+  mocks.getConfig.mockReturnValue({
+    billing: {
+      appHandle: "lens-advisor",
+      partnerOrganizationId: "org-123",
+      partnerAccessToken: "token-xyz",
+      appGid: "gid://shopify/App/1",
+    },
+  });
 });
 
 describe("requireActivePlan", () => {
@@ -83,6 +103,29 @@ describe("requireActivePlan", () => {
     expect(result.plan).toEqual({ active: true, planName: "Pro", test: false });
     expect(result.admin).toBe(admin);
     expect(result.session.shop).toBe("cool-shop.myshopify.com");
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("returns the admin context when the active plan is retrieved from the Partner API", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          data: {
+            activeSubscription: {
+              items: [{ handle: "partner-pro", description: "Partner Pro" }],
+            },
+          },
+        }),
+        { status: 200 }
+      )
+    );
+    const admin = adminReturning({ data: { currentAppInstallation: { activeSubscriptions: [] } } });
+    const { context, redirect } = buildContext(admin);
+    mocks.authenticateAdmin.mockResolvedValue(context);
+
+    const result = await requireActivePlan(new Request("https://app.test/app"));
+
+    expect(result.plan).toEqual({ active: true, planName: "Partner Pro", test: false });
     expect(redirect).not.toHaveBeenCalled();
   });
 

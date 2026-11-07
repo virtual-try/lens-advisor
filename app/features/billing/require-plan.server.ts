@@ -20,7 +20,7 @@ export type ActivePlanContext = AdminAuthContext & { plan: PlanStatus };
  */
 export async function requireActivePlan(request: Request): Promise<ActivePlanContext> {
   const context = await authenticate.admin(request);
-  const plan = await getPlanStatus(context.admin);
+  const plan = await getPlanStatus(request, context.admin);
 
   if (!plan.active) {
     const pricingUrl = buildPricingPlansUrl(
