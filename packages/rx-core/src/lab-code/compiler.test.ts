@@ -78,7 +78,7 @@ describe("Spec 12 — Examples table cases", () => {
 
     // Also verify when target is explicitly 'material'
     const resultExplicit = compileLabCode(BLUEPRINT_TEMPLATE, [
-      { position: "material", overrideCode: "PO-67" },
+      { segment: "material", overrideCode: "PO-67" },
     ]);
     expect(resultExplicit.code).toBe("PO-67-NONE-NONE-00");
     expect(resultExplicit.warnings).toEqual([]);
@@ -159,7 +159,7 @@ describe("Self-check 1 — Token values inserted literally (never interpreted as
 
   it("inserts override code containing $& and $1 literally", () => {
     const result = compileLabCode(BLUEPRINT_TEMPLATE, [
-      { position: "material", overrideCode: "PO-$&-$1" },
+      { segment: "material", overrideCode: "PO-$&-$1" },
     ]);
     expect(result.code).toBe("PO-$&-$1-NONE-NONE-00");
     expect(result.warnings).toEqual([]);
@@ -170,7 +170,7 @@ describe("Self-check 2 — Override and token targeting the same segment (overri
   it("override wins over token targeting material segment (segment 0)", () => {
     // Both an override for material and a token for material
     const result = compileLabCode(BLUEPRINT_TEMPLATE, [
-      { position: "material", overrideCode: "PO-67" },
+      { segment: "material", overrideCode: "PO-67" },
       { tokenKey: "material", tokenValue: "PO-99" },
     ]);
     expect(result.code).toBe("PO-67-NONE-NONE-00");
@@ -182,7 +182,7 @@ describe("Self-check 2 — Override and token targeting the same segment (overri
   it("override wins over token when template has token in first segment", () => {
     const tpl = "[material=PO58]-[lens_type=NONE]-[lens_color=NONE]-00";
     const result = compileLabCode(tpl, [
-      { position: "material", overrideCode: "PO-67" },
+      { segment: "material", overrideCode: "PO-67" },
       { tokenKey: "material", tokenValue: "PO-74" },
     ]);
     expect(result.code).toBe("PO-67-NONE-NONE-00");
@@ -191,7 +191,7 @@ describe("Self-check 2 — Override and token targeting the same segment (overri
 
   it("override wins over token targeting lens_type segment", () => {
     const result = compileLabCode(BLUEPRINT_TEMPLATE, [
-      { position: "lens_type", overrideCode: "CUSTOM_TINT" },
+      { segment: "lens_type", overrideCode: "CUSTOM_TINT" },
       { tokenKey: "lens_type", tokenValue: "POLR" },
     ]);
     expect(result.code).toBe("PO-58-CUSTOM_TINT-NONE-00");
@@ -199,13 +199,41 @@ describe("Self-check 2 — Override and token targeting the same segment (overri
     expect(result.warnings).toEqual([]);
   });
 
-  it("override by segment index wins over token for that segment", () => {
+  it("override by segment name wins over token for that segment", () => {
     const result = compileLabCode(BLUEPRINT_TEMPLATE, [
-      { position: 2, overrideCode: "SPECIAL_COLOR" },
+      { segment: "lens_color", overrideCode: "SPECIAL_COLOR" },
       { tokenKey: "lens_color", tokenValue: "GREY" },
     ]);
     expect(result.code).toBe("PO-58-NONE-SPECIAL_COLOR-00");
     expect(result.code).not.toContain("GREY");
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("override and token targeting the same segment: override wins regardless of selection order", () => {
+    // Override before token
+    const resOverrideFirst = compileLabCode(BLUEPRINT_TEMPLATE, [
+      { segment: "lens_type", overrideCode: "CUSTOM_TINT" },
+      { tokenKey: "lens_type", tokenValue: "POLR" },
+    ]);
+    expect(resOverrideFirst.code).toBe("PO-58-CUSTOM_TINT-NONE-00");
+    expect(resOverrideFirst.warnings).toEqual([]);
+
+    // Token before override
+    const resTokenFirst = compileLabCode(BLUEPRINT_TEMPLATE, [
+      { tokenKey: "lens_type", tokenValue: "POLR" },
+      { segment: "lens_type", overrideCode: "CUSTOM_TINT" },
+    ]);
+    expect(resTokenFirst.code).toBe("PO-58-CUSTOM_TINT-NONE-00");
+    expect(resTokenFirst.warnings).toEqual([]);
+  });
+
+  it("an option with position 2 and an override still replaces the material segment only", () => {
+    const option = createMockOptionValue({
+      position: 2,
+      overrideCode: "PO-67",
+    });
+    const result = compileLabCode(BLUEPRINT_TEMPLATE, [option]);
+    expect(result.code).toBe("PO-67-NONE-NONE-00");
     expect(result.warnings).toEqual([]);
   });
 });
@@ -225,11 +253,11 @@ describe("Step 3 — Identity property test for templates with no tokens", () =>
       undefined,
       [],
       [{ tokenKey: "lens_type", tokenValue: "POLR" }],
-      [{ position: "material", overrideCode: "PO-67" }],
+      [{ segment: "material", overrideCode: "PO-67" }],
       [{ tokenKey: "lens_tint", tokenValue: "PHOT" }],
       [
         { tokenKey: "lens_type", tokenValue: "POLR" },
-        { position: "material", overrideCode: "PO-67" },
+        { segment: "material", overrideCode: "PO-67" },
       ],
       { lens_type: "POLR", lens_color: "GREY" },
       { tokens: { a: "1", b: "2" }, overrides: { material: "OVERRIDE" } },
@@ -264,7 +292,7 @@ describe("Step 3 — Identity property test for templates with no tokens", () =>
       // Random selections with tokens, overrides, and unknown keys
       const selections = [
         { tokenKey: `tok_${i}`, tokenValue: `VAL_${i}` },
-        { position: "material", overrideCode: `MAT_${i}` },
+        { segment: "material", overrideCode: `MAT_${i}` },
       ];
 
       const result = compileLabCode(tpl, selections);
@@ -365,5 +393,27 @@ describe("Parser checklist (§8) & Robustness", () => {
     const tpl = "透镜-58-[lens_type=NONE]-00";
     const result = compileLabCode(tpl, [{ tokenKey: "lens_type", tokenValue: "POLR" }]);
     expect(result.code).toBe("透镜-58-POLR-00");
+  });
+
+  it("preserves non-dash separators and literal text byte-for-byte (e.g. PO/58_[lens_type=NONE]x)", () => {
+    const tpl = "PO/58_[lens_type=NONE]x";
+    const resDefault = compileLabCode(tpl);
+    expect(resDefault.code).toBe("PO/58_NONEx");
+    expect(resDefault.warnings).toEqual([]);
+
+    const resSelected = compileLabCode(tpl, [
+      { tokenKey: "lens_type", tokenValue: "POLR" },
+    ]);
+    expect(resSelected.code).toBe("PO/58_POLRx");
+    expect(resSelected.warnings).toEqual([]);
+
+    // Literal concatenation without spurious hyphen insertion
+    expect(compileLabCode("A[x=X]B", [{ tokenKey: "x", tokenValue: "Y" }]).code).toBe("AYB");
+    expect(
+      compileLabCode("[a=X][b=Y]", [
+        { tokenKey: "a", tokenValue: "1" },
+        { tokenKey: "b", tokenValue: "2" },
+      ]).code,
+    ).toBe("12");
   });
 });

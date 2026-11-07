@@ -8,15 +8,6 @@ import {
 } from "./types.js";
 import { validateTemplate } from "./validator.js";
 
-interface TemplateSegment {
-  index: number;
-  positionName?: string;
-  tokenKey?: string;
-  defaultValue?: string;
-  literalText?: string;
-  separatorBefore: string;
-}
-
 function parseSelections(
   selections: LabCodeSelectionsInput | undefined,
   knownTokenKeys: Set<string>,
@@ -39,8 +30,8 @@ function parseSelections(
     }
   }
 
-  function recordOverride(target: string | number, code: string) {
-    overrideMap.set(String(target).toLowerCase(), code);
+  function recordOverride(target: string, code: string) {
+    overrideMap.set(target.toLowerCase(), code);
   }
 
   function processItem(item: OptionValue | LabCodeSelectionItem) {
@@ -48,22 +39,7 @@ function parseSelections(
     const sel = item as LabCodeSelectionItem;
 
     if (sel.overrideCode) {
-      let target: string | number = "material";
-      if (sel.position !== undefined) {
-        target = sel.position;
-      } else if (sel.segment !== undefined) {
-        target = sel.segment;
-      } else if (sel.groupKind) {
-        const k = String(sel.groupKind).toUpperCase();
-        if (k === "MATERIAL") target = "material";
-        else if (k === "TINT_TYPE") target = "lens_type";
-        else if (k === "COLOR") target = "lens_color";
-        else target = k.toLowerCase();
-      } else if (sel.tokenKey) {
-        target = sel.tokenKey;
-      } else if (sel.key) {
-        target = sel.key;
-      }
+      const target = sel.segment !== undefined ? String(sel.segment).toLowerCase() : "material";
       recordOverride(target, sel.overrideCode);
     }
 
@@ -161,98 +137,52 @@ export function compileLabCode(
     return { code: template, warnings };
   }
 
-  const segments: TemplateSegment[] = [];
+  const hasMaterialToken = validation.tokens.some(
+    (t) => t.key.toLowerCase() === "material",
+  );
+  const materialOverride =
+    overrideMap.get("material") ?? overrideMap.get("first") ?? overrideMap.get("0");
 
-  // Prefix before the first token
-  const prefixRaw = template.slice(0, validation.tokens[0].startIndex);
-  if (prefixRaw.length > 0) {
-    const trimmed = prefixRaw.endsWith("-") ? prefixRaw.slice(0, -1) : prefixRaw;
-    segments.push({
-      index: 0,
-      positionName: "material",
-      literalText: trimmed,
-      separatorBefore: "",
-    });
+  const firstToken = validation.tokens[0];
+  const prefixRaw = template.slice(0, firstToken.startIndex);
+
+  let prefix = prefixRaw;
+  if (!hasMaterialToken && materialOverride !== undefined && prefixRaw.length > 0) {
+    if (prefixRaw.endsWith("-")) {
+      prefix = materialOverride + "-";
+    } else {
+      prefix = materialOverride;
+    }
   }
 
-  // Tokens and intermediate segments
+  let result = prefix;
+
   for (let i = 0; i < validation.tokens.length; i++) {
-    if (i > 0) {
-      const middleRaw = template.slice(
-        validation.tokens[i - 1].endIndex,
-        validation.tokens[i].startIndex,
-      );
-      if (middleRaw !== "-" && middleRaw.length > 0) {
-        const trimmed = middleRaw.replace(/^-/, "").replace(/-$/, "");
-        if (trimmed.length > 0) {
-          segments.push({
-            index: segments.length,
-            literalText: trimmed,
-            separatorBefore: "-",
-          });
-        }
-      }
-    }
-
     const tok = validation.tokens[i];
-    const segIndex = segments.length;
-    const sep = segIndex === 0 ? "" : "-";
-    segments.push({
-      index: segIndex,
-      positionName: tok.key,
-      tokenKey: tok.key,
-      defaultValue: tok.defaultValue,
-      separatorBefore: sep,
-    });
-  }
+    let tokenVal: string;
 
-  // Suffix after the last token
-  const suffixRaw = template.slice(validation.tokens[validation.tokens.length - 1].endIndex);
-  if (suffixRaw.length > 0) {
-    const trimmed = suffixRaw.startsWith("-") ? suffixRaw.slice(1) : suffixRaw;
-    if (trimmed.length > 0) {
-      segments.push({
-        index: segments.length,
-        literalText: trimmed,
-        separatorBefore: "-",
-      });
-    }
-  }
-
-  // Compile segments
-  let result = "";
-  for (const seg of segments) {
-    let segVal: string;
-
-    // Check if an override matches this segment
-    let overrideVal: string | undefined;
-
-    if (overrideMap.has(String(seg.index))) {
-      overrideVal = overrideMap.get(String(seg.index));
-    } else if (seg.index === 0 && overrideMap.has("material")) {
-      overrideVal = overrideMap.get("material");
-    } else if (seg.index === 0 && overrideMap.has("first")) {
-      overrideVal = overrideMap.get("first");
-    } else if (seg.positionName && overrideMap.has(seg.positionName.toLowerCase())) {
-      overrideVal = overrideMap.get(seg.positionName.toLowerCase());
-    } else if (seg.tokenKey && overrideMap.has(seg.tokenKey.toLowerCase())) {
-      overrideVal = overrideMap.get(seg.tokenKey.toLowerCase());
-    }
+    const overrideVal =
+      overrideMap.get(tok.key.toLowerCase()) ??
+      (i === 0 && hasMaterialToken ? materialOverride : undefined);
 
     if (overrideVal !== undefined) {
-      // Override wins over token for the same segment
-      segVal = overrideVal;
-    } else if (seg.tokenKey) {
-      if (tokenMap.has(seg.tokenKey)) {
-        segVal = tokenMap.get(seg.tokenKey)!;
-      } else {
-        segVal = seg.defaultValue ?? "";
-      }
+      // Override wins over token targeting the same segment
+      tokenVal = overrideVal;
+    } else if (tokenMap.has(tok.key)) {
+      tokenVal = tokenMap.get(tok.key)!;
     } else {
-      segVal = seg.literalText ?? "";
+      tokenVal = tok.defaultValue;
     }
 
-    result += seg.separatorBefore + segVal;
+    result += tokenVal;
+
+    if (i < validation.tokens.length - 1) {
+      // Literal text between tokens, copied byte-for-byte
+      result += template.slice(tok.endIndex, validation.tokens[i + 1].startIndex);
+    } else {
+      // Literal text after the last token, copied byte-for-byte
+      result += template.slice(tok.endIndex);
+    }
   }
 
   return { code: result, warnings };

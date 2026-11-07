@@ -48,8 +48,8 @@ export interface LabCodeSelectionItem {
   key?: string;
   value?: string;
   overrideCode?: string;
-  position?: string | number;
-  segment?: string | number;
+  position?: number;
+  segment?: string;
   groupKind?: OptionGroupKind | string;
   optionGroupId?: string;
   label?: string;
