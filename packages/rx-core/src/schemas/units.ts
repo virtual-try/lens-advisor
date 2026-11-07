@@ -12,11 +12,22 @@ export type Axis = z.infer<typeof axisSchema>;
 export const pdTenthsMmSchema = z.number().int();
 export type PdTenthsMm = z.infer<typeof pdTenthsMmSchema>;
 
-/** ISO 4217 alphabetic code (USD, EUR, JPY). */
+/**
+ * ISO-4217 alphabetic codes this runtime accepts. `LOL` matches the old
+ * three-letter pattern and is not a currency (INV-4).
+ */
+const ISO_4217_CURRENCY_CODES: ReadonlySet<string> = new Set(
+  Intl.supportedValuesOf("currency"),
+);
+
+/** ISO-4217 alphabetic code (USD, EUR, JPY), not any three uppercase letters. */
 export const iso4217CurrencySchema = z
   .string()
   .length(3)
-  .regex(/^[A-Z]{3}$/);
+  .regex(/^[A-Z]{3}$/)
+  .refine((code) => ISO_4217_CURRENCY_CODES.has(code), {
+    message: "Not an ISO-4217 currency code",
+  });
 
 export const moneySchema = z.object({
   amountMinor: z.number().int(),

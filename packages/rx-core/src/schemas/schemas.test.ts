@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vitest";
+import type { ZodTypeAny } from "zod";
 import {
+  addOnSchema,
   catalogResponseSchema,
+  diopterSchema,
+  eyeSchema,
+  iso4217CurrencySchema,
+  lensGroupSchema,
+  lensSchema,
   moneySchema,
+  optionGroupSchema,
+  optionValueSchema,
   prescriptionSchema,
   prescriptionSubmitBodySchema,
+  rxLimitsSchema,
   selectionSchema,
   uploadUrlRequestSchema,
 } from "./index.js";
@@ -169,6 +179,16 @@ describe("moneySchema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("rejects unknown uppercase currency LOL (INV-4)", () => {
+    expect(iso4217CurrencySchema.safeParse("LOL").success).toBe(false);
+    expect(iso4217CurrencySchema.safeParse("USD").success).toBe(true);
+    const result = moneySchema.safeParse({
+      amountMinor: 100,
+      currency: "LOL",
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("prescriptionSchema", () => {
@@ -253,4 +273,274 @@ describe("uploadUrlRequestSchema", () => {
     });
     expect(result.success).toBe(false);
   });
+});
+
+const FLOAT_MONEY = 12.5;
+const FLOAT_DIOPTER = -2.25;
+
+const limitsFixture = {
+  sphMin: -800,
+  sphMax: 600,
+  cylMin: -400,
+  cylMax: 0,
+  addMin: 75,
+  addMax: 350,
+  rxTypes: ["SINGLE_VISION"],
+};
+
+const eyeFixture = { sph: -225, cyl: -50, axis: 180, add: 200 };
+
+const prescriptionFixture = {
+  od: { sph: -225, cyl: -50, axis: 180, add: 200 },
+  os: { sph: -200, cyl: 75, axis: 42, add: 200 },
+  pd: { single: 635 },
+};
+
+const lensFixture = {
+  id: "lens-1",
+  groupId: "grp-1",
+  name: "Lens",
+  price: { amountMinor: 8000, currency: "USD" },
+  limits: limitsFixture,
+  labCodeTemplate: "X",
+  shopifyVariantId: "v1",
+  position: 0,
+};
+
+const lensGroupFixture = {
+  id: "grp-1",
+  name: "Group",
+  position: 0,
+  lenses: [lensFixture],
+};
+
+const optionValueFixture = {
+  id: "ov-1",
+  optionGroupId: "og-1",
+  label: "Clear",
+  priceDelta: { amountMinor: 0, currency: "USD" },
+  position: 0,
+};
+
+const optionGroupFixture = {
+  id: "og-1",
+  kind: "MATERIAL",
+  name: "Material",
+  position: 0,
+  values: [optionValueFixture],
+};
+
+const addOnFixture = {
+  id: "addon-1",
+  name: "Case",
+  price: { amountMinor: 1500, currency: "USD" },
+  shopifyVariantId: "v3",
+  position: 0,
+};
+
+const submitFixture = {
+  rxType: "SINGLE_VISION",
+  prescription: prescriptionFixture,
+};
+
+type FloatCase = {
+  schemaName: string;
+  field: string;
+  schema: ZodTypeAny;
+  payload: unknown;
+};
+
+function withField(base: unknown, path: string, value: unknown): unknown {
+  const clone = structuredClone(base) as Record<string, unknown>;
+  const parts = path.split(".");
+  let cursor: Record<string, unknown> = clone;
+  for (let index = 0; index < parts.length - 1; index += 1) {
+    const key = parts[index];
+    if (key === undefined) {
+      throw new Error(`empty path segment in ${path}`);
+    }
+    const next = cursor[key];
+    if (typeof next !== "object" || next === null) {
+      throw new Error(`missing ${path} at ${key}`);
+    }
+    cursor = next as Record<string, unknown>;
+  }
+  const last = parts[parts.length - 1];
+  if (last === undefined) {
+    throw new Error(`empty field path ${path}`);
+  }
+  cursor[last] = value;
+  return clone;
+}
+
+function nestedFloats(
+  schemaName: string,
+  schema: ZodTypeAny,
+  base: unknown,
+  fields: ReadonlyArray<{ field: string; value: number }>,
+): FloatCase[] {
+  return fields.map(({ field, value }) => ({
+    schemaName,
+    field,
+    schema,
+    payload: withField(base, field, value),
+  }));
+}
+
+const LIMIT_FLOATS = [
+  { field: "sphMin", value: FLOAT_DIOPTER },
+  { field: "sphMax", value: FLOAT_DIOPTER },
+  { field: "cylMin", value: FLOAT_DIOPTER },
+  { field: "cylMax", value: FLOAT_DIOPTER },
+  { field: "addMin", value: FLOAT_DIOPTER },
+  { field: "addMax", value: FLOAT_DIOPTER },
+] as const;
+
+const EYE_FLOATS = [
+  { field: "sph", value: FLOAT_DIOPTER },
+  { field: "cyl", value: FLOAT_DIOPTER },
+  { field: "add", value: FLOAT_DIOPTER },
+] as const;
+
+function prefixFields(
+  prefix: string,
+  fields: ReadonlyArray<{ field: string; value: number }>,
+): Array<{ field: string; value: number }> {
+  return fields.map(({ field, value }) => ({
+    field: `${prefix}${field}`,
+    value,
+  }));
+}
+
+const floatCases: FloatCase[] = [
+  {
+    schemaName: "diopterSchema",
+    field: "",
+    schema: diopterSchema,
+    payload: FLOAT_DIOPTER,
+  },
+  {
+    schemaName: "moneySchema",
+    field: "amountMinor",
+    schema: moneySchema,
+    payload: { amountMinor: FLOAT_MONEY, currency: "USD" },
+  },
+  ...nestedFloats("eyeSchema", eyeSchema, eyeFixture, EYE_FLOATS),
+  ...nestedFloats(
+    "prescriptionSchema",
+    prescriptionSchema,
+    prescriptionFixture,
+    [
+      ...prefixFields("od.", EYE_FLOATS),
+      ...prefixFields("os.", EYE_FLOATS),
+    ],
+  ),
+  ...nestedFloats("rxLimitsSchema", rxLimitsSchema, limitsFixture, LIMIT_FLOATS),
+  ...nestedFloats("lensSchema", lensSchema, lensFixture, [
+    { field: "price.amountMinor", value: FLOAT_MONEY },
+    ...prefixFields("limits.", LIMIT_FLOATS),
+  ]),
+  ...nestedFloats("lensGroupSchema", lensGroupSchema, lensGroupFixture, [
+    { field: "lenses.0.price.amountMinor", value: FLOAT_MONEY },
+    ...prefixFields("lenses.0.limits.", LIMIT_FLOATS),
+  ]),
+  ...nestedFloats("optionValueSchema", optionValueSchema, optionValueFixture, [
+    { field: "priceDelta.amountMinor", value: FLOAT_MONEY },
+  ]),
+  ...nestedFloats("optionGroupSchema", optionGroupSchema, optionGroupFixture, [
+    { field: "values.0.priceDelta.amountMinor", value: FLOAT_MONEY },
+  ]),
+  ...nestedFloats("addOnSchema", addOnSchema, addOnFixture, [
+    { field: "price.amountMinor", value: FLOAT_MONEY },
+  ]),
+  ...nestedFloats(
+    "catalogResponseSchema",
+    catalogResponseSchema,
+    validCatalog,
+    [
+      {
+        field: "lensGroups.0.lenses.0.price.amountMinor",
+        value: FLOAT_MONEY,
+      },
+      ...prefixFields("lensGroups.0.lenses.0.limits.", LIMIT_FLOATS),
+      {
+        field: "optionGroups.0.values.0.priceDelta.amountMinor",
+        value: FLOAT_MONEY,
+      },
+      { field: "addOns.0.price.amountMinor", value: FLOAT_MONEY },
+    ],
+  ),
+  ...nestedFloats(
+    "prescriptionSubmitBodySchema",
+    prescriptionSubmitBodySchema,
+    submitFixture,
+    [
+      ...prefixFields("prescription.od.", EYE_FLOATS),
+      ...prefixFields("prescription.os.", EYE_FLOATS),
+    ],
+  ),
+];
+
+describe("float rejection per money and diopter field", () => {
+  it("covers priceDelta, AddOn.price, eye sph/cyl/add, and ADD limits on every exported schema that has them", () => {
+    const ids = floatCases.map((entry) => `${entry.schemaName}:${entry.field}`);
+    expect(ids).toContain("optionValueSchema:priceDelta.amountMinor");
+    expect(ids).toContain(
+      "optionGroupSchema:values.0.priceDelta.amountMinor",
+    );
+    expect(ids).toContain(
+      "catalogResponseSchema:optionGroups.0.values.0.priceDelta.amountMinor",
+    );
+    expect(ids).toContain("addOnSchema:price.amountMinor");
+    expect(ids).toContain("catalogResponseSchema:addOns.0.price.amountMinor");
+    expect(ids).toContain("eyeSchema:sph");
+    expect(ids).toContain("eyeSchema:cyl");
+    expect(ids).toContain("eyeSchema:add");
+    expect(ids).toContain("prescriptionSchema:od.cyl");
+    expect(ids).toContain("prescriptionSchema:od.add");
+    expect(ids).toContain("prescriptionSchema:os.cyl");
+    expect(ids).toContain("prescriptionSchema:os.add");
+    expect(ids).toContain("rxLimitsSchema:addMin");
+    expect(ids).toContain("rxLimitsSchema:addMax");
+    expect(ids).toContain("lensSchema:limits.addMin");
+    expect(ids).toContain("lensSchema:limits.addMax");
+    expect(ids).toContain("lensGroupSchema:lenses.0.limits.addMin");
+    expect(ids).toContain("lensGroupSchema:lenses.0.limits.addMax");
+    expect(ids).toContain(
+      "catalogResponseSchema:lensGroups.0.lenses.0.limits.addMin",
+    );
+    expect(ids).toContain(
+      "catalogResponseSchema:lensGroups.0.lenses.0.limits.addMax",
+    );
+    expect(ids).toContain("prescriptionSubmitBodySchema:prescription.od.add");
+    expect(ids).toContain("prescriptionSubmitBodySchema:prescription.os.cyl");
+    expect(new Set(floatCases.map((entry) => entry.schemaName))).toEqual(
+      new Set([
+        "diopterSchema",
+        "moneySchema",
+        "eyeSchema",
+        "prescriptionSchema",
+        "rxLimitsSchema",
+        "lensSchema",
+        "lensGroupSchema",
+        "optionValueSchema",
+        "optionGroupSchema",
+        "addOnSchema",
+        "catalogResponseSchema",
+        "prescriptionSubmitBodySchema",
+      ]),
+    );
+  });
+
+  it.each(floatCases)(
+    "$schemaName rejects float $field",
+    ({ schema, payload, field }) => {
+      const result = schema.safeParse(payload);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const paths = result.error.issues.map((issue) => issue.path.join("."));
+        expect(paths).toContain(field);
+      }
+    },
+  );
 });

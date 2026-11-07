@@ -60,21 +60,37 @@ export interface ParsedBundleLineProperties {
   formattedRx?: FormattedRxProperties;
 }
 
-function joinIds(ids: readonly string[] | undefined): string | undefined {
-  if (ids === undefined) {
-    return undefined;
-  }
-  return ids.join(",");
+function isStringArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) && value.every((item) => typeof item === "string")
+  );
 }
 
-function splitIds(value: string | undefined): string[] | undefined {
+/**
+ * JSON array, not a comma join. Ids may contain commas, quotes, spaces,
+ * or non-ASCII, and those bytes have to come back unchanged.
+ */
+function encodeIdList(ids: readonly string[]): string {
+  return JSON.stringify(ids);
+}
+
+/**
+ * Inverse of `encodeIdList`. A missing key stays undefined. Text that is
+ * not a JSON array of strings is omitted. Never throws.
+ */
+function decodeIdList(value: string | undefined): string[] | undefined {
   if (value === undefined) {
     return undefined;
   }
-  if (value === "") {
-    return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (isStringArray(parsed)) {
+      return parsed;
+    }
+  } catch {
+    // Hostile property text is not a list.
   }
-  return value.split(",").filter((id) => id.length > 0);
+  return undefined;
 }
 
 function parseRole(value: string | undefined): BundleRole | undefined {
@@ -118,8 +134,12 @@ export function buildBundleLineProperties(
   }
 
   if (input.role === "lens") {
-    properties[BUNDLE_PROPERTY_KEYS.optionIds] = joinIds(input.optionIds) ?? "";
-    properties[BUNDLE_PROPERTY_KEYS.addonIds] = joinIds(input.addonIds) ?? "";
+    properties[BUNDLE_PROPERTY_KEYS.optionIds] = encodeIdList(
+      input.optionIds ?? [],
+    );
+    properties[BUNDLE_PROPERTY_KEYS.addonIds] = encodeIdList(
+      input.addonIds ?? [],
+    );
     if (input.rxRef !== undefined) {
       properties[BUNDLE_PROPERTY_KEYS.rxRef] = input.rxRef;
     }
@@ -180,11 +200,11 @@ export function readBundleProperties(
     parsed.rxRef = rxRef;
   }
 
-  const optionIds = splitIds(properties[BUNDLE_PROPERTY_KEYS.optionIds]);
+  const optionIds = decodeIdList(properties[BUNDLE_PROPERTY_KEYS.optionIds]);
   if (optionIds !== undefined) {
     parsed.optionIds = optionIds;
   }
-  const addonIds = splitIds(properties[BUNDLE_PROPERTY_KEYS.addonIds]);
+  const addonIds = decodeIdList(properties[BUNDLE_PROPERTY_KEYS.addonIds]);
   if (addonIds !== undefined) {
     parsed.addonIds = addonIds;
   }

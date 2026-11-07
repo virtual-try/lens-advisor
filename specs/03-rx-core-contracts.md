@@ -60,7 +60,25 @@ Stubbed: none.
 
 ## Examples
 
-Formatter: two decimals, explicit `+` on positives, `PL` for zero SPH (plano). Properties keys exact.
+Formatter: two decimals, explicit `+` on positives, `PL` for zero SPH (plano).
+Properties keys exact. Axis is zero-padded to three digits. Dual PD is `od/os`.
+Diopters are integer hundredths; money is integer minor units. Currency is an
+ISO-4217 code from `Intl.supportedValuesOf("currency")` (uppercase). Tie does
+not apply: nothing here ranks or picks among equals.
+
+`_option_ids` and `_addon_ids` are JSON arrays of strings. A comma, quote,
+empty-looking, or non-ASCII id round-trips. The reader never throws. A missing
+key is omitted. Text that is not a JSON array of strings is omitted.
+
+Normalized snapshot — the `x` in `read(build(x)) == x`:
+
+- `role` and `bundleId` copy through.
+- `itemId` is kept only when `role` is not `frame` and it was set.
+- On a lens line, `optionIds` and `addonIds` are arrays (omitted input becomes `[]`), order kept. Other roles omit both.
+- `rxRef` is kept only on a lens line when set.
+- `storeRxInOrder` is true only for a lens line whose input flag is true. On frame, option, and addon it is false.
+- `prescriptionOnFile` is true only for a lens line whose input flag is false.
+- `formattedRx` is set only for a lens line with the flag on, from `formatEye` / `formatPd` when `prescription` is present, otherwise from input `formattedRx`. The typed prescription is not part of the snapshot.
 
 | Input | Expected | Why this row |
 | --- | --- | --- |
@@ -71,13 +89,23 @@ Formatter: two decimals, explicit `+` on positives, `PL` for zero SPH (plano). P
 | bundle props, `storeRxInOrder=false`, Rx SPH −2.25 | no property value contains `"2.25"`; `Prescription: "Prescription on file"` | INV-3 |
 | bundle props, `storeRxInOrder=true` | every Rx key starts with `_` | INV-3 |
 | catalog JSON with `amountMinor: 12.5` | schema rejects | INV-4 float money |
+| `{ amountMinor: 100, currency: "LOL" }` | schema rejects | INV-4 unknown ISO-4217 code |
 | prescription body with `sph: -2.25` (float) | schema rejects | INV-5 |
+| `readBundleProperties({})` | `{ storeRxInOrder: false, prescriptionOnFile: false }`, no throw | empty input |
+| lens line, `optionIds: ["only-one"]`, `addonIds: []` | read `optionIds` is `["only-one"]`, `addonIds` is `[]` | single item |
+| lens line `optionIds` `["opt,a", "say\"hi\"", "透镜", " ", "", ","]` | read returns the same ids; the stored value is that JSON array | hostile and non-ASCII ids |
+| whitespace-only `_bundle_role`, `_option_ids`, `_addon_ids`, `_bundle_id` `"   "` | no throw; role and id lists omitted; `bundleId` is `"   "` | whitespace-only reader input |
+| 10 000 character `_bundle_id`, 10 000 character id in `_option_ids`, 10 000 character non-ASCII `_item_id` | no throw; those values come back | very long |
+| `_bundle_id` `"束-α"`, `_item_id` `"🙂透镜"`, role `lens` | no throw; those strings come back | non-ASCII reader input |
+| frame line, `storeRxInOrder` true, with a prescription | read `storeRxInOrder` false, `prescriptionOnFile` false, no `formattedRx` | normalized: flag does not apply off the lens line |
+| lens line, `storeRxInOrder` false, with a prescription | read `storeRxInOrder` false, `prescriptionOnFile` true, no `formattedRx` | normalized: Rx stays off the line |
+| 200 generated bundles, including hostile ids | `read(build(x))` equals the normalized snapshot | property round-trip |
 
 ## Steps
 
 1. Write the schemas, infer the types, export from `index.ts` (the package's only barrel).
 2. Write the formatters and the bundle-properties builder/reader.
-3. Tests: every Examples row; round-trip `readBundleProperties(build(x)) == x` as a property test.
+3. Tests: every Examples row; property test over 200 generated bundles that `readBundleProperties(build(x))` equals the normalized snapshot in Examples.
 
 ## Self-check
 
@@ -114,5 +142,13 @@ Formatter: two decimals, explicit `+` on positives, `PL` for zero SPH (plano). P
   - `pnpm typecheck` exit 0
   - `pnpm lint` (`eslint . --max-warnings 0`) exit 0
   - `pnpm build` exit 0
-- **2026-11-07** — Evidence (orchestro spec verify, tree c430e3fd): install pass · typecheck pass · lint pass · build pass · test pass 56/0/0
-
+- **2026-11-07** — Evidence (orchestro spec verify, tree 6110a78b): install pass · typecheck pass · lint pass · build pass · test pass 115/0/0
+- **2026-11-07** — Fix round (accepted R1). `_option_ids` / `_addon_ids` are JSON arrays, so comma, quote, non-ASCII, and empty-looking ids round-trip. `iso4217CurrencySchema` accepts only codes from `Intl.supportedValuesOf("currency")`. `read(build(x))` is compared to the normalized snapshot in Examples over 200 generated bundles. Float rejection is one case per money and diopter field on every exported schema that has one. Inventory names all 58 root exports. Examples gained empty input, single item, hostile ids, whitespace-only, very long, and non-ASCII reader rows; tie does not apply. Supersedes the earlier round-trip decision that compared `build(parsedToBuildInput(read(build(x))))` to `build(x)`.
+- **2026-11-07** — Sabotage, then restored: comma-join ids → hostile-id test and the 200-bundle test red; drop the ISO-4217 refine → both `LOL` tests red; reader sets `storeRxInOrder` for any role → frame-line test red; `addMin: z.number()` → the `addMin` float cases red.
+- **2026-11-07** — Gates after the last code change, from `pnpm test` / `pnpm typecheck` / `pnpm lint` / `pnpm build`:
+  - `packages/rx-core/src/cart/bundle-properties.test.ts (19 tests)`
+  - `packages/rx-core/src/schemas/schemas.test.ts (66 tests)`
+  - `pnpm test` → `Test Files  8 passed (8)` / `Tests  115 passed (115)`
+  - `pnpm typecheck` exit 0
+  - `pnpm lint` (`eslint . --max-warnings 0`) exit 0
+  - `pnpm build` exit 0

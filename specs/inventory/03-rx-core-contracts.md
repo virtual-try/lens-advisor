@@ -36,7 +36,7 @@
 **Added by:** spec 03.
 
 ### `rx-core-schemas`
-`packages/rx-core/src/schemas/` — zod schemas for catalog response, prescription submit body, upload-url request, selection, prescription, money, and catalog DTOs. Types are inferred from these schemas.
+`packages/rx-core/src/schemas/` — zod schemas `diopterSchema`, `axisSchema`, `pdTenthsMmSchema`, `iso4217CurrencySchema`, `moneySchema`, `rxTypeSchema`, `eyeSchema`, `pdSchema`, `prescriptionSchema`, `idSchema`, `rxLimitsSchema`, `lensSchema`, `lensGroupSchema`, `optionGroupKindSchema`, `optionValueSchema`, `optionGroupSchema`, `addOnSchema`, `catalogSettingsSchema`, `catalogResponseSchema`, `selectionSchema`, `prescriptionSubmitBodySchema`, `uploadUrlRequestSchema`. Types are inferred from these schemas, including `PrescriptionSubmitBody` and `UploadUrlRequest`.
 **Use instead of:** ad-hoc request/response validators in routes or the configurator client.
 **Added by:** spec 03.
 
@@ -61,6 +61,15 @@
 **Added by:** spec 03.
 
 ### `bundle-line-properties`
-`packages/rx-core/src/cart/bundle-properties.ts` — `buildBundleLineProperties` / `readBundleProperties` for nested cart line keys (`_bundle_id`, `_bundle_role`, `_item_id`, `_option_ids`, `_addon_ids`, `_rx_ref`, `_rx_od`/`_rx_os`/`_rx_pd`, visible `Prescription`).
+`packages/rx-core/src/cart/bundle-properties.ts` — `buildBundleLineProperties` / `readBundleProperties` / `parsedToBuildInput` for nested cart line keys (`_bundle_id`, `_bundle_role`, `_item_id`, `_option_ids`, `_addon_ids`, `_rx_ref`, `_rx_od`/`_rx_os`/`_rx_pd`, visible `Prescription`). Id lists are JSON arrays. Constants `BUNDLE_ROLES`, `BUNDLE_PROPERTY_KEYS`, `PRESCRIPTION_ON_FILE`. Types `BundleRole`, `BuildBundleLinePropertiesInput`, `FormattedRxProperties`, `ParsedBundleLineProperties`.
 **Use instead of:** hand-written `_bundle_*` keys in the configurator or the orders webhook.
+**Added by:** spec 03.
+
+### `rx-core-root-exports`
+`packages/rx-core/src/index.ts` — the package's only barrel. Every public root export:
+
+Values: `BUNDLE_PROPERTY_KEYS`, `BUNDLE_ROLES`, `PRESCRIPTION_ON_FILE`, `buildBundleLineProperties`, `parsedToBuildInput`, `readBundleProperties`, `formatAxis`, `formatDiopter`, `formatEye`, `formatPd`, `addOnSchema`, `axisSchema`, `catalogResponseSchema`, `catalogSettingsSchema`, `diopterSchema`, `eyeSchema`, `idSchema`, `iso4217CurrencySchema`, `lensGroupSchema`, `lensSchema`, `moneySchema`, `optionGroupKindSchema`, `optionGroupSchema`, `optionValueSchema`, `pdSchema`, `pdTenthsMmSchema`, `prescriptionSchema`, `prescriptionSubmitBodySchema`, `rxLimitsSchema`, `rxTypeSchema`, `selectionSchema`, `uploadUrlRequestSchema`, `OPTION_GROUP_KINDS`, `RX_TYPES`.
+
+Types: `BundleRole`, `BuildBundleLinePropertiesInput`, `FormattedRxProperties`, `ParsedBundleLineProperties`, `AddOn`, `Axis`, `CatalogResponse`, `CatalogSettings`, `Diopter`, `Eye`, `Lens`, `LensGroup`, `Money`, `OptionGroup`, `OptionGroupKind`, `OptionValue`, `Pd`, `PdTenthsMm`, `Prescription`, `PrescriptionSubmitBody`, `RxLimits`, `RxType`, `Selection`, `UploadUrlRequest`.
+**Use instead of:** importing from a file under `packages/rx-core/src/` other than this barrel, or redeclaring any of these names.
 **Added by:** spec 03.
