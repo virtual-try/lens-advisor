@@ -1,0 +1,28 @@
+# This file stores configurations for your Shopify app.
+client_id = ""
+
+[access_scopes]
+# Scopes required for Lens Advisor MVP
+scopes = "read_products,write_products,read_orders,write_app_proxy"
+
+[app_proxy]
+url = "/proxy"
+subpath = "lens-advisor"
+prefix = "apps"
+
+[webhooks]
+api_version = "2026-10"
+
+  [[webhooks.subscriptions]]
+  topics = ["app/uninstalled"]
+  uri = "/webhooks/app/uninstalled"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/create"]
+  uri = "/webhooks/orders/create"
+
+  # Mandatory compliance topics for public apps
+  # See: https://shopify.dev/docs/apps/build/privacy-law-compliance
+  [[webhooks.subscriptions]]
+  compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+  uri = "/webhooks/compliance"
