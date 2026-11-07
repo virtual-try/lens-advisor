@@ -11,7 +11,7 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | 02 | [Database schema and first migration](./02-database-schema.md) | Done | 01 | Heavy | — | PR #16 |
 | 03 | [rx-core domain types and schemas](./03-rx-core-contracts.md) | Done | 01 | Heavy | — | PR #14 |
 | 04 | [Configurator package, tokens and theme app block](./04-configurator-package-and-tokens.md) | Not started | 01 | Heavy | — |  |
-| 05 | [Field encryption for prescription data](./05-field-encryption.md) | Not started | 01 | Heavy | — |  |
+| 05 | [Field encryption for prescription data](./05-field-encryption.md) | Done | 01 | Heavy | — | PR #24 |
 | 06 | [S3 storage adapter](./06-s3-storage.md) | Done | 01 | Standard | — | PR #9 |
 | 07 | [Mailer adapter (Resend)](./07-mailer.md) | Not started | 01 | Light | — |  |
 | 08 | [Job queue and worker process (pg-boss)](./08-job-queue.md) | Not started | 01 | Standard | — |  |
@@ -71,3 +71,4 @@ Not started · In progress · Blocked · Done
 - **2026-11-07** — Spec 11 merged (PR #23).
 - **2026-11-07** — Spec 13 merged (PR #30).
 - **2026-11-07** — Spec 15 merged (PR #32).
+- **2026-11-07** — Spec 05 merged (PR #24).
