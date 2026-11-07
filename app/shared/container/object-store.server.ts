@@ -19,6 +19,7 @@ export function getObjectStore(): ObjectStore {
         accessKeyId: s3Config.accessKeyId,
         secretAccessKey: s3Config.secretAccessKey,
       },
+      requestChecksumCalculation: "WHEN_REQUIRED",
     });
 
     global.__objectStore = createObjectStore({

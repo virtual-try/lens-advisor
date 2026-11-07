@@ -18,6 +18,7 @@ import {
   TooLargeError,
   InvalidKeyError,
   MAX_UPLOAD_BYTES,
+  type S3ClientLike,
 } from "./object-store.server";
 import {
   getObjectStore,
@@ -40,6 +41,7 @@ function createTestHarness(options?: {
       accessKeyId: "TEST_ACCESS_KEY_ID",
       secretAccessKey: "TEST_SECRET_ACCESS_KEY",
     },
+    requestChecksumCalculation: "WHEN_REQUIRED",
   });
 
   fakeClient.send = vi.fn().mockImplementation(async (command: unknown) => {
@@ -102,12 +104,59 @@ describe("Spec 06 — S3 Storage Adapter", () => {
       expect(url).toContain("https://");
       expect(url).toContain(key);
 
+      // R1-F1: verify no empty-body CRC32 parameter in signed URL
+      expect(url).not.toContain("x-amz-checksum-crc32");
+      expect(url).not.toContain("AAAAAA");
+
       const presignCmd = recorded.find((r) => r.type === "presign")?.command as PutObjectCommand;
       expect(presignCmd).toBeInstanceOf(PutObjectCommand);
       expect(presignCmd.input.Key).toBe(key);
       expect(presignCmd.input.ContentType).toBe("image/png");
+      expect(presignCmd.input.ContentLength).toBe(2 * 1024 * 1024);
       expect(presignCmd.input.ServerSideEncryption).toBe("aws:kms");
       expect(presignCmd.input.SSEKMSKeyId).toBe(kmsKeyId);
+
+      // R1-F2: verify Content-Type and Content-Length are signed
+      const parsedUrl = new URL(url);
+      const signedHeaders = (parsedUrl.searchParams.get("X-Amz-SignedHeaders") ?? "").split(";");
+      expect(signedHeaders).toContain("content-type");
+      expect(signedHeaders).toContain("content-length");
+    });
+
+    it("R1-F1: presigned upload URL carries no empty-body CRC32 checksum parameter", async () => {
+      const { store } = createTestHarness();
+      const key = buildRxKey("shop1", "rx1", "uuid1", "pdf");
+      const url = await store.presignUpload({
+        key,
+        contentType: "application/pdf",
+        maxBytes: 10 * 1024 * 1024,
+      });
+
+      const parsedUrl = new URL(url);
+      expect(parsedUrl.searchParams.has("x-amz-checksum-crc32")).toBe(false);
+      expect(url).not.toContain("AAAAAA%3D%3D");
+      expect(url).not.toContain("AAAAAA==");
+    });
+
+    it("R1-F2: presignUpload binds Content-Type and Content-Length into signed headers for S3 mismatch enforcement", async () => {
+      const { store, recorded } = createTestHarness();
+      const key = buildRxKey("shop1", "rx1", "doc1", "pdf");
+
+      const url = await store.presignUpload({
+        key,
+        contentType: "application/pdf",
+        maxBytes: 10 * 1024 * 1024,
+      });
+
+      const presignCmd = recorded.find((r) => r.type === "presign")?.command as PutObjectCommand;
+      expect(presignCmd.input.ContentType).toBe("application/pdf");
+      expect(presignCmd.input.ContentLength).toBe(10 * 1024 * 1024);
+
+      const parsed = new URL(url);
+      const signedHeaders = (parsed.searchParams.get("X-Amz-SignedHeaders") ?? "").split(";");
+      expect(signedHeaders).toContain("content-type");
+      expect(signedHeaders).toContain("content-length");
+      expect(signedHeaders).toContain("host");
     });
 
     it("presignUpload text/html -> UnsupportedTypeError (invalid type)", async () => {
@@ -236,20 +285,36 @@ describe("Spec 06 — S3 Storage Adapter", () => {
       }
     });
 
-    it("INV-10: deletePrefix refuses any prefix outside shops/<id>/", async () => {
+    it("INV-10 / R1-F4: deletePrefix refuses any prefix outside shops/<id>/ and rejects hostile/non-canonical prefixes", async () => {
       const { store } = createTestHarness();
 
       const hostilePrefixes = [
         "",
         "/",
+        "/shops/shop1/",
         "shops",
         "shops/",
         "shops//",
+        "shops///",
+        "shops/ /",
+        "shops/shop 1/",
+        "shops/shop1//",
+        "shops/shop1//rx/",
+        "shops/%2e%2e/",
+        "shops/%2E%2E/",
+        "shops/shop1/%2e%2e/",
+        "shops/shop1/%2e%2e/other/",
+        "shops/shop1%2fother/",
+        "shops/shop1%2Fother/",
+        "shops/shop1%5cother/",
+        "shops/shop1%5Cother/",
+        "shops/shop1/other",
         "other/",
         "shops/../other/",
         "shops/shop1/../../etc/",
         "../shops/shop1/",
         "shops/shop1\\evil",
+        "shops/shop1/evil\0/",
       ];
 
       for (const prefix of hostilePrefixes) {
@@ -267,7 +332,7 @@ describe("Spec 06 — S3 Storage Adapter", () => {
     });
   });
 
-  describe("Presigned download (60s default)", () => {
+  describe("Presigned download (60s fixed)", () => {
     it("presignDownload generates signed URL with default 60s expiration", async () => {
       const { store, recorded } = createTestHarness();
       const key = buildTicketKey("shopX", "lab1", "pdf");
@@ -286,12 +351,23 @@ describe("Spec 06 — S3 Storage Adapter", () => {
       expect(presignCmd.input.Key).toBe(key);
     });
 
-    it("presignDownload supports options object with custom expiresIn", async () => {
+    it("R1-F3: presignDownload expiry is fixed at 60s and ignores caller override", async () => {
       const { store } = createTestHarness();
       const key = buildTicketKey("shopX", "lab1", "pdf");
 
-      const url = await store.presignDownload({ key, expiresIn: 120 });
-      expect(url).toBeTypeOf("string");
+      const url = await store.presignDownload(key);
+      const parsed = new URL(url);
+      expect(parsed.searchParams.get("X-Amz-Expires")).toBe("60");
+
+      const urlObj = await store.presignDownload({ key });
+      expect(new URL(urlObj).searchParams.get("X-Amz-Expires")).toBe("60");
+
+      // Attempting to pass custom expiresIn (e.g. week-long 604800) is ignored
+      const urlIgnored = await store.presignDownload({
+        key,
+        expiresIn: 604800,
+      } as unknown as { key: string });
+      expect(new URL(urlIgnored).searchParams.get("X-Amz-Expires")).toBe("60");
     });
 
     it("presignDownload rejects invalid keys", async () => {
@@ -394,6 +470,49 @@ describe("Spec 06 — S3 Storage Adapter", () => {
       expect(() => buildTicketKey("shop", "lab", "pdf/exe")).toThrow(InvalidKeyError);
       expect(() => buildRxPrefix("shop", "rx/../bad")).toThrow(InvalidKeyError);
     });
+
+    it("R1-F6: buildTicketKey accepts only pdf or csv and rejects denied extensions", () => {
+      expect(buildTicketKey("shop", "order", "pdf")).toBe("shops/shop/tickets/order.pdf");
+      expect(buildTicketKey("shop", "order", "csv")).toBe("shops/shop/tickets/order.csv");
+      expect(buildTicketKey("shop", "order", ".PDF")).toBe("shops/shop/tickets/order.pdf");
+      expect(buildTicketKey("shop", "order", ".CSV")).toBe("shops/shop/tickets/order.csv");
+
+      expect(() => buildTicketKey("shop", "order", "exe")).toThrow(InvalidKeyError);
+      expect(() => buildTicketKey("shop", "order", "png")).toThrow(InvalidKeyError);
+      expect(() => buildTicketKey("shop", "order", "html")).toThrow(InvalidKeyError);
+      expect(() => buildTicketKey({ shopId: "shop", labOrderId: "order", ext: "exe" })).toThrow(InvalidKeyError);
+    });
+  });
+
+  describe("createObjectStore safeguards", () => {
+    it("R1-F5: refuses to create object store without presigner when client lacks middlewareStack (no unsigned fallback)", () => {
+      const fakeWithoutMiddleware: S3ClientLike = {
+        send: vi.fn() as unknown as S3ClientLike["send"],
+      };
+      expect(() =>
+        createObjectStore({
+          client: fakeWithoutMiddleware,
+          bucket: "test-bucket",
+          kmsKeyId: "arn:aws:kms:us-east-1:123456789012:key/test-kms-key",
+        })
+      ).toThrow(/client requires middlewareStack/);
+    });
+
+    it("R1-F5: allows custom client without middlewareStack if explicit presigner is provided", async () => {
+      const fakeWithoutMiddleware: S3ClientLike = {
+        send: vi.fn() as unknown as S3ClientLike["send"],
+      };
+      const customPresigner = vi.fn().mockResolvedValue("https://custom.signed.url");
+      const store = createObjectStore({
+        client: fakeWithoutMiddleware,
+        bucket: "test-bucket",
+        kmsKeyId: "arn:aws:kms:us-east-1:123456789012:key/test-kms-key",
+        presigner: customPresigner,
+      });
+
+      const url = await store.presignDownload("shops/shop1/rx/rx1/file.pdf");
+      expect(url).toBe("https://custom.signed.url");
+    });
   });
 
   describe("Container lazy getter: getObjectStore()", () => {
@@ -424,6 +543,25 @@ describe("Spec 06 — S3 Storage Adapter", () => {
 
       const store2 = getObjectStore();
       expect(store2).toBe(store1); // Singleton instance
+    });
+
+    it("R1-F1: getObjectStore() client uses requestChecksumCalculation WHEN_REQUIRED so presigned URLs carry no empty-body CRC32", async () => {
+      process.env.S3_BUCKET = "my-configured-bucket";
+      process.env.S3_REGION = "us-west-2";
+      process.env.S3_KMS_KEY_ID = "arn:aws:kms:us-west-2:111122223333:key/abc";
+      process.env.AWS_ACCESS_KEY_ID = "AKIAEXAMPLE";
+      process.env.AWS_SECRET_ACCESS_KEY = "SECRETEXAMPLE";
+
+      const store = getObjectStore();
+      const url = await store.presignUpload({
+        key: buildRxKey("shop1", "rx1", "uuid1", "pdf"),
+        contentType: "application/pdf",
+        maxBytes: 10 * 1024 * 1024,
+      });
+
+      const parsedUrl = new URL(url);
+      expect(parsedUrl.searchParams.has("x-amz-checksum-crc32")).toBe(false);
+      expect(url).not.toContain("AAAAAA");
     });
   });
 });

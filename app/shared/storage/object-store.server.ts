@@ -45,20 +45,20 @@ export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
 export const UPLOAD_URL_EXPIRATION_SECONDS = 300; // 5 minutes
 export const DOWNLOAD_URL_EXPIRATION_SECONDS = 60; // 60 seconds
 
+export const ALLOWED_TICKET_EXTENSIONS = ["pdf", "csv"] as const;
+export type AllowedTicketExtension = (typeof ALLOWED_TICKET_EXTENSIONS)[number];
+
 export interface PresignUploadParams {
   key: string;
   contentType: string;
   maxBytes?: number;
+  contentLength?: number;
 }
 
 export interface PutObjectParams {
   key: string;
   body: unknown;
   contentType?: string;
-}
-
-export interface PresignDownloadOptions {
-  expiresIn?: number;
 }
 
 export interface HeadObjectResult {
@@ -76,7 +76,12 @@ export type S3ClientLike = Pick<S3Client, "send">;
 export type PresignerFn = (
   client: S3ClientLike,
   command: PutObjectCommand | GetObjectCommand,
-  options?: { expiresIn?: number; hoistableHeaders?: Set<string> }
+  options?: {
+    expiresIn?: number;
+    hoistableHeaders?: Set<string>;
+    signableHeaders?: Set<string>;
+    unhoistableHeaders?: Set<string>;
+  }
 ) => Promise<string>;
 
 export interface CreateObjectStoreOptions {
@@ -92,10 +97,7 @@ export interface ObjectStore {
   readonly kmsKeyId: string;
   presignUpload(params: PresignUploadParams): Promise<string>;
   putObject(params: PutObjectParams): Promise<void>;
-  presignDownload(
-    keyOrParams: string | { key: string; expiresIn?: number },
-    options?: PresignDownloadOptions
-  ): Promise<string>;
+  presignDownload(keyOrParams: string | { key: string }): Promise<string>;
   headObject(key: string): Promise<HeadObjectResult | null>;
   objectExists(key: string): Promise<boolean>;
   deletePrefix(prefix: string): Promise<number>;
@@ -104,6 +106,9 @@ export interface ObjectStore {
 export function assertValidId(name: string, value: string): void {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new InvalidKeyError(`Invalid ${name}: must be a non-empty string`);
+  }
+  if (/\s/.test(value)) {
+    throw new InvalidKeyError(`Invalid ${name} '${value}': cannot contain whitespace`);
   }
   if (value.includes("/") || value.includes("\\")) {
     throw new InvalidKeyError(`Invalid ${name} '${value}': cannot contain '/' or '\\'`);
@@ -114,11 +119,29 @@ export function assertValidId(name: string, value: string): void {
   if (value.includes("\0")) {
     throw new InvalidKeyError(`Invalid ${name}: cannot contain null bytes`);
   }
+  let decoded = value;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    throw new InvalidKeyError(`Invalid ${name}: contains malformed percent-encoding`);
+  }
+  if (
+    decoded.includes("..") ||
+    decoded.includes("/") ||
+    decoded.includes("\\") ||
+    decoded.includes("\0") ||
+    /\s/.test(decoded)
+  ) {
+    throw new InvalidKeyError(`Invalid ${name} '${value}': contains encoded traversal or separators`);
+  }
 }
 
 export function assertValidExtension(ext: string): void {
   if (typeof ext !== "string" || ext.trim().length === 0) {
     throw new InvalidKeyError("Invalid extension: must be a non-empty string");
+  }
+  if (/\s/.test(ext)) {
+    throw new InvalidKeyError(`Invalid extension '${ext}': cannot contain whitespace`);
   }
   if (ext.includes("/") || ext.includes("\\")) {
     throw new InvalidKeyError(`Invalid extension '${ext}': cannot contain '/' or '\\'`);
@@ -129,15 +152,64 @@ export function assertValidExtension(ext: string): void {
   if (ext.includes("\0")) {
     throw new InvalidKeyError("Invalid extension: cannot contain null bytes");
   }
+  let decoded = ext;
+  try {
+    decoded = decodeURIComponent(ext);
+  } catch {
+    throw new InvalidKeyError("Invalid extension: contains malformed percent-encoding");
+  }
+  if (
+    decoded.includes("..") ||
+    decoded.includes("/") ||
+    decoded.includes("\\") ||
+    decoded.includes("\0") ||
+    /\s/.test(decoded)
+  ) {
+    throw new InvalidKeyError(`Invalid extension '${ext}': contains encoded traversal or separators`);
+  }
 }
 
 export function validateShopScopedPrefix(prefix: string): void {
   if (typeof prefix !== "string" || prefix.length === 0) {
     throw new InvalidKeyError("Prefix must not be empty");
   }
-  if (prefix.includes("..") || prefix.includes("\0") || prefix.includes("\\")) {
-    throw new InvalidKeyError("Prefix cannot contain '..', '\\', or null bytes");
+  if (prefix.startsWith("/") || prefix.startsWith("\\")) {
+    throw new InvalidKeyError("Prefix cannot start with '/' or '\\'");
   }
+  if (!prefix.endsWith("/")) {
+    throw new InvalidKeyError("Prefix must end with '/'");
+  }
+  if (prefix.includes("//") || prefix.includes("\\")) {
+    throw new InvalidKeyError("Prefix cannot contain '//' or '\\'");
+  }
+  if (prefix.includes("..") || prefix.includes("\0")) {
+    throw new InvalidKeyError("Prefix cannot contain '..' or null bytes");
+  }
+  if (/\s/.test(prefix)) {
+    throw new InvalidKeyError("Prefix cannot contain whitespace");
+  }
+
+  let decoded = prefix;
+  try {
+    decoded = decodeURIComponent(prefix);
+  } catch {
+    throw new InvalidKeyError("Prefix contains malformed percent-encoding");
+  }
+
+  if (
+    decoded.includes("..") ||
+    decoded.includes("//") ||
+    decoded.includes("\\") ||
+    decoded.includes("\0") ||
+    /\s/.test(decoded)
+  ) {
+    throw new InvalidKeyError("Prefix cannot contain encoded traversal, whitespace, or empty segments");
+  }
+
+  if (decoded.split("/").length !== prefix.split("/").length) {
+    throw new InvalidKeyError("Prefix cannot contain encoded path separators");
+  }
+
   const match = prefix.match(/^shops\/([^/]+)\/(.*)$/);
   if (!match) {
     throw new InvalidKeyError(
@@ -146,6 +218,17 @@ export function validateShopScopedPrefix(prefix: string): void {
   }
   const shopId = match[1];
   assertValidId("shopId", shopId);
+
+  const remainder = match[2];
+  if (remainder.length > 0) {
+    const subSegments = remainder.slice(0, -1).split("/");
+    for (const segment of subSegments) {
+      if (segment.length === 0) {
+        throw new InvalidKeyError(`Prefix '${prefix}' contains empty segments`);
+      }
+      assertValidId("prefix segment", segment);
+    }
+  }
 }
 
 export function validateKey(key: string): void {
@@ -155,9 +238,34 @@ export function validateKey(key: string): void {
   if (key.startsWith("/") || key.startsWith("\\")) {
     throw new InvalidKeyError("Key cannot start with '/' or '\\'");
   }
-  if (key.includes("..") || key.includes("\0") || key.includes("\\")) {
-    throw new InvalidKeyError("Key cannot contain '..', '\\', or null bytes");
+  if (key.includes("..") || key.includes("\0") || key.includes("\\") || key.includes("//")) {
+    throw new InvalidKeyError("Key cannot contain '..', '\\', '//', or null bytes");
   }
+  if (/\s/.test(key)) {
+    throw new InvalidKeyError("Key cannot contain whitespace");
+  }
+
+  let decoded = key;
+  try {
+    decoded = decodeURIComponent(key);
+  } catch {
+    throw new InvalidKeyError("Key contains malformed percent-encoding");
+  }
+
+  if (
+    decoded.includes("..") ||
+    decoded.includes("//") ||
+    decoded.includes("\\") ||
+    decoded.includes("\0") ||
+    /\s/.test(decoded)
+  ) {
+    throw new InvalidKeyError("Key contains encoded traversal, whitespace, or empty segments");
+  }
+
+  if (decoded.split("/").length !== key.split("/").length) {
+    throw new InvalidKeyError("Key cannot contain encoded path separators");
+  }
+
   const match = key.match(/^shops\/([^/]+)\/(.+)$/);
   if (!match) {
     throw new InvalidKeyError(
@@ -169,6 +277,12 @@ export function validateKey(key: string): void {
   const remainder = match[2];
   if (!remainder || remainder.trim().length === 0) {
     throw new InvalidKeyError(`Key '${key}' missing path after shop id`);
+  }
+  const segments = remainder.split("/");
+  for (const segment of segments) {
+    if (segment.length === 0) {
+      throw new InvalidKeyError(`Key '${key}' contains empty segments`);
+    }
   }
 }
 
@@ -226,12 +340,12 @@ export function buildRxKey(
 export function buildTicketKey(
   shopId: string,
   labOrderId: string,
-  ext: "pdf" | "csv" | string
+  ext: AllowedTicketExtension | (string & {})
 ): string;
 export function buildTicketKey(params: {
   shopId: string;
   labOrderId: string;
-  ext: "pdf" | "csv" | string;
+  ext: AllowedTicketExtension | (string & {});
 }): string;
 export function buildTicketKey(
   shopIdOrParams:
@@ -239,7 +353,7 @@ export function buildTicketKey(
     | {
         shopId: string;
         labOrderId: string;
-        ext: "pdf" | "csv" | string;
+        ext: AllowedTicketExtension | (string & {});
       },
   labOrderId?: string,
   ext?: string
@@ -263,6 +377,12 @@ export function buildTicketKey(
   assertValidExtension(extension);
 
   const cleanExt = extension.replace(/^\.+/, "").toLowerCase();
+  if (cleanExt !== "pdf" && cleanExt !== "csv") {
+    throw new InvalidKeyError(
+      `Invalid ticket extension '${extension}': must be 'pdf' or 'csv'`
+    );
+  }
+
   return `shops/${shopId}/tickets/${oId}.${cleanExt}`;
 }
 
@@ -295,18 +415,24 @@ export function createObjectStore(options: CreateObjectStoreOptions): ObjectStor
     throw new Error("createObjectStore: kmsKeyId is required");
   }
 
+  if (
+    !options.presigner &&
+    typeof (client as unknown as S3Client)?.middlewareStack?.clone !== "function"
+  ) {
+    throw new Error(
+      "createObjectStore: client requires middlewareStack for presigning, or an explicit presigner must be provided"
+    );
+  }
+
   const presigner: PresignerFn =
     options.presigner ??
-    (typeof (client as unknown as S3Client)?.middlewareStack?.clone === "function"
-      ? (s3Client, command, opts) =>
-          getSignedUrl(s3Client as unknown as S3Client, command, {
-            expiresIn: opts?.expiresIn,
-            hoistableHeaders: opts?.hoistableHeaders,
-          })
-      : async (_s3Client, command) => {
-          const key = command.input.Key;
-          return `https://${bucket}.s3.amazonaws.com/${key}`;
-        });
+    ((s3Client, command, opts) =>
+      getSignedUrl(s3Client as unknown as S3Client, command, {
+        expiresIn: opts?.expiresIn,
+        hoistableHeaders: opts?.hoistableHeaders,
+        signableHeaders: opts?.signableHeaders,
+        unhoistableHeaders: opts?.unhoistableHeaders,
+      }));
 
   return {
     bucket,
@@ -337,10 +463,33 @@ export function createObjectStore(options: CreateObjectStoreOptions): ObjectStor
         }
       }
 
+      if (params.contentLength !== undefined) {
+        if (
+          typeof params.contentLength !== "number" ||
+          isNaN(params.contentLength) ||
+          params.contentLength <= 0
+        ) {
+          throw new TooLargeError("Invalid contentLength: must be a positive number");
+        }
+        if (params.contentLength > MAX_UPLOAD_BYTES) {
+          throw new TooLargeError(
+            `File size ${params.contentLength} exceeds maximum allowed size of ${MAX_UPLOAD_BYTES} bytes (10 MB)`
+          );
+        }
+        if (params.maxBytes !== undefined && params.contentLength > params.maxBytes) {
+          throw new TooLargeError(
+            `Declared contentLength ${params.contentLength} exceeds maxBytes ${params.maxBytes}`
+          );
+        }
+      }
+
+      const length = params.contentLength ?? params.maxBytes ?? MAX_UPLOAD_BYTES;
+
       const command = new PutObjectCommand({
         Bucket: bucket,
         Key: params.key,
         ContentType: normalizedType,
+        ContentLength: length,
         ServerSideEncryption: "aws:kms",
         SSEKMSKeyId: kmsKeyId,
       });
@@ -352,9 +501,12 @@ export function createObjectStore(options: CreateObjectStoreOptions): ObjectStor
         "x-amz-server-side-encryption-aws-kms-key-id",
       ]);
 
+      const signableHeaders = new Set(["content-type", "content-length"]);
+
       return await presigner(client, command, {
         expiresIn: UPLOAD_URL_EXPIRATION_SECONDS,
         hoistableHeaders,
+        signableHeaders,
       });
     },
 
@@ -376,14 +528,9 @@ export function createObjectStore(options: CreateObjectStoreOptions): ObjectStor
     },
 
     async presignDownload(
-      keyOrParams: string | { key: string; expiresIn?: number },
-      downloadOptions?: PresignDownloadOptions
+      keyOrParams: string | { key: string }
     ): Promise<string> {
       const key = typeof keyOrParams === "string" ? keyOrParams : keyOrParams.key;
-      const expiresIn =
-        (typeof keyOrParams === "object" ? keyOrParams.expiresIn : undefined) ??
-        downloadOptions?.expiresIn ??
-        DOWNLOAD_URL_EXPIRATION_SECONDS;
 
       validateKey(key);
 
@@ -394,7 +541,9 @@ export function createObjectStore(options: CreateObjectStoreOptions): ObjectStor
 
       options.onCommand?.(command, "presign");
 
-      return await presigner(client, command, { expiresIn });
+      return await presigner(client, command, {
+        expiresIn: DOWNLOAD_URL_EXPIRATION_SECONDS,
+      });
     },
 
     async headObject(key: string): Promise<HeadObjectResult | null> {
