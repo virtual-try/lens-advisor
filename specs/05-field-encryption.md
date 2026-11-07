@@ -1,6 +1,6 @@
 # Spec 05 — Field encryption for prescription data
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 01
 **Model:** Heavy — `claude-opus-5-5` · `gpt-6-astra` · `gemini-3.1-pro-preview`
 **Issue:** —
@@ -100,7 +100,7 @@ Real, used now: config module (spec 01). Stubbed: none. Consumers: 22, 24, 25.
   - `pnpm build`: exit 0.
   - `git diff --check`: clean.
 - **2026-11-08** — `specs/inventory/05-field-encryption.md` lists `createFieldCipher` (`field-cipher`) and `getCipher` (`cipher-container`).
-- **2026-11-07** — Evidence (orchestro spec verify, tree 0076ef8d): install pass · typecheck pass · lint pass · build pass · test pass 250/0/0
+- **2026-11-07** — Evidence (orchestro spec verify, tree 0e1e48a1): install pass · typecheck pass · lint pass · build pass · test pass 355/0/0
 - **2026-11-08** — Fix round R1-F1. GCM additional data is the on-wire header concatenated with the caller context, each `uint32be` length-prefixed: `u32be(headerLen) || version || keyIdLen || keyId || u32be(contextLen) || contextUtf8`. Encrypt and decrypt both pass that buffer to `setAAD`. Before that change, with `k1` and `k2` set to the same key, rewriting the key id still returned plaintext. `pnpm vitest run app/shared/crypto/field-cipher.server.test.ts -t "version byte|share a key|another shop"` on the new tests, cipher not yet binding the header: `Tests  1 failed | 2 passed | 12 skipped (15)`. Failure: `expected undefined to be an instance of DecryptError` in "swapping the key id on a valid ciphertext throws DecryptError when both ids share a key". The version-byte case already threw `DecryptError` from the pre-lookup version check. After the binding, that swap throws `DecryptError` and does not return plaintext.
 - **2026-11-08** — Fix round R1-F2. Sabotage was decrypt only: `decipher.setAAD(gcmAad(header, aad))` temporarily became `decipher.setAAD(Buffer.alloc(0))`. Encrypt still bound the real header and context. The cross-shop test requires the original context to open first, so empty AAD on decrypt cannot leave that row green. `pnpm vitest run app/shared/crypto/field-cipher.server.test.ts -t "another shop" --reporter=verbose`:
 
