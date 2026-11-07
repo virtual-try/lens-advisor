@@ -34,6 +34,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router": "7.18.2",
+    "resend": "6.37.0",
     "vite-tsconfig-paths": "^6.0.4",
     "zod": "^3.24.2"
   },
