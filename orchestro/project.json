@@ -38,5 +38,11 @@
     }
   },
   "worktreeRoot": "/home/shazy/Documents/pt/lens-advisor-wt",
-  "portBlockBase": 44000
+  "portBlockBase": 44000,
+  "brief": {
+    "docs": [
+      "specs/INVARIANTS.md",
+      "specs/RULINGS.md"
+    ]
+  }
 }
