@@ -102,4 +102,4 @@ Hundredths of a diopter. Steps of 25. Ranges inclusive. Whitespace trimmed. Comm
   - `pnpm typecheck` exit 0
   - `pnpm lint` (`eslint . --max-warnings 0`) exit 0
   - `pnpm build` exit 0
-- **2026-11-07** — Evidence (orchestro spec verify, tree 1bd64329): install pass · typecheck pass · lint pass · build pass · test pass 223/0/0
+- **2026-11-07** — Evidence (orchestro spec verify, tree 65271788): install pass · typecheck pass · lint pass · build pass · test pass 227/0/0

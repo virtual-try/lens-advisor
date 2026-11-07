@@ -88,75 +88,77 @@ export function parseDiopterText(
   }
 
   const lower = trimmed.toLowerCase();
+  let signedHundredths: number | null = null;
+
   if (lower === "pl" || lower === "plano") {
-    return { ok: true, value: 0 as Diopter };
-  }
-
-  // Normalize Unicode minuses to ASCII hyphen-minus
-  const withAsciiMinus = trimmed.replace(
-    /\u2212|\u2013|\u2014|\uFE63|\uFF0D/g,
-    "-",
-  );
-
-  // Normalize comma decimal separator to dot
-  const normalized = withAsciiMinus.replace(/,/g, ".");
-
-  // Check explicit zero strings
-  if (
-    normalized === "0" ||
-    normalized === "+0" ||
-    normalized === "-0" ||
-    normalized === "0.0" ||
-    normalized === "0.00" ||
-    normalized === "+0.00" ||
-    normalized === "-0.00" ||
-    normalized === ".0" ||
-    normalized === ".00" ||
-    normalized === "+.00" ||
-    normalized === "-.00"
-  ) {
-    return { ok: true, value: 0 as Diopter };
-  }
-
-  // Match optional sign, followed by whole digits + optional frac, or just .frac
-  const match = normalized.match(/^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))$/);
-  if (!match) {
-    return { ok: false, error: RX_ERROR_CODES.INVALID };
-  }
-
-  const signStr = match[1];
-  const isNegative = signStr === "-";
-  const wholeStr = match[2];
-  const fracWithWhole = match[3];
-  const fracWithoutWhole = match[4];
-
-  const whole = wholeStr !== undefined ? parseInt(wholeStr, 10) : 0;
-  const fracStr = fracWithWhole ?? fracWithoutWhole ?? "";
-
-  let fracHundredths = 0;
-  if (fracStr.length === 0) {
-    fracHundredths = 0;
-  } else if (fracStr.length === 1) {
-    fracHundredths = parseInt(fracStr, 10) * 10;
-  } else if (fracStr.length === 2) {
-    fracHundredths = parseInt(fracStr, 10);
+    signedHundredths = 0;
   } else {
-    // If extra decimal digits exist, they must be trailing zeros
-    const extra = fracStr.slice(2);
-    if (/^0+$/.test(extra)) {
-      fracHundredths = parseInt(fracStr.slice(0, 2), 10);
+    // Normalize Unicode minuses to ASCII hyphen-minus
+    const withAsciiMinus = trimmed.replace(
+      /\u2212|\u2013|\u2014|\uFE63|\uFF0D/g,
+      "-",
+    );
+
+    // Normalize comma decimal separator to dot
+    const normalized = withAsciiMinus.replace(/,/g, ".");
+
+    // Check explicit zero strings
+    if (
+      normalized === "0" ||
+      normalized === "+0" ||
+      normalized === "-0" ||
+      normalized === "0.0" ||
+      normalized === "0.00" ||
+      normalized === "+0.00" ||
+      normalized === "-0.00" ||
+      normalized === ".0" ||
+      normalized === ".00" ||
+      normalized === "+.00" ||
+      normalized === "-.00"
+    ) {
+      signedHundredths = 0;
     } else {
-      return { ok: false, error: stepError };
+      // Match optional sign, followed by whole digits + optional frac, or just .frac
+      const match = normalized.match(/^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))$/);
+      if (!match) {
+        return { ok: false, error: RX_ERROR_CODES.INVALID };
+      }
+
+      const signStr = match[1];
+      const isNegative = signStr === "-";
+      const wholeStr = match[2];
+      const fracWithWhole = match[3];
+      const fracWithoutWhole = match[4];
+
+      const whole = wholeStr !== undefined ? parseInt(wholeStr, 10) : 0;
+      const fracStr = fracWithWhole ?? fracWithoutWhole ?? "";
+
+      let fracHundredths = 0;
+      if (fracStr.length === 0) {
+        fracHundredths = 0;
+      } else if (fracStr.length === 1) {
+        fracHundredths = parseInt(fracStr, 10) * 10;
+      } else if (fracStr.length === 2) {
+        fracHundredths = parseInt(fracStr, 10);
+      } else {
+        // If extra decimal digits exist, they must be trailing zeros
+        const extra = fracStr.slice(2);
+        if (/^0+$/.test(extra)) {
+          fracHundredths = parseInt(fracStr.slice(0, 2), 10);
+        } else {
+          return { ok: false, error: stepError };
+        }
+      }
+
+      // Diopters must be in quarter steps (0, 25, 50, 75 hundredths)
+      if (fracHundredths % 25 !== 0) {
+        return { ok: false, error: stepError };
+      }
+
+      const absHundredths = whole * 100 + fracHundredths;
+      signedHundredths = isNegative ? -absHundredths : absHundredths;
     }
   }
-
-  // Diopters must be in quarter steps (0, 25, 50, 75 hundredths)
-  if (fracHundredths % 25 !== 0) {
-    return { ok: false, error: stepError };
-  }
-
-  const absHundredths = whole * 100 + fracHundredths;
-  let signedHundredths = isNegative ? -absHundredths : absHundredths;
 
   // Ensure 0 is +0, never -0
   if (signedHundredths === 0 || Object.is(signedHundredths, -0)) {

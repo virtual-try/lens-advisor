@@ -107,20 +107,89 @@ describe("Spec 10 — Rx validation", () => {
       expect(validatePrescription(undefined, "NON_PRESCRIPTION")).toEqual([]);
       expect(validatePrescription(null, "NON_PRESCRIPTION")).toEqual([]);
       expect(validatePrescription({}, "NON_PRESCRIPTION")).toEqual([]);
-      expect(
-        validatePrescription({ od: {}, os: {}, pd: {} }, "NON_PRESCRIPTION"),
-      ).toEqual([]);
     });
 
-    it("rejects non-empty prescription with NON_PRESCRIPTION_NOT_EMPTY", () => {
-      const errors = validatePrescription(VALID_SV_RX, "NON_PRESCRIPTION");
-      expect(errors).toEqual([
-        {
-          field: "prescription",
-          path: "prescription",
-          code: RX_VALIDATION_CODES.NON_PRESCRIPTION_NOT_EMPTY,
-        },
-      ]);
+    it("rejects non-empty values and hostile shapes with NON_PRESCRIPTION_NOT_EMPTY (R1-F2)", () => {
+      const hostileInputs = [
+        "not empty",
+        "",
+        123,
+        0,
+        true,
+        false,
+        [],
+        [1, 2, 3],
+        { notes: "private" },
+        { notes: "" },
+        { unknownKey: true },
+        { od: {} },
+        { od: {}, os: {}, pd: {} },
+        VALID_SV_RX,
+      ];
+
+      for (const input of hostileInputs) {
+        const errors = validatePrescription(input, "NON_PRESCRIPTION");
+        expect(errors).toEqual([
+          {
+            field: "prescription",
+            path: "prescription",
+            code: RX_VALIDATION_CODES.NON_PRESCRIPTION_NOT_EMPTY,
+          },
+        ]);
+      }
+    });
+
+    it("normalizes valid empty NON_PRESCRIPTION to explicit absent prescription (R1-F3)", () => {
+      // validateAndNormalizePrescription must return { ok: true, prescription: undefined, errors: [] }
+      // without throwing TypeError and without inventing OD/OS 0 or PD 630
+      const fromUndefined = validateAndNormalizePrescription(
+        undefined,
+        "NON_PRESCRIPTION",
+      );
+      expect(fromUndefined).toEqual({
+        ok: true,
+        prescription: undefined,
+        errors: [],
+      });
+      expect(fromUndefined.ok).toBe(true);
+      if (fromUndefined.ok) {
+        expect(fromUndefined.prescription).toBeUndefined();
+      }
+
+      const fromNull = validateAndNormalizePrescription(
+        null,
+        "NON_PRESCRIPTION",
+      );
+      expect(fromNull).toEqual({
+        ok: true,
+        prescription: undefined,
+        errors: [],
+      });
+      expect(fromNull.ok).toBe(true);
+      if (fromNull.ok) {
+        expect(fromNull.prescription).toBeUndefined();
+      }
+
+      const fromEmptyObj = validateAndNormalizePrescription(
+        {},
+        "NON_PRESCRIPTION",
+      );
+      expect(fromEmptyObj).toEqual({
+        ok: true,
+        prescription: undefined,
+        errors: [],
+      });
+      expect(fromEmptyObj.ok).toBe(true);
+      if (fromEmptyObj.ok) {
+        expect(fromEmptyObj.prescription).toBeUndefined();
+      }
+
+      // normalizePrescription directly returns undefined
+      expect(
+        normalizePrescription(undefined, "NON_PRESCRIPTION"),
+      ).toBeUndefined();
+      expect(normalizePrescription(null, "NON_PRESCRIPTION")).toBeUndefined();
+      expect(normalizePrescription({}, "NON_PRESCRIPTION")).toBeUndefined();
     });
   });
 
@@ -343,6 +412,36 @@ describe("Spec 10 — Rx validation", () => {
       ]);
     });
 
+    it("rejects ADD 0 / PL as out of range for PROGRESSIVE and READING (R1-F1)", () => {
+      const progressiveZeroAdd: Prescription = {
+        od: { sph: 0, add: 0 },
+        os: { sph: 0, add: 200 },
+        pd: { single: 630 },
+      };
+      expect(validatePrescription(progressiveZeroAdd, "PROGRESSIVE")).toEqual([
+        {
+          field: "add",
+          eye: "od",
+          path: "od.add",
+          code: RX_VALIDATION_CODES.ADD_RANGE,
+        },
+      ]);
+
+      const readingZeroAdd: Prescription = {
+        od: { sph: 0, add: 200 },
+        os: { sph: 0, add: 0 },
+        pd: { single: 630 },
+      };
+      expect(validatePrescription(readingZeroAdd, "READING")).toEqual([
+        {
+          field: "add",
+          eye: "os",
+          path: "os.add",
+          code: RX_VALIDATION_CODES.ADD_RANGE,
+        },
+      ]);
+    });
+
     it("validates PD single and dual requirements", () => {
       // Missing PD
       const noPd = {
@@ -378,6 +477,108 @@ describe("Spec 10 — Rx validation", () => {
         pd: { od: 320, os: 315 },
       };
       expect(validatePrescription(dualPd, "SINGLE_VISION")).toEqual([]);
+    });
+
+    it("enforces single XOR dual PD representation and rejects conflicting shapes (R1-F4)", () => {
+      // Conflicting shape: both single and dual values present
+      const bothWithBogusDual = {
+        od: { sph: 0 },
+        os: { sph: 0 },
+        pd: { single: 630, od: 100, os: 100 },
+      };
+      expect(validatePrescription(bothWithBogusDual, "SINGLE_VISION")).toEqual([
+        {
+          field: "pd",
+          path: "pd",
+          code: RX_VALIDATION_CODES.INVALID,
+        },
+      ]);
+
+      const bothWithValidDual = {
+        od: { sph: 0 },
+        os: { sph: 0 },
+        pd: { single: 630, od: 320, os: 310 },
+      };
+      expect(validatePrescription(bothWithValidDual, "SINGLE_VISION")).toEqual([
+        {
+          field: "pd",
+          path: "pd",
+          code: RX_VALIDATION_CODES.INVALID,
+        },
+      ]);
+
+      const singleWithPartialDualOd = {
+        od: { sph: 0 },
+        os: { sph: 0 },
+        pd: { single: 630, od: 320 },
+      };
+      expect(
+        validatePrescription(singleWithPartialDualOd, "SINGLE_VISION"),
+      ).toEqual([
+        {
+          field: "pd",
+          path: "pd",
+          code: RX_VALIDATION_CODES.INVALID,
+        },
+      ]);
+
+      const singleWithPartialDualOs = {
+        od: { sph: 0 },
+        os: { sph: 0 },
+        pd: { single: 630, os: 310 },
+      };
+      expect(
+        validatePrescription(singleWithPartialDualOs, "SINGLE_VISION"),
+      ).toEqual([
+        {
+          field: "pd",
+          path: "pd",
+          code: RX_VALIDATION_CODES.INVALID,
+        },
+      ]);
+
+      // Neither representation: empty object
+      const emptyPd = {
+        od: { sph: 0 },
+        os: { sph: 0 },
+        pd: {},
+      };
+      expect(validatePrescription(emptyPd, "SINGLE_VISION")).toEqual([
+        {
+          field: "pd",
+          path: "pd",
+          code: RX_VALIDATION_CODES.PD_REQUIRED,
+        },
+      ]);
+
+      // Partial dual PD (missing one eye)
+      const missingOs = {
+        od: { sph: 0 },
+        os: { sph: 0 },
+        pd: { od: 320 },
+      };
+      expect(validatePrescription(missingOs, "SINGLE_VISION")).toEqual([
+        {
+          field: "pd",
+          eye: "os",
+          path: "pd.os",
+          code: RX_VALIDATION_CODES.PD_REQUIRED,
+        },
+      ]);
+
+      const missingOd = {
+        od: { sph: 0 },
+        os: { sph: 0 },
+        pd: { os: 315 },
+      };
+      expect(validatePrescription(missingOd, "SINGLE_VISION")).toEqual([
+        {
+          field: "pd",
+          eye: "od",
+          path: "pd.od",
+          code: RX_VALIDATION_CODES.PD_REQUIRED,
+        },
+      ]);
     });
   });
 

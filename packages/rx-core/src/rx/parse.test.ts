@@ -335,6 +335,33 @@ describe("Spec 10 — Rx parser", () => {
         error: RX_ERROR_CODES.ADD_STEP,
       });
     });
+
+    it("parseAddText rejects plano and zero inputs with ADD_RANGE (R1-F1)", () => {
+      expect(parseAddText("PL")).toEqual({
+        ok: false,
+        error: RX_ERROR_CODES.ADD_RANGE,
+      });
+      expect(parseAddText("plano")).toEqual({
+        ok: false,
+        error: RX_ERROR_CODES.ADD_RANGE,
+      });
+      expect(parseAddText("0")).toEqual({
+        ok: false,
+        error: RX_ERROR_CODES.ADD_RANGE,
+      });
+      expect(parseAddText("0.00")).toEqual({
+        ok: false,
+        error: RX_ERROR_CODES.ADD_RANGE,
+      });
+      expect(parseAddText("+0")).toEqual({
+        ok: false,
+        error: RX_ERROR_CODES.ADD_RANGE,
+      });
+      expect(parseAddText("-0")).toEqual({
+        ok: false,
+        error: RX_ERROR_CODES.ADD_RANGE,
+      });
+    });
   });
 
   describe("INV-5 — parsers return integers only", () => {

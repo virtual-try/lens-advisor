@@ -34,25 +34,19 @@ export interface RxValidationError {
   code: RxValidationCode;
 }
 
-function hasEyeValues(eye: unknown): boolean {
-  if (!eye || typeof eye !== "object") {
-    return false;
+function isEmptyPrescription(rx: unknown): boolean {
+  if (rx === undefined || rx === null) {
+    return true;
   }
-  const e = eye as Record<string, unknown>;
-  return (
-    e.sph !== undefined ||
-    e.cyl !== undefined ||
-    e.axis !== undefined ||
-    e.add !== undefined
-  );
-}
-
-function hasPdValues(pd: unknown): boolean {
-  if (!pd || typeof pd !== "object") {
-    return false;
+  if (
+    typeof rx === "object" &&
+    !Array.isArray(rx) &&
+    (rx.constructor === Object || !rx.constructor) &&
+    Reflect.ownKeys(rx).length === 0
+  ) {
+    return true;
   }
-  const p = pd as Record<string, unknown>;
-  return p.single !== undefined || p.od !== undefined || p.os !== undefined;
+  return false;
 }
 
 /**
@@ -65,27 +59,20 @@ export function validatePrescription(
 ): RxValidationError[] {
   const errors: RxValidationError[] = [];
 
-  // NON_PRESCRIPTION: prescription must be empty
+  // NON_PRESCRIPTION: prescription must be empty (undefined, null, or {})
   if (rxType === "NON_PRESCRIPTION") {
-    if (rx != null && typeof rx === "object") {
-      const rxObj = rx as Record<string, unknown>;
-      if (
-        hasEyeValues(rxObj.od) ||
-        hasEyeValues(rxObj.os) ||
-        hasPdValues(rxObj.pd)
-      ) {
-        errors.push({
-          field: "prescription",
-          path: "prescription",
-          code: RX_VALIDATION_CODES.NON_PRESCRIPTION_NOT_EMPTY,
-        });
-      }
+    if (!isEmptyPrescription(rx)) {
+      errors.push({
+        field: "prescription",
+        path: "prescription",
+        code: RX_VALIDATION_CODES.NON_PRESCRIPTION_NOT_EMPTY,
+      });
     }
     return errors;
   }
 
   // Other Rx types require a prescription object
-  if (rx == null || typeof rx !== "object") {
+  if (rx == null || typeof rx !== "object" || Array.isArray(rx)) {
     errors.push({
       field: "prescription",
       path: "prescription",
@@ -249,7 +236,7 @@ export function validatePrescription(
 
   // PD: single 50.0–80.0 mm (500–800 tenths), or dual 25.0–40.0 mm (250–400 tenths) per eye, 0.5 mm steps (5 tenths)
   const pd = rxObj.pd;
-  if (!pd || typeof pd !== "object") {
+  if (!pd || typeof pd !== "object" || Array.isArray(pd)) {
     errors.push({
       field: "pd",
       path: "pd",
@@ -260,7 +247,13 @@ export function validatePrescription(
     const hasSingle = pdObj.single !== undefined;
     const hasDual = pdObj.od !== undefined || pdObj.os !== undefined;
 
-    if (hasSingle) {
+    if (hasSingle && hasDual) {
+      errors.push({
+        field: "pd",
+        path: "pd",
+        code: RX_VALIDATION_CODES.INVALID,
+      });
+    } else if (hasSingle) {
       const single = pdObj.single;
       if (
         typeof single !== "number" ||
@@ -359,21 +352,29 @@ export function isValidPrescription(rx: unknown, rxType: RxType): boolean {
  * Normalize a prescription according to the RxType rules:
  * - Drops AXIS when CYL = 0 or absent.
  * - Drops ADD when RxType is SINGLE_VISION.
- * - For NON_PRESCRIPTION, zeroes out prescription values.
+ * - For NON_PRESCRIPTION, returns undefined (absent prescription).
  */
 export function normalizePrescription(
+  rx: unknown,
+  rxType: "NON_PRESCRIPTION",
+): undefined;
+export function normalizePrescription(
   rx: Prescription,
+  rxType: Exclude<RxType, "NON_PRESCRIPTION">,
+): Prescription;
+export function normalizePrescription(
+  rx: Prescription | unknown,
   rxType: RxType,
-): Prescription {
+): Prescription | undefined;
+export function normalizePrescription(
+  rx: Prescription | unknown,
+  rxType: RxType,
+): Prescription | undefined {
   if (rxType === "NON_PRESCRIPTION") {
-    return {
-      od: { sph: 0 },
-      os: { sph: 0 },
-      pd: { single: 630 },
-      ...(rx.notes ? { notes: rx.notes } : {}),
-    };
+    return undefined;
   }
 
+  const typedRx = rx as Prescription;
   const normalizeEye = (eye: Eye): Eye => {
     const result: Eye = { sph: eye.sph };
     const hasCyl = eye.cyl !== undefined && eye.cyl !== 0;
@@ -393,30 +394,61 @@ export function normalizePrescription(
     return result;
   };
 
+  const pdResult =
+    "single" in typedRx.pd
+      ? { single: typedRx.pd.single }
+      : { od: typedRx.pd.od, os: typedRx.pd.os };
+
   return {
-    od: normalizeEye(rx.od),
-    os: normalizeEye(rx.os),
-    pd: { ...rx.pd },
-    ...(rx.notes ? { notes: rx.notes } : {}),
+    od: normalizeEye(typedRx.od),
+    os: normalizeEye(typedRx.os),
+    pd: pdResult,
+    ...(typedRx.notes ? { notes: typedRx.notes } : {}),
   };
 }
 
 /**
  * Validates and returns the normalized prescription if valid, or errors if not.
+ * For NON_PRESCRIPTION, valid empty input normalizes to an explicit absent prescription (`prescription: undefined`).
  */
+export function validateAndNormalizePrescription(
+  rx: unknown,
+  rxType: "NON_PRESCRIPTION",
+):
+  | { ok: true; prescription: undefined; errors: [] }
+  | { ok: false; errors: RxValidationError[] };
+export function validateAndNormalizePrescription(
+  rx: unknown,
+  rxType: Exclude<RxType, "NON_PRESCRIPTION">,
+):
+  | { ok: true; prescription: Prescription; errors: [] }
+  | { ok: false; errors: RxValidationError[] };
 export function validateAndNormalizePrescription(
   rx: unknown,
   rxType: RxType,
 ):
-  | { ok: true; prescription: Prescription; errors: [] }
+  | { ok: true; prescription: Prescription | undefined; errors: [] }
+  | { ok: false; errors: RxValidationError[] };
+export function validateAndNormalizePrescription(
+  rx: unknown,
+  rxType: RxType,
+):
+  | { ok: true; prescription: Prescription | undefined; errors: [] }
   | { ok: false; errors: RxValidationError[] } {
   const errors = validatePrescription(rx, rxType);
   if (errors.length > 0) {
     return { ok: false, errors };
   }
+  if (rxType === "NON_PRESCRIPTION") {
+    return {
+      ok: true,
+      prescription: undefined,
+      errors: [],
+    };
+  }
   return {
     ok: true,
-    prescription: normalizePrescription(rx as Prescription, rxType),
+    prescription: normalizePrescription(rx as Prescription, rxType)!,
     errors: [],
   };
 }
