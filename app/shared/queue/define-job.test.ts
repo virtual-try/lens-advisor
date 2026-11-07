@@ -163,6 +163,209 @@ describe("defineJob payload guard (INV-2)", () => {
     ).not.toThrow();
   });
 
+  it("rejects schemas containing ZodCatch at root or nested at registration (R3-F1)", () => {
+    // Root catch
+    expect(() =>
+      defineJob({
+        name: "test.root-catch",
+        schema: z.object({ orderId: z.string() }).catch({ orderId: "fallback" }),
+        handler: () => undefined,
+      })
+    ).toThrowError(/ZodCatch/);
+
+    // Field-level catch
+    expect(() =>
+      defineJob({
+        name: "test.field-catch",
+        schema: z.object({
+          orderId: z.string().catch("fallback-id"),
+        }),
+        handler: () => undefined,
+      })
+    ).toThrowError(/ZodCatch/);
+
+    // Nested object catch that could synthesize undeclared/Rx fields
+    expect(() =>
+      defineJob({
+        name: "test.nested-catch",
+        schema: z.object({
+          orderId: z.string(),
+          nested: z
+            .object({ rxText: z.string() })
+            .catch({ rxText: "SPH -2.25" }),
+        }),
+        handler: () => undefined,
+      })
+    ).toThrowError(/ZodCatch/);
+
+    // Discriminated union branch with catch
+    expect(() =>
+      defineJob({
+        name: "test.union-catch",
+        schema: z.discriminatedUnion("kind", [
+          z.object({
+            kind: z.literal("order"),
+            orderId: z.string().catch("ord-fallback"),
+          }),
+        ]),
+        handler: () => undefined,
+      })
+    ).toThrowError(/ZodCatch/);
+  });
+
+  it("rejects bigint, symbol, undefined, and non-finite number literals at registration (R3-F2)", () => {
+    // BigInt literal
+    expect(() =>
+      defineJob({
+        name: "test.literal-bigint",
+        schema: z.object({
+          orderId: z.string(),
+          versionKey: z.literal(1n),
+        }),
+        handler: () => undefined,
+      })
+    ).toThrowError(/versionKey.*bigint literal.*z\.literal is allowed only/);
+
+    // Infinity literal
+    expect(() =>
+      defineJob({
+        name: "test.literal-infinity",
+        schema: z.object({
+          orderId: z.string(),
+          limitKey: z.literal(Infinity),
+        }),
+        handler: () => undefined,
+      })
+    ).toThrowError(/limitKey.*non-finite number.*literal/);
+
+    // -Infinity literal
+    expect(() =>
+      defineJob({
+        name: "test.literal-neg-infinity",
+        schema: z.object({
+          orderId: z.string(),
+          limitKey: z.literal(-Infinity),
+        }),
+        handler: () => undefined,
+      })
+    ).toThrowError(/limitKey.*non-finite number.*literal/);
+
+    // NaN literal
+    expect(() =>
+      defineJob({
+        name: "test.literal-nan",
+        schema: z.object({
+          orderId: z.string(),
+          limitKey: z.literal(NaN),
+        }),
+        handler: () => undefined,
+      })
+    ).toThrowError(/limitKey.*non-finite number.*literal/);
+
+    // Symbol literal
+    expect(() =>
+      defineJob({
+        name: "test.literal-symbol",
+        schema: z.object({
+          orderId: z.string(),
+          tagKey: z.literal(Symbol("tag")),
+        }),
+        handler: () => undefined,
+      })
+    ).toThrowError(/tagKey.*symbol literal/);
+
+    // Undefined literal
+    expect(() =>
+      defineJob({
+        name: "test.literal-undefined",
+        schema: z.object({
+          orderId: z.string(),
+          emptyKey: z.literal(undefined),
+        }),
+        handler: () => undefined,
+      })
+    ).toThrowError(/emptyKey.*undefined literal/);
+  });
+
+  it("accepts valid JSON-safe literal values (string, finite number, boolean, null) (R3-F2)", () => {
+    expect(() =>
+      defineJob({
+        name: "test.literal-valid",
+        schema: z.object({
+          orderId: z.string(),
+          kind: z.literal("order"),
+          flag: z.literal(true),
+          status: z.literal(false),
+          codeKey: z.literal(42),
+          negativeKey: z.literal(-10.5),
+          empty: z.literal(null),
+        }),
+        handler: () => undefined,
+      })
+    ).not.toThrow();
+  });
+
+  it("rejects root optional, nullable, or default schemas at registration (R3-F3)", () => {
+    // Root optional
+    expect(() =>
+      defineJob({
+        name: "test.root-optional",
+        schema: z.object({ orderId: z.string() }).optional(),
+        handler: () => undefined,
+      })
+    ).toThrowError(/Job payload schema root cannot be wrapped in optional, nullable, or default/);
+
+    // Root nullable
+    expect(() =>
+      defineJob({
+        name: "test.root-nullable",
+        schema: z.object({ orderId: z.string() }).nullable(),
+        handler: () => undefined,
+      })
+    ).toThrowError(/Job payload schema root cannot be wrapped in optional, nullable, or default/);
+
+    // Root default
+    expect(() =>
+      defineJob({
+        name: "test.root-default",
+        schema: z.object({ orderId: z.string() }).default({ orderId: "ord-1" }),
+        handler: () => undefined,
+      })
+    ).toThrowError(/Job payload schema root cannot be wrapped in optional, nullable, or default/);
+
+    // Root optional discriminated union
+    expect(() =>
+      defineJob({
+        name: "test.root-optional-union",
+        schema: z
+          .discriminatedUnion("kind", [
+            z.object({ kind: z.literal("order"), orderId: z.string() }),
+          ])
+          .optional(),
+        handler: () => undefined,
+      })
+    ).toThrowError(/Job payload schema root cannot be wrapped in optional, nullable, or default/);
+
+    // Root discriminated union with non-object option
+    const fakeUnion = Object.create(z.ZodDiscriminatedUnion.prototype);
+    fakeUnion._def = {
+      typeName: "ZodDiscriminatedUnion",
+      discriminator: "kind",
+      options: [
+        z.object({ kind: z.literal("order"), orderId: z.string() }),
+        z.string(),
+      ],
+    };
+
+    expect(() =>
+      defineJob({
+        name: "test.union-non-object",
+        schema: fakeUnion,
+        handler: () => undefined,
+      })
+    ).toThrowError(/discriminated union options must be zod objects/);
+  });
+
   it("rejects a duplicate job name", () => {
     const schema = z.object({ orderId: z.string() });
     defineJob({ name: "test.duplicate", schema, handler: () => undefined });

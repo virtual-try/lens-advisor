@@ -259,4 +259,62 @@ describe("Queue on a real Postgres", () => {
       await queue.destroy({ dropSchema: true });
     }
   });
+
+  it("round-trips discriminatedUnion payloads through pg-boss and worker (R3-F3)", async () => {
+    await withTestQueue(async (queue) => {
+      const name = jobName("discriminated-roundtrip");
+      const received: unknown[] = [];
+      const definition = defineJob({
+        name,
+        schema: z.discriminatedUnion("kind", [
+          z.object({ kind: z.literal("order"), orderId: z.string() }),
+          z.object({ kind: z.literal("account"), accountId: z.string() }),
+        ]),
+        handler: (payload) => {
+          received.push(payload);
+        },
+      });
+
+      await queue.work(definition);
+      await queue.enqueue(name, { kind: "order", orderId: "ord-100" });
+      await queue.enqueue(name, { kind: "account", accountId: "acc-200" });
+
+      await waitFor(
+        async () => (await queue.findJobs(name)).filter((j) => j.state === "completed"),
+        (jobs) => jobs.length === 2
+      );
+
+      expect(received).toEqual([
+        { kind: "order", orderId: "ord-100" },
+        { kind: "account", accountId: "acc-200" },
+      ]);
+    });
+  });
+
+  it("fails a null payload on receive and moves it to <name>.dead (R3-F3)", async () => {
+    await withTestQueue(async (queue) => {
+      const name = jobName("receive-null");
+      let handlerCalled = false;
+      const definition = defineJob({
+        name,
+        schema: z.object({ orderId: z.string() }),
+        retry: { retryLimit: 0, retryDelay: 0 },
+        handler: () => {
+          handlerCalled = true;
+        },
+      });
+
+      await queue.work(definition);
+      await enqueueTestRaw(queue, name, null, { singletonKey: "raw-null-1" });
+
+      const deadLetter = await waitFor(
+        async () => (await queue.findJobs(`${name}.dead`))[0],
+        () => true
+      );
+
+      expect(handlerCalled).toBe(false);
+      expect(deadLetter.data).toBeNull();
+      expect(deadLetter.sourceName).toBe(name);
+    });
+  });
 });

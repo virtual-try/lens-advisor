@@ -64,16 +64,6 @@ const DEFAULT_RETRY: JobDefinition["retry"] = Object.freeze({
 
 const registry = new Map<string, AnyJobDefinition>();
 
-function unwrapSchema(schema: z.ZodTypeAny): z.ZodTypeAny {
-  if (schema instanceof z.ZodOptional) return unwrapSchema(schema.unwrap());
-  if (schema instanceof z.ZodNullable) return unwrapSchema(schema.unwrap());
-  if (schema instanceof z.ZodDefault) return unwrapSchema(schema.removeDefault());
-  if (schema instanceof z.ZodCatch) return unwrapSchema(schema.removeCatch());
-  if (schema instanceof z.ZodBranded) return unwrapSchema(schema.unwrap());
-  if (schema instanceof z.ZodReadonly) return unwrapSchema(schema.unwrap());
-  return schema;
-}
-
 function schemaPath(path: readonly string[]): string {
   return path.length === 0 ? "payload" : path.join(".");
 }
@@ -95,29 +85,35 @@ function assertPayloadSchema(schema: z.ZodTypeAny, allowStringFields: ReadonlySe
       "Job payload schema contains ZodUnion; plain z.union is not permitted, use z.discriminatedUnion (INV-2)"
     );
   }
-  const root = unwrapSchema(schema);
-  if (root instanceof z.ZodEffects) {
+  if (schema instanceof z.ZodCatch) {
     throw new JobDefinitionError(
-      `Job payload schema contains ZodEffects (${root._def.effect.type}); ` +
-        "effects are not permitted in job payload schemas (INV-2)"
+      "Job payload schema contains ZodCatch; catch is not permitted in job payload schemas (INV-2)"
     );
   }
-  if (root instanceof z.ZodIntersection) {
+  if (
+    schema instanceof z.ZodOptional ||
+    schema instanceof z.ZodNullable ||
+    schema instanceof z.ZodDefault
+  ) {
     throw new JobDefinitionError(
-      "Job payload schema contains ZodIntersection; intersections are not permitted in job payload schemas (INV-2)"
+      "Job payload schema root cannot be wrapped in optional, nullable, or default (must be a zod object or discriminated union)"
     );
   }
-  if (root instanceof z.ZodUnion) {
-    throw new JobDefinitionError(
-      "Job payload schema contains ZodUnion; plain z.union is not permitted, use z.discriminatedUnion (INV-2)"
-    );
-  }
-  if (!(root instanceof z.ZodObject) && !(root instanceof z.ZodDiscriminatedUnion)) {
+  if (!(schema instanceof z.ZodObject) && !(schema instanceof z.ZodDiscriminatedUnion)) {
     throw new JobDefinitionError(
       "Job payload schema must be a zod object or discriminated union so pg-boss can store an id/enum payload"
     );
   }
-  assertNode(root, [], allowStringFields);
+  if (schema instanceof z.ZodDiscriminatedUnion) {
+    for (const option of schema.options) {
+      if (!(option instanceof z.ZodObject)) {
+        throw new JobDefinitionError(
+          "Job payload discriminated union options must be zod objects"
+        );
+      }
+    }
+  }
+  assertNode(schema, [], allowStringFields);
 }
 
 function assertNode(
@@ -129,6 +125,57 @@ function assertNode(
     throw new JobDefinitionError(
       `Job payload field "${schemaPath(path)}" is a bigint; bigint is not permitted in job payload schemas (JSON-unsafe)`
     );
+  }
+
+  if (schema instanceof z.ZodEffects) {
+    throw new JobDefinitionError(
+      `Job payload field "${schemaPath(path)}" uses ZodEffects (${schema._def.effect.type}), which is not permitted in job payload schemas (INV-2)`
+    );
+  }
+
+  if (schema instanceof z.ZodIntersection) {
+    throw new JobDefinitionError(
+      `Job payload field "${schemaPath(path)}" uses ZodIntersection, which is not permitted in job payload schemas (INV-2)`
+    );
+  }
+
+  if (schema instanceof z.ZodUnion) {
+    throw new JobDefinitionError(
+      `Job payload field "${schemaPath(path)}" uses ZodUnion; plain z.union is not permitted, use z.discriminatedUnion (INV-2)`
+    );
+  }
+
+  if (schema instanceof z.ZodCatch) {
+    throw new JobDefinitionError(
+      `Job payload field "${schemaPath(path)}" uses ZodCatch, which is not permitted in job payload schemas (INV-2)`
+    );
+  }
+
+  if (schema instanceof z.ZodLiteral) {
+    const val = schema.value;
+    const isAllowed =
+      typeof val === "string" ||
+      (typeof val === "number" && Number.isFinite(val)) ||
+      typeof val === "boolean" ||
+      val === null;
+
+    if (!isAllowed) {
+      const typeDesc =
+        typeof val === "bigint"
+          ? "bigint"
+          : typeof val === "symbol"
+          ? "symbol"
+          : val === undefined
+          ? "undefined"
+          : typeof val === "number" && !Number.isFinite(val)
+          ? `non-finite number (${String(val)})`
+          : typeof val;
+      throw new JobDefinitionError(
+        `Job payload field "${schemaPath(path)}" uses a ${typeDesc} literal; ` +
+          "z.literal is allowed only for string, number (finite), boolean or null values (JSON-safe)"
+      );
+    }
+    return;
   }
 
   if (
@@ -152,7 +199,6 @@ function assertNode(
   if (
     schema instanceof z.ZodEnum ||
     schema instanceof z.ZodNativeEnum ||
-    schema instanceof z.ZodLiteral ||
     schema instanceof z.ZodBoolean ||
     schema instanceof z.ZodNull ||
     schema instanceof z.ZodUndefined ||
@@ -191,23 +237,16 @@ function assertNode(
     return;
   }
 
-  if (schema instanceof z.ZodUnion) {
-    throw new JobDefinitionError(
-      `Job payload field "${schemaPath(path)}" uses ZodUnion; plain z.union is not permitted, use z.discriminatedUnion (INV-2)`
-    );
-  }
-
   if (schema instanceof z.ZodDiscriminatedUnion) {
     for (const option of schema.options) {
+      if (!(option instanceof z.ZodObject)) {
+        throw new JobDefinitionError(
+          `Job payload field "${schemaPath(path)}" discriminated union options must be zod objects`
+        );
+      }
       assertNode(option as z.ZodTypeAny, path, allowStringFields);
     }
     return;
-  }
-
-  if (schema instanceof z.ZodIntersection) {
-    throw new JobDefinitionError(
-      `Job payload field "${schemaPath(path)}" uses ZodIntersection, which is not permitted in job payload schemas (INV-2)`
-    );
   }
 
   if (schema instanceof z.ZodOptional) {
@@ -223,17 +262,6 @@ function assertNode(
   if (schema instanceof z.ZodDefault) {
     assertNode(schema.removeDefault(), path, allowStringFields);
     return;
-  }
-
-  if (schema instanceof z.ZodCatch) {
-    assertNode(schema.removeCatch(), path, allowStringFields);
-    return;
-  }
-
-  if (schema instanceof z.ZodEffects) {
-    throw new JobDefinitionError(
-      `Job payload field "${schemaPath(path)}" uses ZodEffects (${schema._def.effect.type}), which is not permitted in job payload schemas (INV-2)`
-    );
   }
 
   if (schema instanceof z.ZodBranded || schema instanceof z.ZodReadonly) {
@@ -371,8 +399,9 @@ function assertNoUnknownKeys(
     return;
   }
   if (schema instanceof z.ZodCatch) {
-    assertNoUnknownKeys(schema.removeCatch(), value, path);
-    return;
+    throw new JobDefinitionError(
+      `Job payload field "${schemaPath(path)}" uses ZodCatch, which is not permitted in job payload schemas (INV-2)`
+    );
   }
   if (schema instanceof z.ZodBranded || schema instanceof z.ZodReadonly) {
     assertNoUnknownKeys(schema.unwrap(), value, path);
