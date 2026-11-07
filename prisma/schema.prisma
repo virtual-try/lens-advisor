@@ -158,6 +158,7 @@ model OptionValue {
   optionGroup      OptionGroup @relation(fields: [optionGroupId], references: [id], onDelete: Cascade)
   label            String
   priceDeltaMinor  Int
+  currency         String      @db.VarChar(3)
   tokenKey         String?
   tokenValue       String?
   overrideCode     String?

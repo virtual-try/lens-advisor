@@ -75,4 +75,17 @@ Real, used now: Prisma, `TEST_DATABASE_URL`. Stubbed: none.
   - Self-check 2: holds. The DMMF test finds no `Float` or `Decimal` field. `*Minor` fields are `Int`. Diopter min/max fields are `Int`.
   - Self-check 3: holds. The same test applies `migrate deploy` to an empty schema and to a schema that already contains a template Session row; the row is still there and `Shop` exists. Prisma returns P3005 when that schema has tables but no `_prisma_migrations` table, so the test creates an empty migrations table first and does not mark the migration applied; deploy then runs the SQL. `prisma migrate diff --from-url <fresh schema> --to-schema-datamodel prisma/schema.prisma --exit-code` printed `No difference detected`.
   - Gates, after the last source change (`pnpm test` before the `tsconfig.json` include; `pnpm typecheck` again after it): `pnpm test` → `Test Files  6 passed (6)` / `Tests  29 passed (29)`, including `✓ |db| test/db.test.ts (6 tests)`. `pnpm lint` (`eslint . --max-warnings 0`) exited 0 and printed no findings. `pnpm typecheck` exited 0. `pnpm build` exited 0.
-- **2026-11-07** — Evidence (orchestro spec verify, tree 7ba53700): install pass · typecheck pass · lint pass · build pass · test pass 29/0/0
+- **2026-11-07** — Evidence (orchestro spec verify, tree 9d188362): install pass · typecheck pass · lint pass · build pass · test pass 29/0/0
+- **2026-11-07** — Review fixes R1-F2, R1-F3, R1-F4, R1-F5, R1-F6. The earlier self-check that created `_prisma_migrations` by hand is withdrawn.
+  - **Production upgrade (R1-F2).** A database left by spec 01 has the template `Session` table (from `prisma db push` of that model) and no `_prisma_migrations` table. `prisma migrate deploy` on that database stops with P3005. The supported upgrade is two commands, in order:
+
+    ```
+    prisma migrate resolve --applied 20261107000000_session_baseline
+    prisma migrate deploy
+    ```
+
+    `resolve --applied` records `prisma/migrations/20261107000000_session_baseline` (the `Session` table only) as already applied and creates `_prisma_migrations` itself. It does not run that SQL, so the template rows stay. `migrate deploy` then applies `20261107120000_init`. A fresh database skips `resolve` and runs `prisma migrate deploy` alone, which applies the baseline and then init. The upgrade test builds that template database with `db push` of the `Session` model and runs those two commands. It does not insert into `_prisma_migrations`.
+  - **R1-F3.** `OptionValue.currency` is a required `String` `@db.VarChar(3)` beside `priceDeltaMinor`. The DMMF test requires every `*Minor` field to have that sibling.
+  - **R1-F4.** `20261107120000_init/migration.sql` opens with `BEGIN` and ends with `COMMIT`, so a failed statement rolls the init migration back instead of leaving a partial schema.
+  - **R1-F5.** The INV-2 test asserts `Prescription`'s exact scalar columns: `id`, `shopId`, `rxType`, `source`, `cipher`, `uploadKeys`, `createdAt`, `orderId`.
+  - **R1-F6.** The init migration file no longer ends with a blank line.

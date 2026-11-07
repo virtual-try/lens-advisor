@@ -1,5 +1,8 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -8,6 +11,9 @@ import { PrismaClient } from "@prisma/client";
 const execFileAsync = promisify(execFile);
 
 const SCHEMA_NAME = /^t_[0-9a-f]{16}$/;
+
+/** First migration. Session only, so an existing template database can be baselined. */
+export const SESSION_BASELINE_MIGRATION = "20261107000000_session_baseline";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -66,9 +72,9 @@ async function execSql(url: string, sql: string): Promise<void> {
   }
 }
 
-export async function deployMigrations(url: string): Promise<void> {
+async function runPrisma(args: string[], url: string): Promise<void> {
   try {
-    await execFileAsync(process.execPath, [prismaCli, "migrate", "deploy"], {
+    await execFileAsync(process.execPath, [prismaCli, ...args], {
       cwd: repoRoot,
       timeout: 90_000,
       env: {
@@ -89,9 +95,72 @@ export async function deployMigrations(url: string): Promise<void> {
             .join("\n")
         : String(error);
     throw new Error(
-      `prisma migrate deploy failed\n${redactConnectionStrings(detail)}`,
+      `prisma ${args.join(" ")} failed\n${redactConnectionStrings(detail)}`,
     );
   }
+}
+
+export async function deployMigrations(url: string): Promise<void> {
+  await runPrisma(["migrate", "deploy"], url);
+}
+
+/**
+ * Records a migration as applied without running its SQL.
+ * Prisma creates `_prisma_migrations` itself. This is the supported baseline step.
+ */
+export async function markMigrationApplied(
+  url: string,
+  migrationName: string,
+): Promise<void> {
+  await runPrisma(["migrate", "resolve", "--applied", migrationName], url);
+}
+
+/** The spec 01 template database: `Session` via `db push`, and no migration history. */
+export async function pushTemplateSession(url: string): Promise<void> {
+  const dir = await mkdtemp(path.join(tmpdir(), "lens-template-session-"));
+  try {
+    await writeFile(
+      path.join(dir, "schema.prisma"),
+      templateSessionSchema(),
+      "utf8",
+    );
+    await runPrisma(
+      [
+        "db",
+        "push",
+        "--skip-generate",
+        "--schema",
+        path.join(dir, "schema.prisma"),
+      ],
+      url,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+function templateSessionSchema(): string {
+  const source = readFileSync(
+    path.join(repoRoot, "prisma", "schema.prisma"),
+    "utf8",
+  );
+  const model = source.match(/^model Session \{[\s\S]*?\n\}/m);
+  if (!model) {
+    throw new Error("Session model missing from prisma/schema.prisma");
+  }
+  return [
+    "generator client {",
+    '  provider = "prisma-client-js"',
+    "}",
+    "",
+    "datasource db {",
+    '  provider = "postgresql"',
+    '  url      = env("DATABASE_URL")',
+    "}",
+    "",
+    model[0],
+    "",
+  ].join("\n");
 }
 
 /**
@@ -208,6 +277,7 @@ export async function seedShop(
         optionGroupId: optionGroup.id,
         label: "Polycarbonate",
         priceDeltaMinor: 0,
+        currency: "USD",
         position: 0,
       },
     });

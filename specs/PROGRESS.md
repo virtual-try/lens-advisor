@@ -12,7 +12,7 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | 03 | [rx-core domain types and schemas](./03-rx-core-contracts.md) | Not started | 01 | Heavy | — |  |
 | 04 | [Configurator package, tokens and theme app block](./04-configurator-package-and-tokens.md) | Not started | 01 | Heavy | — |  |
 | 05 | [Field encryption for prescription data](./05-field-encryption.md) | Not started | 01 | Heavy | — |  |
-| 06 | [S3 storage adapter](./06-s3-storage.md) | Not started | 01 | Standard | — |  |
+| 06 | [S3 storage adapter](./06-s3-storage.md) | Done | 01 | Standard | — | PR #9 |
 | 07 | [Mailer adapter (Resend)](./07-mailer.md) | Not started | 01 | Light | — |  |
 | 08 | [Job queue and worker process (pg-boss)](./08-job-queue.md) | Not started | 01 | Standard | — |  |
 | 09 | [Plan gate (Shopify managed pricing)](./09-plan-gate.md) | Not started | 01 | Standard | — |  |
@@ -63,3 +63,4 @@ Not started · In progress · Blocked · Done
   outline on non-input controls. `DESIGN-SYSTEM.md` transcribed from v3. Validator: 35 specs · 0 errors ·
   34 warnings, all accepted in README → Known gaps (`../docs/planning/validator.md`).
 - **2026-11-07** — Spec 01 merged (PR #5).
+- **2026-11-07** — Spec 06 merged (PR #9).

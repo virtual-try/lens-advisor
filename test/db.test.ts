@@ -1,28 +1,34 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   createTestDb,
   createTestSchema,
   deployMigrations,
+  markMigrationApplied,
+  pushTemplateSession,
   seedShop,
+  SESSION_BASELINE_MIGRATION,
   type TestDb,
 } from "./db";
-
-const repoRoot = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-);
 
 type DmmfModel = (typeof Prisma.dmmf.datamodel.models)[number];
 
 const EXEMPT_MODELS = new Set(["Shop", "Session"]);
 
-const RX_VALUE_NAME = /^(sph|cyl|axis|add|pd)(?![a-z])/i;
 const DIOPTER_NAME = /^(sph|cyl|add)(Min|Max)$/;
 const MONEY_NAME = /Minor$/;
+
+/** Scalar columns. Relations are not stored. Adding any other name fails INV-2. */
+const PRESCRIPTION_COLUMNS = [
+  "cipher",
+  "createdAt",
+  "id",
+  "orderId",
+  "rxType",
+  "shopId",
+  "source",
+  "uploadKeys",
+];
 
 type ShopCounter = {
   count(args?: { where?: { shopId?: string } }): Promise<number>;
@@ -105,41 +111,51 @@ describe("Prisma DMMF", () => {
     }
   });
 
-  it("gives Prescription no plaintext Rx field and stores cipher as text", () => {
+  it("limits Prescription to cipher, metadata, ids, and timestamps", () => {
     const prescription = models().find((model) => model.name === "Prescription");
     expect(prescription).toBeDefined();
-    const names = prescription?.fields.map((field) => field.name) ?? [];
-    const rxFields = names.filter((name) => RX_VALUE_NAME.test(name));
-    expect(rxFields).toEqual([]);
+    const columns =
+      prescription?.fields
+        .filter((field) => field.kind !== "object")
+        .map((field) => field.name)
+        .sort() ?? [];
+    expect(columns).toEqual(PRESCRIPTION_COLUMNS);
 
     const cipher = prescription?.fields.find((field) => field.name === "cipher");
     expect(cipher?.type).toBe("String");
     expect(cipher?.nativeType).toEqual(["Text", []]);
   });
 
-  it("has no Float or Decimal fields, and money and diopters are integers", () => {
+  it("has no Float or Decimal fields, and every money field has a currency code", () => {
     const floats: string[] = [];
+    const moneyFields: string[] = [];
     for (const model of models()) {
+      const currency = model.fields.find((field) => field.name === "currency");
       for (const field of model.fields) {
         if (field.type === "Float" || field.type === "Decimal") {
           floats.push(`${model.name}.${field.name}`);
         }
         if (MONEY_NAME.test(field.name)) {
+          moneyFields.push(`${model.name}.${field.name}`);
           expect(field.type, `${model.name}.${field.name}`).toBe("Int");
+          expect(currency, `${model.name}.${field.name} currency`).toMatchObject({
+            kind: "scalar",
+            type: "String",
+            isRequired: true,
+            nativeType: ["VarChar", ["3"]],
+          });
         }
         if (DIOPTER_NAME.test(field.name)) {
           expect(field.type, `${model.name}.${field.name}`).toBe("Int");
         }
-        if (field.name === "currency") {
-          expect(field.type, `${model.name}.currency`).toBe("String");
-          expect(field.nativeType, `${model.name}.currency`).toEqual([
-            "VarChar",
-            ["3"],
-          ]);
-        }
       }
     }
     expect(floats).toEqual([]);
+    expect(moneyFields).toEqual([
+      "Lens.priceMinor",
+      "OptionValue.priceDeltaMinor",
+      "AddOn.priceMinor",
+    ]);
 
     const settings = models().find((model) => model.name === "ShopSettings");
     const storeRx = settings?.fields.find(
@@ -216,7 +232,7 @@ describe("createTestDb", () => {
     expect(session?.accessToken).toBe("fake-token");
   });
 
-  it("applies migrate deploy to an empty schema and to one that already holds a template session", async () => {
+  it("deploys onto an empty schema, and baselines a template Session database before deploy", async () => {
     const empty = await open();
     expect(await empty.prisma.session.count()).toBe(0);
     expect(await empty.prisma.shop.count()).toBe(0);
@@ -226,42 +242,23 @@ describe("createTestDb", () => {
       datasources: { db: { url: holding.url } },
     });
     try {
-      const migration = readFileSync(
-        path.join(
-          repoRoot,
-          "prisma",
-          "migrations",
-          "20261107120000_init",
-          "migration.sql",
-        ),
-        "utf8",
-      );
-      const sessionSql = migration.match(
-        /CREATE TABLE IF NOT EXISTS "Session" \([\s\S]*?\);/,
-      );
-      if (!sessionSql) {
-        throw new Error("Session statement missing from the init migration");
-      }
-      await client.$executeRawUnsafe(sessionSql[0]);
+      await pushTemplateSession(holding.url);
+      const history = await client.$queryRaw<Array<{ rel: string | null }>>`
+        SELECT to_regclass('"_prisma_migrations"')::text AS rel
+      `;
+      expect(history[0]?.rel).toBeNull();
+
       await client.$executeRaw`
         INSERT INTO "Session" ("id", "shop", "state", "isOnline", "accessToken", "accountOwner")
         VALUES ('template-session', 'template.myshopify.com', 'state', false, 'fake-token', false)
       `;
-      // migrate deploy refuses a non-empty schema that has no migration table (P3005).
-      // An empty _prisma_migrations table is the bookkeeping Prisma needs before it
-      // will execute the pending init SQL. No migration is marked applied.
-      await client.$executeRawUnsafe(`
-        CREATE TABLE "_prisma_migrations" (
-          "id" VARCHAR(36) PRIMARY KEY NOT NULL,
-          "checksum" VARCHAR(64) NOT NULL,
-          "finished_at" TIMESTAMPTZ,
-          "migration_name" VARCHAR(255) NOT NULL,
-          "logs" TEXT,
-          "rolled_back_at" TIMESTAMPTZ,
-          "started_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
-          "applied_steps_count" INTEGER NOT NULL DEFAULT 0
-        )
-      `);
+
+      await markMigrationApplied(holding.url, SESSION_BASELINE_MIGRATION);
+      const shopBeforeDeploy = await client.$queryRaw<Array<{ rel: string | null }>>`
+        SELECT to_regclass('"Shop"')::text AS rel
+      `;
+      expect(shopBeforeDeploy[0]?.rel).toBeNull();
+
       await deployMigrations(holding.url);
 
       const kept = await client.session.findUnique({
@@ -271,6 +268,16 @@ describe("createTestDb", () => {
       expect(kept?.accessToken).toBe("fake-token");
       expect(await client.shop.count()).toBe(0);
       expect(await currentSchema(client)).toBe(holding.schema);
+
+      const applied = await client.$queryRaw<Array<{ migration_name: string }>>`
+        SELECT migration_name
+        FROM "_prisma_migrations"
+        ORDER BY migration_name
+      `;
+      expect(applied.map((row) => row.migration_name)).toEqual([
+        SESSION_BASELINE_MIGRATION,
+        "20261107120000_init",
+      ]);
     } finally {
       await client.$disconnect();
       await holding.drop();

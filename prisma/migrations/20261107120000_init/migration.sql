@@ -1,3 +1,6 @@
+-- PostgreSQL commits each statement on its own unless this script opens a transaction.
+BEGIN;
+
 -- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "public";
 
@@ -15,29 +18,6 @@ CREATE TYPE "RxSource" AS ENUM ('MANUAL', 'UPLOAD');
 
 -- CreateEnum
 CREATE TYPE "LabOrderStatus" AS ENUM ('PENDING', 'SENDING', 'SENT', 'FAILED');
-
--- CreateTable
-CREATE TABLE IF NOT EXISTS "Session" (
-    "id" TEXT NOT NULL,
-    "shop" TEXT NOT NULL,
-    "state" TEXT NOT NULL,
-    "isOnline" BOOLEAN NOT NULL DEFAULT false,
-    "scope" TEXT,
-    "expires" TIMESTAMP(3),
-    "accessToken" TEXT NOT NULL,
-    "userId" BIGINT,
-    "firstName" TEXT,
-    "lastName" TEXT,
-    "email" TEXT,
-    "accountOwner" BOOLEAN NOT NULL DEFAULT false,
-    "locale" TEXT,
-    "collaborator" BOOLEAN DEFAULT false,
-    "emailVerified" BOOLEAN DEFAULT false,
-    "refreshToken" TEXT,
-    "refreshTokenExpires" TIMESTAMP(3),
-
-    CONSTRAINT "Session_pkey" PRIMARY KEY ("id")
-);
 
 -- CreateTable
 CREATE TABLE "Shop" (
@@ -117,6 +97,7 @@ CREATE TABLE "OptionValue" (
     "optionGroupId" TEXT NOT NULL,
     "label" TEXT NOT NULL,
     "priceDeltaMinor" INTEGER NOT NULL,
+    "currency" VARCHAR(3) NOT NULL,
     "tokenKey" TEXT,
     "tokenValue" TEXT,
     "overrideCode" TEXT,
@@ -278,3 +259,4 @@ ALTER TABLE "LabOrder" ADD CONSTRAINT "LabOrder_lensId_fkey" FOREIGN KEY ("lensI
 -- AddForeignKey
 ALTER TABLE "ComplianceRequest" ADD CONSTRAINT "ComplianceRequest_shopId_fkey" FOREIGN KEY ("shopId") REFERENCES "Shop"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
+COMMIT;
