@@ -17,11 +17,11 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | 08 | [Job queue and worker process (pg-boss)](./08-job-queue.md) | Not started | 01 | Standard | — |  |
 | 09 | [Plan gate (Shopify managed pricing)](./09-plan-gate.md) | Done | 01 | Standard | — | PR #15 |
 | 10 | [Rx parser and validation](./10-rx-parser-validation.md) | Done | 03 | Standard | — | PR #19 |
-| 11 | [Rx limits engine](./11-rx-limits-engine.md) | Not started | 03 | Standard | — |  |
+| 11 | [Rx limits engine](./11-rx-limits-engine.md) | Done | 03 | Standard | — | PR #23 |
 | 12 | [Lab code compiler](./12-lab-code-compiler.md) | Not started | 03 | Standard | — |  |
-| 13 | [Price calculation](./13-pricing.md) | Not started | 03 | Standard | — |  |
+| 13 | [Price calculation](./13-pricing.md) | Done | 03 | Standard | — | PR #30 |
 | 14 | [Catalog repository and service](./14-catalog-service.md) | Not started | 02, 03 | Standard | — |  |
-| 15 | [Shop settings repository and service](./15-shop-settings-service.md) | Not started | 02, 03 | Standard | — |  |
+| 15 | [Shop settings repository and service](./15-shop-settings-service.md) | Done | 02, 03 | Standard | — | PR #32 |
 | 16 | [Configurator shell, state machine and API client](./16-configurator-shell.md) | Not started | 03, 04 | Heavy | — |  |
 | 17 | [Shopify product sync for lenses, options and add-ons](./17-shopify-product-sync.md) | Not started | 13, 14 | Standard | — |  |
 | 18 | [Admin: lens groups and lenses](./18-admin-lenses.md) | Not started | 09, 10, 12, 13, 14, 17 | Standard | — |  |
@@ -68,3 +68,6 @@ Not started · In progress · Blocked · Done
 - **2026-11-07** — Spec 03 merged (PR #14).
 - **2026-11-07** — Spec 02 merged (PR #16).
 - **2026-11-07** — Spec 10 merged (PR #19).
+- **2026-11-07** — Spec 11 merged (PR #23).
+- **2026-11-07** — Spec 13 merged (PR #30).
+- **2026-11-07** — Spec 15 merged (PR #32).

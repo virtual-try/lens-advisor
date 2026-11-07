@@ -100,4 +100,31 @@ Real, used now: config module (spec 01). Stubbed: none. Consumers: 22, 24, 25.
   - `pnpm build`: exit 0.
   - `git diff --check`: clean.
 - **2026-11-08** — `specs/inventory/05-field-encryption.md` lists `createFieldCipher` (`field-cipher`) and `getCipher` (`cipher-container`).
-- **2026-11-07** — Evidence (orchestro spec verify, tree e2d70da5): install pass · typecheck pass · lint pass · build pass · test pass 248/0/0
+- **2026-11-07** — Evidence (orchestro spec verify, tree 0076ef8d): install pass · typecheck pass · lint pass · build pass · test pass 250/0/0
+- **2026-11-08** — Fix round R1-F1. GCM additional data is the on-wire header concatenated with the caller context, each `uint32be` length-prefixed: `u32be(headerLen) || version || keyIdLen || keyId || u32be(contextLen) || contextUtf8`. Encrypt and decrypt both pass that buffer to `setAAD`. Before that change, with `k1` and `k2` set to the same key, rewriting the key id still returned plaintext. `pnpm vitest run app/shared/crypto/field-cipher.server.test.ts -t "version byte|share a key|another shop"` on the new tests, cipher not yet binding the header: `Tests  1 failed | 2 passed | 12 skipped (15)`. Failure: `expected undefined to be an instance of DecryptError` in "swapping the key id on a valid ciphertext throws DecryptError when both ids share a key". The version-byte case already threw `DecryptError` from the pre-lookup version check. After the binding, that swap throws `DecryptError` and does not return plaintext.
+- **2026-11-08** — Fix round R1-F2. Sabotage was decrypt only: `decipher.setAAD(gcmAad(header, aad))` temporarily became `decipher.setAAD(Buffer.alloc(0))`. Encrypt still bound the real header and context. The cross-shop test requires the original context to open first, so empty AAD on decrypt cannot leave that row green. `pnpm vitest run app/shared/crypto/field-cipher.server.test.ts -t "another shop" --reporter=verbose`:
+
+      ×  app  app/shared/crypto/field-cipher.server.test.ts > createFieldCipher examples > decrypt with the AAD of another shop throws DecryptError 3ms
+         → Ciphertext could not be authenticated
+
+      FAIL   app  app/shared/crypto/field-cipher.server.test.ts > createFieldCipher examples > decrypt with the AAD of another shop throws DecryptError
+      DecryptError: Ciphertext could not be authenticated
+       ❯ Object.decrypt app/shared/crypto/field-cipher.server.ts:246:13
+       ❯ app/shared/crypto/field-cipher.server.test.ts:141:19
+
+       Test Files  1 failed (1)
+            Tests  1 failed | 14 skipped (15)
+
+  The throw is the matching-context assertion, `decrypt(token, AAD)` at the cited test line. Restored `decipher.setAAD(gcmAad(header, aad))`. Same command after the restore:
+
+      ✓  app  app/shared/crypto/field-cipher.server.test.ts > createFieldCipher examples > decrypt with the AAD of another shop throws DecryptError 4ms
+
+       Test Files  1 passed (1)
+            Tests  1 passed | 14 skipped (15)
+
+- **2026-11-08** — Gates, after the restore and the header binding:
+  - `pnpm vitest run app/shared/crypto/field-cipher.server.test.ts`: Test Files 1 passed (1), Tests 15 passed (15).
+  - `pnpm test`: Test Files 16 passed (16), Tests 250 passed (250). Projects in the output: app, rx-core, db. 0 failed.
+  - `pnpm typecheck`: exit 0 (`prisma generate`, `react-router typegen`, `tsc --noEmit`, `pnpm -r typecheck`).
+  - `pnpm lint` (`eslint . --max-warnings 0`): exit 0, no findings.
+  - `pnpm build`: exit 0.

@@ -52,6 +52,24 @@ function flipLastByte(token: string): string {
   return raw.toString("base64url");
 }
 
+function flipVersionByte(token: string): string {
+  const raw = Buffer.from(token, "base64url");
+  raw[0] ^= 0xff;
+  return raw.toString("base64url");
+}
+
+/** Replace the key id, keeping its length so the IV and tag stay put. */
+function rewriteKeyId(token: string, keyId: string): string {
+  const raw = Buffer.from(token, "base64url");
+  const keyIdLen = raw[1] ?? 0;
+  const next = Buffer.from(keyId, "utf8");
+  if (next.length !== keyIdLen) {
+    throw new Error("rewriteKeyId requires the same byte length");
+  }
+  next.copy(raw, 2);
+  return raw.toString("base64url");
+}
+
 function ivDistanceIsOne(left: Buffer, right: Buffer): boolean {
   const a = BigInt(`0x${left.toString("hex")}`);
   const b = BigInt(`0x${right.toString("hex")}`);
@@ -118,6 +136,10 @@ describe("createFieldCipher examples", () => {
     const cipher = primaryCipher();
     const token = cipher.encrypt(payload, AAD);
 
+    // Matching context must still open. Empty AAD on decrypt alone still
+    // throws for the other shop, so this row would stay green without it.
+    expect(cipher.decrypt(token, AAD)).toEqual(payload);
+
     const err = catchError(() => cipher.decrypt(token, OTHER_SHOP_AAD));
     expect(err).toBeInstanceOf(DecryptError);
     expect(err).not.toBeInstanceOf(UnknownKeyError);
@@ -128,6 +150,39 @@ describe("createFieldCipher examples", () => {
     const emptyAad = catchError(() => cipher.decrypt(token, ""));
     expect(emptyAad).toBeInstanceOf(DecryptError);
     expectNoLeak(emptyAad, NEEDLE);
+  });
+
+  it("flipping the version byte of a valid ciphertext throws DecryptError", () => {
+    const cipher = primaryCipher();
+    const token = cipher.encrypt(payload, AAD);
+    const tampered = flipVersionByte(token);
+
+    expect(tokenParts(tampered).version).not.toBe(FIELD_CIPHER_VERSION);
+    const err = catchError(() => cipher.decrypt(tampered, AAD));
+    expect(err).toBeInstanceOf(DecryptError);
+    expect(err).not.toBeInstanceOf(UnknownKeyError);
+    expect((err as Error).message).toBe("Ciphertext could not be authenticated");
+    expect((err as Error & { cause?: unknown }).cause).toBeUndefined();
+    expectNoLeak(err, NEEDLE);
+  });
+
+  it("swapping the key id on a valid ciphertext throws DecryptError when both ids share a key", () => {
+    const cipher = cipherWith("k1", { k1: KEY_K1, k2: KEY_K1 });
+    const token = cipher.encrypt(payload, AAD);
+    expect(tokenParts(token).keyId).toBe("k1");
+    expect(cipher.decrypt(token, AAD)).toEqual(payload);
+
+    const swapped = rewriteKeyId(token, "k2");
+    expect(tokenParts(swapped).keyId).toBe("k2");
+    expect(swapped).not.toBe(token);
+
+    const err = catchError(() => cipher.decrypt(swapped, AAD));
+    expect(err).toBeInstanceOf(DecryptError);
+    expect(err).not.toBeInstanceOf(UnknownKeyError);
+    expect((err as Error).message).toBe("Ciphertext could not be authenticated");
+    expect((err as Error & { cause?: unknown }).cause).toBeUndefined();
+    expectNoLeak(err, NEEDLE);
+    expectNoLeak(err, KEY_K1);
   });
 
   it("flipping one byte of the token throws DecryptError", () => {

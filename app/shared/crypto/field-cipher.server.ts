@@ -56,8 +56,32 @@ export interface FieldCipherOptions {
   activeKeyId: string;
 }
 
-function aadBuffer(aad: string): Buffer {
-  return Buffer.from(aad, "utf8");
+function serializeHeader(keyId: string): Buffer {
+  const keyIdBytes = Buffer.from(keyId, "utf8");
+  const header = Buffer.alloc(2 + keyIdBytes.length);
+  header[0] = FIELD_CIPHER_VERSION;
+  header[1] = keyIdBytes.length;
+  keyIdBytes.copy(header, 2);
+  return header;
+}
+
+function lengthPrefixed(bytes: Buffer): Buffer {
+  const out = Buffer.alloc(4 + bytes.length);
+  out.writeUInt32BE(bytes.length, 0);
+  bytes.copy(out, 4);
+  return out;
+}
+
+/**
+ * GCM additional data is the on-wire header (version, key-id length, key id)
+ * concatenated with the caller context. Each field is uint32be length-prefixed
+ * so one cannot be shifted into the other.
+ */
+function gcmAad(header: Buffer, contextAad: string): Buffer {
+  return Buffer.concat([
+    lengthPrefixed(header),
+    lengthPrefixed(Buffer.from(contextAad, "utf8")),
+  ]);
 }
 
 function wipe(parts: Buffer[]): void {
@@ -111,6 +135,7 @@ function serializePlaintext(plaintextJson: unknown): string {
  * AES-256-GCM cipher for prescription JSON.
  * Token is one base64url string: version, key id, 12-byte IV, ciphertext, 16-byte tag.
  * Callers pass AAD `shopId:prescriptionId` so a ciphertext copied across shops does not decrypt.
+ * That context and the version/key-id header are length-prefixed GCM additional data.
  */
 export function createFieldCipher(options: FieldCipherOptions): FieldCipher {
   if (options === null || typeof options !== "object") {
@@ -152,24 +177,19 @@ export function createFieldCipher(options: FieldCipherOptions): FieldCipher {
   function encrypt(plaintextJson: unknown, aad: string): string {
     assertAad(aad);
     const json = serializePlaintext(plaintextJson);
+    const header = serializeHeader(activeKeyId);
 
     // Fresh IV every call. Never derived from the plaintext or a counter.
     const iv = randomBytes(IV_LENGTH);
     const cipher = createCipheriv("aes-256-gcm", encryptionKey, iv, {
       authTagLength: AUTH_TAG_LENGTH,
     });
-    cipher.setAAD(aadBuffer(aad));
+    cipher.setAAD(gcmAad(header, aad));
     const ciphertext = Buffer.concat([cipher.update(json, "utf8"), cipher.final()]);
     const tag = cipher.getAuthTag();
     if (tag.length !== AUTH_TAG_LENGTH) {
       throw new CipherInputError("Auth tag length is invalid");
     }
-
-    const keyIdBytes = Buffer.from(activeKeyId, "utf8");
-    const header = Buffer.alloc(2 + keyIdBytes.length);
-    header[0] = FIELD_CIPHER_VERSION;
-    header[1] = keyIdBytes.length;
-    keyIdBytes.copy(header, 2);
 
     return Buffer.concat([header, iv, ciphertext, tag]).toString("base64url");
   }
@@ -193,7 +213,8 @@ export function createFieldCipher(options: FieldCipherOptions): FieldCipher {
       throw new DecryptError();
     }
 
-    const keyId = raw.subarray(2, 2 + keyIdLen).toString("utf8");
+    const header = Buffer.from(raw.subarray(0, 2 + keyIdLen));
+    const keyId = header.subarray(2).toString("utf8");
     const key = decoded.get(keyId);
     if (!key) {
       throw new UnknownKeyError();
@@ -209,8 +230,9 @@ export function createFieldCipher(options: FieldCipherOptions): FieldCipher {
       authTagLength: AUTH_TAG_LENGTH,
     });
     decipher.setAuthTag(tag);
-    // AAD is the caller's string. An empty or other-shop AAD must not authenticate.
-    decipher.setAAD(aadBuffer(aad));
+    // Header and caller context are both authenticated. Empty or other-shop
+    // context, or a rewritten version or key id, must not authenticate.
+    decipher.setAAD(gcmAad(header, aad));
 
     // update() can yield plaintext before the tag is checked. Hold those bytes
     // until final() succeeds, then drop them on failure without putting them

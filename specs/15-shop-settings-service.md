@@ -1,6 +1,6 @@
 # Spec 15 — Shop settings repository and service
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 02, Spec 03
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —
