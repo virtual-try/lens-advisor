@@ -64,11 +64,31 @@ Stubbed: none. Consumers: 17, 18, 19, 21, 31.
 
 ## Done when
 
-- [ ] `pnpm vitest run app/features/catalog` passes: every Examples row is a case; reorder interrupted mid-transaction leaves the previous order. [unit]
-- [ ] INV-1: for every repository function, a test seeds shops A and B and asserts B's rows are absent/untouched. [unit]
-- [ ] INV-4: prices round-trip as integers; a float input is rejected by `schema.ts`. [unit]
-- [ ] INV-5: limits round-trip as integer hundredths. [unit]
-- [ ] `pnpm test` passes with 0 failures. [unit]
-- [ ] `specs/inventory/14-catalog-service.md` lists the repository and service functions. [static]
-- [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
-- [ ] `pnpm build` passes. [static]
+- [x] `pnpm vitest run app/features/catalog` passes: every Examples row is a case; reorder interrupted mid-transaction leaves the previous order. [unit]
+- [x] INV-1: for every repository function, a test seeds shops A and B and asserts B's rows are absent/untouched. [unit]
+- [x] INV-4: prices round-trip as integers; a float input is rejected by `schema.ts`. [unit]
+- [x] INV-5: limits round-trip as integer hundredths. [unit]
+- [x] `pnpm test` passes with 0 failures. [unit]
+- [x] `specs/inventory/14-catalog-service.md` lists the repository and service functions. [static]
+- [x] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
+- [x] `pnpm build` passes. [static]
+
+## Log
+
+- **2026-11-08** — Spec 14 implemented. No git writes (lead commits).
+  - Repository `app/features/catalog/catalog.repository.server.ts`: Implemented `createCatalogRepository(prisma)` and `CatalogRepository` class plus standalone repository functions for all entities (`LensGroup`, `Lens`, `OptionGroup`, `OptionValue`, `AddOn`). Every function accepts `shopId` first and includes `shopId` in its Prisma `where` clause (INV-1). Single-row lookups and updates target compound unique index `shopId_id: { shopId, id }`. Reorder executes in a single `$transaction`, verifying that all IDs belong to `shopId` before updating positions; soft deletes set `archivedAt: new Date()`.
+  - Schema `app/features/catalog/schema.ts`: Zod schemas for input validation and updates (`lensGroupInputSchema`, `lensInputSchema`, `optionGroupInputSchema`, `optionValueInputSchema`, `addOnInputSchema`, `reorderSchema`). Enforces integer minor units for money (INV-4) and integer hundredths for diopters (INV-5), non-negative prices (`NEGATIVE_PRICE`), limit consistency `sphMin <= sphMax`, `cylMin <= cylMax`, `addMin <= addMax` (`LIMITS_INVERTED`), and option value exclusivity between tokens and override codes (`ONE_CODE_SOURCE`).
+  - Service `app/features/catalog/catalog.service.server.ts`: Implemented `createCatalogService(deps)` and `CatalogService` class plus standalone service functions. Validates inputs through `schema.ts`, enforces unique names within groups/shops among active entities (`NAME_NOT_UNIQUE`), maps rows to spec 03 DTOs without leaking raw Prisma models or floats past the boundary, and provides `getStorefrontCatalog(shopId)` returning validated `CatalogResponse` excluding archived rows, un-synced lenses/add-ons without variant IDs, and unsynced priced options.
+  - Inventory fragment `specs/inventory/14-catalog-service.md`: Created, documenting all repository and service functions, error classes, schemas, and DTO types.
+  - Self-check 1: checked, holds. Every query in `catalog.repository.server.ts` includes `shopId` in its where clause (`shopId_id` for individual lookups/updates/deletes; `shopId` filter for list and reorder queries).
+  - Self-check 2: checked, holds. Reorder runs inside `prisma.$transaction`. Reorder interrupted mid-transaction by an invalid ID rolls back completely and leaves original positions intact.
+  - Self-check 3: checked, holds. Storage and API checklists satisfied: soft-deletes preserve old orders; Prisma P2025 errors map to 404 `NotFoundError`; input errors throw 400 `ValidationError` with specific error codes.
+  - Sabotage 1: Removed `shopId` filter from `getLensGroup` in repository -> red (`expected { ... } to be null`); restored.
+  - Sabotage 2: Disabled `LIMITS_INVERTED` validation for SPH limits -> red (`promise resolved instead of rejecting`); restored.
+  - Gates after last code change:
+    - `pnpm vitest run app/features/catalog` -> `Test Files  2 passed (2)` / `Tests  59 passed (59)`
+    - `pnpm test` -> `Test Files  19 passed (19)` / `Tests  338 passed (338)`
+    - `pnpm typecheck` -> exit 0
+    - `pnpm lint` (`eslint . --max-warnings 0`) -> exit 0
+    - `pnpm build` -> exit 0
+- **2026-11-07** — Evidence (orchestro spec verify, tree ff1729c5): install pass · typecheck pass · lint pass · build pass · test pass 338/0/0
