@@ -1,6 +1,6 @@
 # Spec 09 — Plan gate (Shopify managed pricing)
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 01
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —
@@ -117,4 +117,4 @@ Stubbed: none. Consumers: 18–20, 31, 32 call `requireActivePlan` in their load
     request return the memoized promise; the next request re-queries upstream. Tested both within-request memoization
     and across-request boundaries.
   - Tests: expanded to 32 tests across `app/features/billing` (plan 20, require-plan 6, config 6). All 55 workspace tests pass.
-- **2026-11-07** — Evidence (orchestro spec verify, tree d4016cc3): install pass · typecheck pass · lint pass · build pass · test pass 55/0/0
+- **2026-11-07** — Evidence (orchestro spec verify, tree d1b38e06): install pass · typecheck pass · lint pass · build pass · test pass 82/0/0
