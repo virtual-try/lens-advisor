@@ -1,0 +1,17 @@
+{
+  "select_lenses": {
+    "name": "Select lenses",
+    "settings": {
+      "button_label": {
+        "label": "Button label"
+      },
+      "accent_color": {
+        "label": "Accent colour"
+      },
+      "corner_radius": {
+        "label": "Corner radius",
+        "unit": "px"
+      }
+    }
+  }
+}
