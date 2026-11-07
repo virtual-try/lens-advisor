@@ -69,11 +69,27 @@ route until specs 21–25 — in dev Shopify gets 404s, which is acceptable befo
 
 ## Done when
 
-- [ ] `pnpm vitest run app/shared/config.server.test.ts` passes: a missing `RESEND_API_KEY` throws only when `getConfig().resend` is read; a malformed key list fails validation with the variable name and no value in the message. [unit]
-- [ ] A test renders `app.tsx`'s nav builder with two fixture `nav.ts` entries and asserts both labels in `order`; with none, no `<s-link>` renders. [unit]
-- [ ] `pnpm test` passes with 0 failures and its output lists both the app and rx-core projects. [unit]
-- [ ] `rg 'process\.env' app packages --glob '!app/shared/config.server.ts'` finds nothing. [static]
+- [x] `pnpm vitest run app/shared/config.server.test.ts` passes: a missing `RESEND_API_KEY` throws only when `getConfig().resend` is read; a malformed key list fails validation with the variable name and no value in the message. [unit]
+- [x] A test renders `app.tsx`'s nav builder with two fixture `nav.ts` entries and asserts both labels in `order`; with none, no `<s-link>` renders. [unit]
+- [x] `pnpm test` passes with 0 failures and its output lists both the app and rx-core projects. [unit]
+- [x] `rg 'process\.env' app packages --glob '!app/shared/config.server.ts'` finds nothing. [static]
 - [ ] `shopify app dev` installs the app on a dev store and the embedded admin loads. [requires: Shopify Partner account, dev store — owner provides]
-- [ ] `specs/inventory/01-scaffold.md` lists config getters, `AppError`, `getPrisma`, the nav and worker glob contracts. [static]
-- [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
-- [ ] `pnpm build` passes. [static]
+- [x] `specs/inventory/01-scaffold.md` lists config getters, `AppError`, `getPrisma`, the nav and worker glob contracts. [static]
+- [x] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
+- [x] `pnpm build` passes. [static]
+
+## Log
+
+- **2026-11-07** — Spec 01 implemented by agy-3:
+  - React Router 7 template initialized into repository root; Prisma switched to postgresql and pinned to 6.19.2 (`@prisma/client` and `prisma`) with `url` and `directUrl`.
+  - pnpm workspace configured for root app and `packages/*`; `packages/rx-core` created with dependency `zod` only, pure TS configuration, and passing harness test.
+  - Root scripts wired: `typecheck` (`prisma generate && react-router typegen && tsc --noEmit && pnpm -r typecheck`), `lint` (ESLint 9 flat config), `test` (Vitest running `app` and `rx-core` projects), `build` (`prisma generate && react-router build && pnpm -r build`), `dev`, `start`, `start:worker`, `test:e2e` (placeholder). Explicit Prisma client generation ensures gates pass under `ignore-scripts=true`.
+  - Lazy, zod-validated `config.server.ts` declared for all MVP env vars; missing values fail only on accessor read; `RX_ENCRYPTION_KEYS` validation redacts secret values. Zero `process.env` references exist outside `config.server.ts`.
+  - `shopify.app.toml` configured with scopes `read_products,write_products,read_orders,write_app_proxy`, app proxy `/apps/lens-advisor` -> `/proxy`, webhooks `orders/create`, `app/uninstalled`, and compliance webhooks.
+  - Nav discovery contract created in `app/shared/nav/index.ts` with eager globbing and ordering; `app.tsx` renders `<s-app-nav>` and is tested with fixtures.
+  - `app/shared/http/errors.server.ts` provides `AppError` and `errorResponse`/`jsonError` responder.
+  - `app/shared/container/prisma.server.ts` provides lazy `getPrisma()`.
+  - `render.yaml` blueprint created with web and worker services.
+  - `specs/inventory/01-scaffold.md` recorded for config getters, `AppError`, `getPrisma`, nav contract, and worker contract.
+  - All automated gates green: typecheck 0 errors, lint 0 errors 0 warnings, vitest 17/17 tests passing across 2 projects, build passing.
+- **2026-11-07** — Evidence (orchestro spec verify, tree da2cf689): install pass · typecheck pass · lint pass · build pass · test pass 17/0/0

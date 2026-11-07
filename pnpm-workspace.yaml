@@ -1,0 +1,13 @@
+packages:
+  - "packages/*"
+  - "extensions/*"
+
+allowBuilds:
+  "@parcel/watcher": true
+  "@prisma/client": true
+  "@prisma/engines": true
+  esbuild: true
+  prisma: true
+
+minimumReleaseAgeExclude:
+  - "@shopify/shopify-app-session-storage-prisma@11.0.3"
