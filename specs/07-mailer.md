@@ -1,6 +1,6 @@
 # Spec 07 — Mailer adapter (Resend)
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 01
 **Model:** Light — `claude-haiku-5-5` · `gpt-6-luna` · `gemini-3.5-flash-lite`
 **Issue:** —
@@ -108,4 +108,4 @@ Real, used now: config. In tests: fake Resend client. Stubbed: none. Consumers: 
   - R1-F1: Sanitized error reporting to prevent data leaks under INV-2. `AppError.message` is now a fixed, data-free string with status code and safe identifier only; `cause` is no longer set with the raw provider error. Added tests ensuring clinical Rx text and recipient email never appear in error message, cause, serialized error response, or logs.
   - R1-F2: Made HTTP status authoritative: 429 and 5xx are transient; every other 4xx (including 408) is classified as `MailRejectedError`. Text matching for network/timeout heuristics is only applied when no HTTP status code exists. Added tests for 408, 400 with "timeout" message, and 422 with "network" message.
   - Gates: `pnpm vitest run app/shared/mail/mailer.server.test.ts` (38/38 passed), `pnpm test` (18 files, 317/317 passed), `pnpm typecheck` (0 errors), `pnpm lint` (0 errors), `pnpm build` (passed).
-- **2026-11-07** — Evidence (orchestro spec verify, tree 6b637d17): install pass · typecheck pass · lint pass · build pass · test pass 317/0/0
+- **2026-11-07** — Evidence (orchestro spec verify, tree d70dbd7d): install pass · typecheck pass · lint pass · build pass · test pass 393/0/0
