@@ -1,0 +1,42 @@
+.la-select-lenses {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: var(--la-target);
+  min-height: var(--la-target);
+  margin: 0;
+  padding: 0 var(--la-space-5);
+  border: var(--la-border-width) solid transparent;
+  border-radius: var(--la-radius-pill);
+  appearance: none;
+  background: var(--la-ink);
+  color: var(--la-on-ink);
+  box-shadow: var(--la-shadow-signature);
+  font-family: var(--la-font-family);
+  font-size: var(--la-text-md);
+  font-weight: var(--la-weight-medium);
+  line-height: var(--la-leading-tight);
+  text-align: center;
+  white-space: normal;
+  cursor: pointer;
+  transition: box-shadow var(--la-transition-duration) var(--la-ease);
+}
+
+.la-select-lenses:focus-visible {
+  outline: var(--la-focus-outline);
+  outline-offset: var(--la-focus-offset);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .la-select-lenses:hover {
+    box-shadow: var(--la-shadow-signature-hover);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .la-select-lenses {
+    transition-property: none;
+  }
+}
