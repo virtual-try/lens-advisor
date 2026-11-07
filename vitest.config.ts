@@ -20,6 +20,15 @@ export default defineConfig({
           environment: "node",
         },
       },
+      {
+        test: {
+          name: "db",
+          include: ["test/**/*.test.ts"],
+          environment: "node",
+          testTimeout: 120_000,
+          hookTimeout: 120_000,
+        },
+      },
     ],
   },
 });

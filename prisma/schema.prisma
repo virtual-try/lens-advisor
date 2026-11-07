@@ -27,3 +27,219 @@ model Session {
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
+
+/// How a lab ticket is rendered and attached. Spec 15.
+enum TicketFormat {
+  PDF
+  CSV
+  BOTH
+}
+
+/// Option group kind. Spec 03 mirrors these names; neither package imports the other.
+enum OptionKind {
+  MATERIAL
+  TINT_TYPE
+  COLOR
+}
+
+/// Prescription / lens Rx type. Stored as an enum, never as diopter values.
+enum RxType {
+  SINGLE_VISION
+  PROGRESSIVE
+  READING
+  NON_PRESCRIPTION
+}
+
+/// How the prescription was captured. The values live in `cipher`, not in columns.
+enum RxSource {
+  MANUAL
+  UPLOAD
+}
+
+enum LabOrderStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+}
+
+// Prisma Client 6.19 DMMF omits non-unique @@index (and leaves primaryKey null).
+// Shop-scoped reads use a unique index that leads with shopId, which the DMMF
+// does expose. (shopId, id) rejects nothing extra: id is already the primary key.
+// ShopSettings uses shopId as its primary key. LabOrder's business unique
+// (shopId, shopifyOrderId, bundleId) is the shop-leading index for that table.
+
+model Shop {
+  id            String    @id @default(cuid())
+  domain        String    @unique
+  installedAt   DateTime  @default(now())
+  uninstalledAt DateTime?
+
+  settings           ShopSettings?
+  lensGroups         LensGroup[]
+  lenses             Lens[]
+  optionGroups       OptionGroup[]
+  optionValues       OptionValue[]
+  addOns             AddOn[]
+  prescriptions      Prescription[]
+  labOrders          LabOrder[]
+  complianceRequests ComplianceRequest[]
+}
+
+model ShopSettings {
+  shopId          String       @id
+  shop            Shop         @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  labEmails       String[]     @default([])
+  ticketFormat    TicketFormat @default(PDF)
+  storeRxInOrder  Boolean      @default(false)
+  rxUploadEnabled Boolean      @default(true)
+  manualRxEnabled Boolean      @default(true)
+}
+
+model LensGroup {
+  id          String    @id @default(cuid())
+  shopId      String
+  shop        Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  name        String
+  description String    @default("")
+  position    Int
+  archivedAt  DateTime?
+  lenses      Lens[]
+
+  @@unique([shopId, id])
+}
+
+model Lens {
+  id               String     @id @default(cuid())
+  shopId           String
+  shop             Shop       @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  groupId          String
+  group            LensGroup  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  name             String
+  description      String     @default("")
+  priceMinor       Int
+  currency         String     @db.VarChar(3)
+  rxTypes          RxType[]
+  sphMin           Int
+  sphMax           Int
+  cylMin           Int
+  cylMax           Int
+  addMin           Int?
+  addMax           Int?
+  labCodeTemplate  String
+  shopifyProductId String?
+  shopifyVariantId String?
+  position         Int
+  archivedAt       DateTime?
+  labOrders        LabOrder[]
+
+  @@unique([shopId, id])
+  @@index([groupId])
+}
+
+model OptionGroup {
+  id         String        @id @default(cuid())
+  shopId     String
+  shop       Shop          @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  kind       OptionKind
+  name       String
+  position   Int
+  archivedAt DateTime?
+  values     OptionValue[]
+
+  @@unique([shopId, id])
+}
+
+model OptionValue {
+  id               String      @id @default(cuid())
+  shopId           String
+  shop             Shop        @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  optionGroupId    String
+  optionGroup      OptionGroup @relation(fields: [optionGroupId], references: [id], onDelete: Cascade)
+  label            String
+  priceDeltaMinor  Int
+  tokenKey         String?
+  tokenValue       String?
+  overrideCode     String?
+  /// Merchant-chosen colour stored as data. Not a design-system token.
+  swatch           String?
+  shopifyVariantId String?
+  position         Int
+  archivedAt       DateTime?
+
+  @@unique([shopId, id])
+  @@index([optionGroupId])
+}
+
+model AddOn {
+  id               String    @id @default(cuid())
+  shopId           String
+  shop             Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  name             String
+  priceMinor       Int
+  currency         String    @db.VarChar(3)
+  shopifyProductId String?
+  shopifyVariantId String?
+  position         Int
+  archivedAt       DateTime?
+
+  @@unique([shopId, id])
+}
+
+model Prescription {
+  id         String     @id @default(cuid())
+  shopId     String
+  shop       Shop       @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  rxType     RxType
+  source     RxSource
+  /// Spec 05 ciphertext token (AAD `shopId:id`). Never a plaintext prescription.
+  cipher     String     @db.Text
+  uploadKeys String[]   @default([])
+  createdAt  DateTime   @default(now())
+  orderId    String?
+  labOrders  LabOrder[]
+
+  @@unique([shopId, id])
+  @@index([orderId])
+}
+
+model LabOrder {
+  id             String         @id @default(cuid())
+  shopId         String
+  shop           Shop           @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopifyOrderId String
+  orderName      String
+  bundleId       String
+  prescriptionId String?
+  prescription   Prescription?  @relation(fields: [prescriptionId], references: [id], onDelete: SetNull)
+  lensId         String
+  lens           Lens           @relation(fields: [lensId], references: [id], onDelete: Cascade)
+  optionValueIds String[]       @default([])
+  addOnIds       String[]       @default([])
+  frameTitle     String
+  frameSku       String?
+  rxOutOfLimits  Boolean        @default(false)
+  status         LabOrderStatus @default(PENDING)
+  attempts       Int            @default(0)
+  lastErrorCode  String?
+  ticketKeys     String[]       @default([])
+  providerId     String?
+  sentAt         DateTime?
+  createdAt      DateTime       @default(now())
+
+  @@unique([shopId, shopifyOrderId, bundleId])
+  @@index([lensId])
+  @@index([prescriptionId])
+}
+
+model ComplianceRequest {
+  id               String    @id @default(cuid())
+  shopId           String
+  shop             Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  topic            String
+  shopifyRequestId String    @unique
+  receivedAt       DateTime  @default(now())
+  handledAt        DateTime?
+
+  @@unique([shopId, id])
+}
