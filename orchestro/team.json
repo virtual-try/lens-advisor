@@ -7,7 +7,7 @@
   "coders": {
     "agy-3": {
       "engine": "agy",
-      "model": "gemini-3.8-flash-high",
+      "model": "gemini-3.1-pro-preview",
       "tier": "Heavy",
       "account": "agy-3"
     },
@@ -70,15 +70,15 @@
       "model": "opencode/big-pickle",
       "tier": "Standard",
       "account": "opencode-8"
+    },
+    "grok": {
+      "engine": "grok",
+      "tier": "Heavy",
+      "account": "grok",
+      "effort": "high"
     }
   },
   "reviewers": {
-    "rev-grok": {
-      "engine": "grok",
-      "tier": "Hard",
-      "account": "grok",
-      "effort": "high"
-    },
     "rev-codex": {
       "engine": "codex",
       "model": "gpt-5.6-sol",
