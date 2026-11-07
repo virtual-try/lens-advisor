@@ -88,12 +88,31 @@ Formatter: two decimals, explicit `+` on positives, `PL` for zero SPH (plano). P
 
 ## Done when
 
-- [ ] `pnpm vitest run packages/rx-core/src/cart/bundle-properties.test.ts` passes: every Examples row is a case; a property test round-trips 200 generated bundles. [unit]
-- [ ] `pnpm vitest run packages/rx-core/src/schemas` passes: each schema rejects float money and float diopters and accepts a valid fixture. [unit]
-- [ ] INV-3: a test seeds Rx with distinctive values and asserts none appears in any property value when the setting is off. [unit]
-- [ ] INV-4: `Money.amountMinor` is integer-validated; test with `12.5` rejects. [unit]
-- [ ] INV-5: diopter fields are integer-validated; test with `-2.25` rejects. [unit]
-- [ ] `pnpm test` passes with 0 failures. [unit]
-- [ ] `specs/inventory/03-rx-core-contracts.md` lists the exported types, schemas and helpers. [static]
-- [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
-- [ ] `pnpm build` passes. [static]
+- [x] `pnpm vitest run packages/rx-core/src/cart/bundle-properties.test.ts` passes: every Examples row is a case; a property test round-trips 200 generated bundles. [unit]
+- [x] `pnpm vitest run packages/rx-core/src/schemas` passes: each schema rejects float money and float diopters and accepts a valid fixture. [unit]
+- [x] INV-3: a test seeds Rx with distinctive values and asserts none appears in any property value when the setting is off. [unit]
+- [x] INV-4: `Money.amountMinor` is integer-validated; test with `12.5` rejects. [unit]
+- [x] INV-5: diopter fields are integer-validated; test with `-2.25` rejects. [unit]
+- [x] `pnpm test` passes with 0 failures. [unit]
+- [x] `specs/inventory/03-rx-core-contracts.md` lists the exported types, schemas and helpers. [static]
+- [x] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
+- [x] `pnpm build` passes. [static]
+
+## Log
+
+- **2026-11-07** — Spec 03 implemented by grok in worktree `spec-03` (branch `spec/03-rx-core-contracts`). No git writes (lead commits). GitHub issue skipped: dispatch forbids git writes.
+- **2026-11-07** — Landed `packages/rx-core/src/{types,schemas,format,cart,index.ts}`. Types are inferred from zod schemas (one source). `Diopter` / `Axis` / `PdTenthsMm` are named integer types; `Money.amountMinor` is `z.number().int()`. Catalog DTOs nest lenses in groups and option values in groups; storefront `Lens`/`AddOn` require `shopifyVariantId`.
+- **2026-11-07** — Decisions: (1) `buildBundleLineProperties` takes one input object so role-specific fields (`itemId`, `optionIds`, `addonIds`, `prescription`) fit without an unstable positional list. (2) `formatAxis` zero-pads to three digits (`090`) — spec gave no example. (3) Dual PD formats as `od/os` (`32.0/31.5`). (4) `_rx_od`/`_rx_os`/`_rx_pd` are written only on the lens line when `storeRxInOrder` is true; the visible `Prescription` key is written only when the setting is off and is always `"Prescription on file"`. (5) No `fast-check` (package.json owned by spec 01); 200-bundle round-trip uses a deterministic generator. (6) Round-trip is `build(parsedToBuildInput(read(build(x)))) == build(x)` for 200 generated inputs.
+- **2026-11-07** — Self-check 1: no money/diopter `number` without unit in the type or name. Format params are `hundredths` (`Diopter`), `axisDegrees` (`Axis`), `tenthsMm` (`PdTenthsMm`). `rg 'parseFloat|toFixed' packages/rx-core/src` finds nothing. Formatters use integer split (`trunc` / `%`), not floats.
+- **2026-11-07** — Self-check 2 / INV-3: distinctive Rx SPH −7.75 / CYL −1.25 × 137 ADD +2.50 / OS −3.25 / +0.75 × 42 / PD 64.5; every property value scanned. Sabotage: write `formatEye(od)` into a `_leak` key when the setting is off → red (`expected '-7.75/-1.25x137 ADD +2.50' not to contain '7.75'`); restored.
+- **2026-11-07** — Self-check 3: reader returns `rxRef`/`itemId` undefined for a frame line; empty / 10k-char / non-ASCII maps do not throw.
+- **2026-11-07** — Self-check 4: logic/parser checklist — Examples rows are tests; 200-bundle round-trip property test; hostile reader input does not throw; builder is deterministic; units are integer hundredths / tenths.
+- **2026-11-07** — Gates after last code change:
+  - `pnpm vitest run packages/rx-core/src/cart/bundle-properties.test.ts` → `Tests  11 passed (11)`
+  - `pnpm vitest run packages/rx-core/src/schemas` → `Tests  15 passed (15)`
+  - `pnpm test` → `Test Files  8 passed (8)` / `Tests  56 passed (56)`
+  - `pnpm typecheck` exit 0
+  - `pnpm lint` (`eslint . --max-warnings 0`) exit 0
+  - `pnpm build` exit 0
+- **2026-11-07** — Evidence (orchestro spec verify, tree c430e3fd): install pass · typecheck pass · lint pass · build pass · test pass 56/0/0
+
