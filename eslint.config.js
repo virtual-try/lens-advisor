@@ -11,6 +11,7 @@ export default tsPlugin.config(
       "**/build/**",
       "**/.react-router/**",
       "**/dist/**",
+      "extensions/**/assets/**",
       "**/*.d.ts",
       "prisma/migrations/**",
       "specs/**",
@@ -53,5 +54,15 @@ export default tsPlugin.config(
         },
       ],
     },
-  }
+  },
+  {
+    files: ["**/*.mjs"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "module",
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
 );

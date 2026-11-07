@@ -8,15 +8,15 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 |---|------|--------|------------|-------|-------|-------|
 | 00 | [Stack, storage, testing and design decision](./00-stack-and-architecture-decision.md) | Done | — | Heavy | — | Decided in planning |
 | 01 | [App scaffold, workspace and unit harness](./01-scaffold.md) | Done | 00 | Heavy | — | PR #5 |
-| 02 | [Database schema and first migration](./02-database-schema.md) | Not started | 01 | Heavy | — |  |
-| 03 | [rx-core domain types and schemas](./03-rx-core-contracts.md) | Not started | 01 | Heavy | — |  |
+| 02 | [Database schema and first migration](./02-database-schema.md) | Done | 01 | Heavy | — | PR #16 |
+| 03 | [rx-core domain types and schemas](./03-rx-core-contracts.md) | Done | 01 | Heavy | — | PR #14 |
 | 04 | [Configurator package, tokens and theme app block](./04-configurator-package-and-tokens.md) | Not started | 01 | Heavy | — |  |
 | 05 | [Field encryption for prescription data](./05-field-encryption.md) | Not started | 01 | Heavy | — |  |
-| 06 | [S3 storage adapter](./06-s3-storage.md) | Not started | 01 | Standard | — |  |
+| 06 | [S3 storage adapter](./06-s3-storage.md) | Done | 01 | Standard | — | PR #9 |
 | 07 | [Mailer adapter (Resend)](./07-mailer.md) | Not started | 01 | Light | — |  |
 | 08 | [Job queue and worker process (pg-boss)](./08-job-queue.md) | Not started | 01 | Standard | — |  |
-| 09 | [Plan gate (Shopify managed pricing)](./09-plan-gate.md) | Not started | 01 | Standard | — |  |
-| 10 | [Rx parser and validation](./10-rx-parser-validation.md) | Not started | 03 | Standard | — |  |
+| 09 | [Plan gate (Shopify managed pricing)](./09-plan-gate.md) | Done | 01 | Standard | — | PR #15 |
+| 10 | [Rx parser and validation](./10-rx-parser-validation.md) | Done | 03 | Standard | — | PR #19 |
 | 11 | [Rx limits engine](./11-rx-limits-engine.md) | Not started | 03 | Standard | — |  |
 | 12 | [Lab code compiler](./12-lab-code-compiler.md) | Not started | 03 | Standard | — |  |
 | 13 | [Price calculation](./13-pricing.md) | Not started | 03 | Standard | — |  |
@@ -63,3 +63,8 @@ Not started · In progress · Blocked · Done
   outline on non-input controls. `DESIGN-SYSTEM.md` transcribed from v3. Validator: 35 specs · 0 errors ·
   34 warnings, all accepted in README → Known gaps (`../docs/planning/validator.md`).
 - **2026-11-07** — Spec 01 merged (PR #5).
+- **2026-11-07** — Spec 06 merged (PR #9).
+- **2026-11-07** — Spec 09 merged (PR #15).
+- **2026-11-07** — Spec 03 merged (PR #14).
+- **2026-11-07** — Spec 02 merged (PR #16).
+- **2026-11-07** — Spec 10 merged (PR #19).
