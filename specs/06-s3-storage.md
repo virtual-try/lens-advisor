@@ -65,11 +65,42 @@ Stubbed: none. Consumers: 22, 25, 30.
 
 ## Done when
 
-- [ ] `pnpm vitest run app/shared/storage/object-store.server.test.ts` passes: every Examples row is a case. [unit]
-- [ ] INV-2: a test asserts every recorded Put/presigned Put command has SSE-KMS set. [unit]
-- [ ] INV-10: a test asserts `deletePrefix` paginates to completion and refuses prefixes outside `shops/<id>/`. [unit]
+- [x] `pnpm vitest run app/shared/storage/object-store.server.test.ts` passes: every Examples row is a case. [unit]
+- [x] INV-2: a test asserts every recorded Put/presigned Put command has SSE-KMS set. [unit]
+- [x] INV-10: a test asserts `deletePrefix` paginates to completion and refuses prefixes outside `shops/<id>/`. [unit]
 - [ ] A real presigned upload to the bucket succeeds and the object reports SSE-KMS. [requires: AWS account, bucket, KMS key — owner provides]
-- [ ] `pnpm test` passes with 0 failures. [unit]
-- [ ] `specs/inventory/06-s3-storage.md` lists `createObjectStore` and the key builders. [static]
-- [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
-- [ ] `pnpm build` passes. [static]
+- [x] `pnpm test` passes with 0 failures. [unit]
+- [x] `specs/inventory/06-s3-storage.md` lists `createObjectStore` and the key builders. [static]
+- [x] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
+- [x] `pnpm build` passes. [static]
+
+## Log
+
+- **2026-11-07** — Spec 06 implemented by agy-4:
+  - Installed `@aws-sdk/client-s3` (3.1163.0) and `@aws-sdk/s3-request-presigner` (3.1163.0) to workspace root.
+  - Implemented `app/shared/storage/object-store.server.ts`:
+    - `createObjectStore({ client, bucket, kmsKeyId, presigner?, onCommand? })` factory creating `ObjectStore`.
+    - Key layout and validation: `buildRxKey`, `buildTicketKey`, `buildShopPrefix`, `buildRxPrefix`, `buildTicketPrefix`.
+    - Enforced path-traversal safeguards refusing `/`, `\`, `..`, and null bytes in all identifiers (`assertValidId`, `assertValidExtension`, `validateKey`, `validateShopScopedPrefix`).
+    - `presignUpload`: restricted to `image/jpeg`, `image/png`, `image/heic`, `application/pdf`; max 10 MB (`MAX_UPLOAD_BYTES`); 5-minute TTL (300 s); enforced SSE-KMS (`ServerSideEncryption: "aws:kms"`, `SSEKMSKeyId: kmsKeyId`) with hoisted headers.
+    - `putObject`: sets SSE-KMS (`ServerSideEncryption: "aws:kms"`, `SSEKMSKeyId: kmsKeyId`) on every command.
+    - `presignDownload`: 60-second default TTL, GetObjectCommand presigning, key validation.
+    - `headObject` and `objectExists`: metadata query returning `{ exists, contentLength, contentType, eTag, lastModified, serverSideEncryption, sseKmsKeyId }` or `null` on 404/NotFound.
+    - `deletePrefix`: strict validation requiring prefix to start under `shops/<id>/`; paginated list and chunked delete (max 1000 per DeleteObjects batch); returns total deleted count.
+  - Implemented lazy composition root getter `getObjectStore()` in `app/shared/container/object-store.server.ts` consuming `getConfig().s3`.
+  - Created inventory fragment `specs/inventory/06-s3-storage.md` documenting `object-store`, `key-builders`, and `object-store-container`.
+  - Self-check items verified:
+    1. Every put and presigned put sets server-side encryption: verified on recorded `PutObjectCommand` instances for both `putObject` and `presignUpload` (`ServerSideEncryption === "aws:kms"` and `SSEKMSKeyId === kmsKeyId`). Holds.
+    2. `deletePrefix` cannot be called with a prefix that is not under `shops/<id>/`: verified across hostile inputs (`""`, `"/"`, `"shops"`, `"shops/"`, `"shops//"`, `"other/"`, `"shops/../other/"`) — all rejected with `InvalidKeyError`. Holds.
+    3. Security checklist: KMS encryption enforced at rest (INV-2); path traversal completely blocked; upload size strictly bounded to 10 MB; short presigned URL TTLs (300s upload, 60s download); pagination batching protects against API limits; zero credential or plaintext logging; zero `process.env` access outside `config.server.ts`. Holds.
+  - Sabotage verifications:
+    - sabotage: removed `ServerSideEncryption: "aws:kms"` and `SSEKMSKeyId` from `presignUpload` -> test failed (expected "aws:kms", got undefined) -> red; restored -> green.
+    - sabotage: bypassed `validateShopScopedPrefix` validation -> hostile `deletePrefix("")` and INV-10 prefix filter tests failed (promise resolved +0 instead of rejecting) -> red; restored -> green.
+  - Automated gates:
+    - `pnpm vitest run app/shared/storage/object-store.server.test.ts`: 20/20 passed in 402ms.
+    - `pnpm test`: 43/43 passed across 6 test files in 509ms.
+    - `pnpm typecheck`: 0 errors.
+    - `pnpm lint`: 0 errors, 0 warnings.
+    - `pnpm build`: passed.
+- **2026-11-07** — Presigned upload to real bucket box left unticked: requires a live AWS account, S3 bucket, and KMS key provided by the owner. Offline unit and integration tests with fake S3 client and signature generation pass 100%.
+- **2026-11-07** — Evidence (orchestro spec verify, tree 0fc0aa24): install pass · typecheck pass · lint pass · build pass · test pass 50/0/0

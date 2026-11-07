@@ -28,6 +28,15 @@ export default defineConfig({
           setupFiles: ["packages/configurator/src/test/setup.ts"],
         },
       },
+      {
+        test: {
+          name: "db",
+          include: ["test/**/*.test.ts"],
+          environment: "node",
+          testTimeout: 120_000,
+          hookTimeout: 120_000,
+        },
+      },
     ],
   },
 });
