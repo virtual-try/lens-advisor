@@ -1,12 +1,12 @@
 # Inventory fragment — Spec 08 (Job queue and worker process (pg-boss))
 
 ### `queue-container`
-`app/shared/container/queue.server.ts` — Composition root lazy singleton getter `getQueue()` that returns a running `Queue` instance backed by pg-boss in schema `pgboss` (polling mode, Neon pooler safe), with all feature jobs registered alongside their `<name>.dead` dead-letter queues.
-**Use instead of:** Instantiating `new PgBoss(...)` or `createQueue(...)` in web routes or loaders.
+`app/shared/container/queue.server.ts` — Client constructor `createPgBoss` and composition root lazy singleton getter `getQueue()` that returns a running `Queue` instance backed by pg-boss in schema `pgboss` (polling mode, Neon pooler safe), with all feature jobs registered alongside their `<name>.dead` dead-letter queues.
+**Use instead of:** Instantiating `new PgBoss(...)` outside `app/shared/container/` or creating raw queues in web routes or loaders.
 **Added by:** spec 08.
 
 ### `define-job`
-`app/shared/queue/define-job.ts` — Factory for typed background jobs (`defineJob`). Enforces INV-2: payload schema must be a zod object containing only ids/keys (string, number, or bigint fields matching `/(?:Id|Ids|Key|Keys)$/`), enums, and booleans. Any string, number, or bigint field not ending in `Id`/`Ids`/`Key`/`Keys` causes registration to throw `JobDefinitionError` unless explicitly listed in `allowStringFields`. Rejects `ZodEffects` and `ZodIntersection` schemas at registration. Validates payloads both on enqueue and on receive.
+`app/shared/queue/define-job.ts` — Factory for typed background jobs (`defineJob`). Enforces INV-2: payload schema must be a zod object or discriminated union containing only ids/keys (string or number fields matching `/(?:Id|Ids|Key|Keys)$/`), enums, and booleans. Rejects bigints (JSON-unsafe), `ZodEffects`, `ZodIntersection`, and plain `ZodUnion` (use `ZodDiscriminatedUnion`) at registration. Any string or number field not ending in `Id`/`Ids`/`Key`/`Keys` causes registration to throw `JobDefinitionError` unless explicitly listed in `allowStringFields`. Validates payloads both on enqueue and on receive.
 **Use instead of:** Unvalidated `pg-boss` send/work calls or hand-rolled retry/dead-letter loops.
 **Added by:** spec 08.
 

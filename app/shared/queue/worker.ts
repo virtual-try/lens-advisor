@@ -1,4 +1,5 @@
 import { getConfig } from "../config.server";
+import { createPgBoss } from "../container/queue.server";
 import { discoverJobs } from "./discovery.server";
 import { createQueue } from "./queue";
 
@@ -65,9 +66,13 @@ export async function runWorker(argv: readonly string[] = []): Promise<WorkerHan
   const connectionString = options.databaseUrl ?? config.database.databaseUrl;
 
   const definitions = await discoverJobs(options.featuresDir);
-  const queue = await createQueue({
+  const schema = options.schema ?? "pgboss";
+  const boss = createPgBoss({
     connectionString,
-    schema: options.schema ?? "pgboss",
+    schema,
+  });
+  const queue = await createQueue(boss, {
+    schema,
     pollingIntervalSeconds: options.pollingIntervalSeconds,
   });
 

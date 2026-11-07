@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { PgBoss, type FindJobsOptions, type JobWithMetadata, type SendOptions } from "pg-boss";
+import type {
+  FindJobsOptions,
+  JobWithMetadata,
+  PgBoss,
+  QueueResult,
+  SendOptions,
+} from "pg-boss";
 import {
   type AnyJobDefinition,
   JobDefinitionError,
@@ -8,16 +14,15 @@ import {
   validateJobPayload,
 } from "./define-job";
 
-export interface QueueConfig {
-  connectionString: string;
+export interface QueueOptions {
   /** pg-boss schema. Defaults to `pgboss` (ARCHITECTURE.md#data-model). */
   schema?: string;
   /** Idle poll interval, in seconds. pg-boss requires at least 0.5. */
   pollingIntervalSeconds?: number;
   localConcurrency?: number;
-  /** Receives pg-boss `error` events. Defaults to logging the message (never job data). */
-  onError?: (error: Error) => void;
 }
+
+export type QueueConfig = QueueOptions;
 
 export interface EnqueueOptions {
   /**
@@ -36,7 +41,6 @@ interface ResolvedQueueConfig {
   schema: string;
   pollingIntervalSeconds: number;
   localConcurrency: number;
-  onError: (error: Error) => void;
 }
 
 const DEFAULT_SCHEMA = "pgboss";
@@ -46,13 +50,20 @@ export class Queue {
   readonly schema: string;
   private readonly boss: PgBoss;
   private readonly config: ResolvedQueueConfig;
-  private readonly registered = new Set<string>();
+  private readonly registered = new Map<
+    string,
+    { retryLimit: number; retryDelay: number; retryBackoff: boolean }
+  >();
   private started = false;
 
-  constructor(boss: PgBoss, config: ResolvedQueueConfig) {
+  constructor(boss: PgBoss, options: QueueOptions = {}) {
     this.boss = boss;
-    this.config = config;
-    this.schema = config.schema;
+    this.schema = options.schema ?? DEFAULT_SCHEMA;
+    this.config = {
+      schema: this.schema,
+      pollingIntervalSeconds: options.pollingIntervalSeconds ?? DEFAULT_POLLING_SECONDS,
+      localConcurrency: options.localConcurrency ?? 1,
+    };
   }
 
   async start(): Promise<void> {
@@ -62,15 +73,25 @@ export class Queue {
   }
 
   /**
-   * Creates the job queue and its `<name>.dead` dead-letter queue. Idempotent.
-   * The main queue uses the `exclusive` policy so a duplicate singleton key is
-   * rejected while the first job is queued, retrying or active.
+   * Creates the job queue and its `<name>.dead` dead-letter queue, and reconciles
+   * retry and dead-letter settings. Idempotent. The main queue uses the `exclusive`
+   * policy so a duplicate singleton key is rejected while the first job is queued,
+   * retrying or active.
    */
   async register(definition: AnyJobDefinition): Promise<void> {
-    if (this.registered.has(definition.name)) return;
+    const cached = this.registered.get(definition.name);
+    if (
+      cached &&
+      cached.retryLimit === definition.retry.retryLimit &&
+      cached.retryDelay === definition.retry.retryDelay &&
+      cached.retryBackoff === definition.retry.retryBackoff
+    ) {
+      return;
+    }
 
     const deadLetter = deadLetterQueueName(definition.name);
     await this.boss.createQueue(deadLetter, { policy: "standard", retryLimit: 0 });
+    await this.boss.updateQueue(deadLetter, { retryLimit: 0 });
     await this.boss.createQueue(definition.name, {
       policy: "exclusive",
       deadLetter,
@@ -78,7 +99,13 @@ export class Queue {
       retryDelay: definition.retry.retryDelay,
       retryBackoff: definition.retry.retryBackoff,
     });
-    this.registered.add(definition.name);
+    await this.boss.updateQueue(definition.name, {
+      deadLetter,
+      retryLimit: definition.retry.retryLimit,
+      retryDelay: definition.retry.retryDelay,
+      retryBackoff: definition.retry.retryBackoff,
+    });
+    this.registered.set(definition.name, { ...definition.retry });
   }
 
   async registerAll(definitions: readonly AnyJobDefinition[]): Promise<void> {
@@ -155,6 +182,11 @@ export class Queue {
     return this.boss.findJobs<T>(name, options);
   }
 
+  /** Queue metadata and configuration from pg-boss. */
+  async getQueue(name: string): Promise<QueueResult | null> {
+    return this.boss.getQueue(name);
+  }
+
   /**
    * Stops polling, waits for in-flight jobs, then optionally drops the pg-boss
    * schema. Tests use this so each file owns a throwaway schema.
@@ -181,24 +213,8 @@ export class Queue {
   }
 }
 
-export async function createQueue(config: QueueConfig): Promise<Queue> {
-  const resolved: ResolvedQueueConfig = {
-    schema: config.schema ?? DEFAULT_SCHEMA,
-    pollingIntervalSeconds: config.pollingIntervalSeconds ?? DEFAULT_POLLING_SECONDS,
-    localConcurrency: config.localConcurrency ?? 1,
-    onError: config.onError ?? ((error) => console.error(`[queue] ${error.message}`)),
-  };
-
-  const boss = new PgBoss({
-    connectionString: config.connectionString,
-    schema: resolved.schema,
-    // Neon's pooler does not support LISTEN/NOTIFY; polling is the correctness floor.
-    useListenNotify: false,
-    application_name: "lens-advisor",
-  });
-  boss.on("error", (error: Error) => resolved.onError(error));
-
-  const queue = new Queue(boss, resolved);
+export async function createQueue(boss: PgBoss, options: QueueOptions = {}): Promise<Queue> {
+  const queue = new Queue(boss, options);
   await queue.start();
   return queue;
 }

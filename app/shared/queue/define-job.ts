@@ -40,7 +40,7 @@ export interface DefineJobOptions<TSchema extends z.ZodTypeAny> {
   handler: JobHandler<z.infer<TSchema>>;
   retry?: RetryOptions;
   /**
-   * Field names that may hold strings, numbers, or bigints even though they do not end in Id/Ids/Key/Keys.
+   * Field names that may hold strings or numbers even though they do not end in Id/Ids/Key/Keys.
    * Keep this list empty for payloads carrying prescription data (INV-2).
    */
   allowStringFields?: readonly string[];
@@ -90,6 +90,11 @@ function assertPayloadSchema(schema: z.ZodTypeAny, allowStringFields: ReadonlySe
       "Job payload schema contains ZodIntersection; intersections are not permitted in job payload schemas (INV-2)"
     );
   }
+  if (schema instanceof z.ZodUnion) {
+    throw new JobDefinitionError(
+      "Job payload schema contains ZodUnion; plain z.union is not permitted, use z.discriminatedUnion (INV-2)"
+    );
+  }
   const root = unwrapSchema(schema);
   if (root instanceof z.ZodEffects) {
     throw new JobDefinitionError(
@@ -102,9 +107,14 @@ function assertPayloadSchema(schema: z.ZodTypeAny, allowStringFields: ReadonlySe
       "Job payload schema contains ZodIntersection; intersections are not permitted in job payload schemas (INV-2)"
     );
   }
-  if (!(root instanceof z.ZodObject)) {
+  if (root instanceof z.ZodUnion) {
     throw new JobDefinitionError(
-      "Job payload schema must be a zod object so pg-boss can store an id/enum payload"
+      "Job payload schema contains ZodUnion; plain z.union is not permitted, use z.discriminatedUnion (INV-2)"
+    );
+  }
+  if (!(root instanceof z.ZodObject) && !(root instanceof z.ZodDiscriminatedUnion)) {
+    throw new JobDefinitionError(
+      "Job payload schema must be a zod object or discriminated union so pg-boss can store an id/enum payload"
     );
   }
   assertNode(root, [], allowStringFields);
@@ -115,19 +125,22 @@ function assertNode(
   path: readonly string[],
   allowStringFields: ReadonlySet<string>
 ): void {
+  if (schema instanceof z.ZodBigInt) {
+    throw new JobDefinitionError(
+      `Job payload field "${schemaPath(path)}" is a bigint; bigint is not permitted in job payload schemas (JSON-unsafe)`
+    );
+  }
+
   if (
     schema instanceof z.ZodString ||
-    schema instanceof z.ZodNumber ||
-    schema instanceof z.ZodBigInt
+    schema instanceof z.ZodNumber
   ) {
     const field = path[path.length - 1] ?? "";
     if (field === "" || (!ID_FIELD_PATTERN.test(field) && !allowStringFields.has(field))) {
       const typeName =
         schema instanceof z.ZodString
           ? "string"
-          : schema instanceof z.ZodNumber
-            ? "number"
-            : "bigint";
+          : "number";
       throw new JobDefinitionError(
         `Job payload field "${schemaPath(path)}" is a ${typeName} but does not end in Id/Ids/Key/Keys ` +
           "(INV-2: job payloads carry ids and enums only)"
@@ -179,14 +192,13 @@ function assertNode(
   }
 
   if (schema instanceof z.ZodUnion) {
-    for (const option of schema.options) {
-      assertNode(option as z.ZodTypeAny, path, allowStringFields);
-    }
-    return;
+    throw new JobDefinitionError(
+      `Job payload field "${schemaPath(path)}" uses ZodUnion; plain z.union is not permitted, use z.discriminatedUnion (INV-2)`
+    );
   }
 
   if (schema instanceof z.ZodDiscriminatedUnion) {
-    for (const option of schema.options.values()) {
+    for (const option of schema.options) {
       assertNode(option as z.ZodTypeAny, path, allowStringFields);
     }
     return;
@@ -401,19 +413,19 @@ function assertNoUnknownKeys(
   }
 
   if (schema instanceof z.ZodUnion) {
-    const matching = schema.options.find(
-      (option: z.ZodTypeAny) => option.safeParse(value).success
+    throw new JobDefinitionError(
+      `Job payload field "${schemaPath(path)}" uses ZodUnion; plain z.union is not permitted, use z.discriminatedUnion (INV-2)`
     );
-    if (matching) assertNoUnknownKeys(matching as z.ZodTypeAny, value, path);
-    return;
   }
 
   if (schema instanceof z.ZodDiscriminatedUnion) {
-    for (const option of schema.options.values()) {
-      if (option.safeParse(value).success) {
-        assertNoUnknownKeys(option as z.ZodTypeAny, value, path);
-        return;
-      }
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return;
+    const discKey = schema.discriminator;
+    const discValue = (value as Record<string, unknown>)[discKey];
+    const branch = schema.optionsMap.get(discValue as string);
+    if (branch) {
+      assertNoUnknownKeys(branch, value, path);
     }
+    return;
   }
 }

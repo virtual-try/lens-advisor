@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { defineJob } from "./define-job";
-import { enqueueTestRaw, waitFor, withTestQueue } from "./test-support";
+import { createPgBoss } from "../container/queue.server";
+import { clearJobRegistry, defineJob } from "./define-job";
+import { Queue } from "./queue";
+import { enqueueTestRaw, requireTestDatabaseUrl, uniqueSchema, waitFor, withTestQueue } from "./test-support";
 
 function jobName(prefix: string): string {
   return `test.${prefix}-${randomUUID()}`;
@@ -19,39 +21,65 @@ describe("Queue on a real Postgres", () => {
       });
       await queue.register(definition);
 
-      const first = await queue.enqueue(name, { orderId: "order-1" }, { singletonKey: "order-1" });
-      const second = await queue.enqueue(name, { orderId: "order-1" }, { singletonKey: "order-1" });
+      // Two different payloads with the same explicit singletonKey -> deduplicated to 1 job
+      const first = await queue.enqueue(
+        name,
+        { orderId: "order-diff-1" },
+        { singletonKey: "shared-key" }
+      );
+      const second = await queue.enqueue(
+        name,
+        { orderId: "order-diff-2" },
+        { singletonKey: "shared-key" }
+      );
 
       expect(first).toEqual(expect.any(String));
       expect(second).toBeNull();
       expect(await queue.findJobs(name)).toHaveLength(1);
+
+      // Two identical payloads with different explicit singletonKeys -> two jobs created
+      const third = await queue.enqueue(
+        name,
+        { orderId: "order-same" },
+        { singletonKey: "key-a" }
+      );
+      const fourth = await queue.enqueue(
+        name,
+        { orderId: "order-same" },
+        { singletonKey: "key-b" }
+      );
+
+      expect(third).toEqual(expect.any(String));
+      expect(fourth).toEqual(expect.any(String));
+      expect(third).not.toBe(fourth);
+      expect(await queue.findJobs(name)).toHaveLength(3);
     });
   });
 
-  it("retries a throwing handler and succeeds on the third attempt", async () => {
+  it("retries a throwing handler and succeeds on the fifth attempt with retryLimit 4 (R2-F4)", async () => {
     await withTestQueue(async (queue) => {
       const name = jobName("retry");
       let attempts = 0;
       const definition = defineJob({
         name,
         schema: z.object({ orderId: z.string() }),
-        retry: { retryLimit: 3, retryDelay: 0 },
+        retry: { retryLimit: 4, retryDelay: 0 },
         handler: async () => {
           attempts += 1;
-          if (attempts < 3) throw new Error("transient failure");
+          if (attempts < 5) throw new Error("transient failure");
         },
       });
 
       await queue.work(definition);
-      await queue.enqueue(name, { orderId: "order-2" }, { singletonKey: "order-2" });
+      await queue.enqueue(name, { orderId: "order-retry" }, { singletonKey: "order-retry" });
 
       const completed = await waitFor(
         async () => (await queue.findJobs(name))[0],
         (job) => job.state === "completed"
       );
 
-      expect(attempts).toBe(3);
-      expect(completed.retryCount).toBe(2);
+      expect(attempts).toBe(5);
+      expect(completed.retryCount).toBe(4);
       expect(await queue.findJobs(`${name}.dead`)).toHaveLength(0);
     });
   });
@@ -174,5 +202,61 @@ describe("Queue on a real Postgres", () => {
         /Unknown job "test\.not-registered"/
       );
     });
+  });
+
+  it("re-registering an existing queue reconciles its retry configuration (R2-F6)", async () => {
+    await withTestQueue(async (queue) => {
+      const name = jobName("reconcile");
+      const def1 = defineJob({
+        name,
+        schema: z.object({ orderId: z.string() }),
+        retry: { retryLimit: 1, retryDelay: 0 },
+        handler: () => undefined,
+      });
+
+      await queue.register(def1);
+      let q = await queue.getQueue(name);
+      expect(q?.retryLimit).toBe(1);
+
+      // Simulate a deployment changing the job's retry settings
+      clearJobRegistry();
+      const def2 = defineJob({
+        name,
+        schema: z.object({ orderId: z.string() }),
+        retry: { retryLimit: 4, retryDelay: 5, retryBackoff: true },
+        handler: () => undefined,
+      });
+
+      await queue.register(def2);
+      q = await queue.getQueue(name);
+      expect(q?.retryLimit).toBe(4);
+      expect(q?.retryDelay).toBe(5);
+      expect(q?.retryBackoff).toBe(true);
+    });
+  });
+
+  it("Queue adapter accepts an injected PgBoss client constructed in app/shared/container/ (R2-F5)", async () => {
+    const schema = uniqueSchema();
+    const boss = createPgBoss({
+      connectionString: requireTestDatabaseUrl(),
+      schema,
+      onError: () => undefined,
+    });
+    const queue = new Queue(boss, { schema, pollingIntervalSeconds: 0.5 });
+    await queue.start();
+
+    try {
+      const name = jobName("injected");
+      const definition = defineJob({
+        name,
+        schema: z.object({ orderId: z.string() }),
+        handler: () => undefined,
+      });
+      await queue.register(definition);
+      const jobId = await queue.enqueue(name, { orderId: "ord-inj" });
+      expect(jobId).toEqual(expect.any(String));
+    } finally {
+      await queue.destroy({ dropSchema: true });
+    }
   });
 });

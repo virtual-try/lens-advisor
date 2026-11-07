@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { createPgBoss } from "./shared/container/queue.server";
 import { discoverJobs } from "./shared/queue/discovery.server";
 import { createQueue } from "./shared/queue/queue";
 import { requireTestDatabaseUrl, uniqueSchema, waitFor } from "./shared/queue/test-support";
@@ -62,11 +63,14 @@ describe("worker process", () => {
           20000
         );
 
-        const queue = await createQueue({
+        const boss = createPgBoss({
           connectionString: databaseUrl,
           schema,
-          pollingIntervalSeconds: 0.5,
           onError: () => undefined,
+        });
+        const queue = await createQueue(boss, {
+          schema,
+          pollingIntervalSeconds: 0.5,
         });
 
         try {

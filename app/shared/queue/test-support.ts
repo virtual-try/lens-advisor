@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { PgBoss, SendOptions } from "pg-boss";
 import { getTestDatabaseUrl } from "../config.server";
+import { createPgBoss } from "../container/queue.server";
 import { type Queue, createQueue } from "./queue";
 
 /**
@@ -34,11 +35,14 @@ export async function withTestQueue(
   run: (queue: Queue, schema: string) => Promise<void>
 ): Promise<void> {
   const schema = uniqueSchema();
-  const queue = await createQueue({
+  const boss = createPgBoss({
     connectionString: requireTestDatabaseUrl(),
     schema,
-    pollingIntervalSeconds: 0.5,
     onError: () => undefined,
+  });
+  const queue = await createQueue(boss, {
+    schema,
+    pollingIntervalSeconds: 0.5,
   });
 
   try {
