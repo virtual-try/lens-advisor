@@ -1,0 +1,393 @@
+import { z } from "zod";
+
+/**
+ * Retry settings passed to pg-boss. Delays are in seconds, matching pg-boss.
+ */
+export interface RetryOptions {
+  retryLimit?: number;
+  retryDelay?: number;
+  retryBackoff?: boolean;
+}
+
+export interface JobContext {
+  jobId: string;
+  retryCount: number;
+  signal: AbortSignal;
+}
+
+export type JobHandler<TPayload> = (
+  payload: TPayload,
+  context: JobContext
+) => Promise<void> | void;
+
+export interface JobDefinition<
+  TSchema extends z.ZodTypeAny = z.ZodTypeAny,
+  TPayload = z.infer<TSchema>,
+> {
+  readonly __jobDefinition: true;
+  readonly name: string;
+  readonly schema: TSchema;
+  readonly handler: JobHandler<TPayload>;
+  readonly retry: Readonly<Required<Pick<RetryOptions, "retryLimit" | "retryDelay" | "retryBackoff">>>;
+  readonly allowStringFields: readonly string[];
+}
+
+export type AnyJobDefinition = JobDefinition<z.ZodTypeAny, never>;
+
+export interface DefineJobOptions<TSchema extends z.ZodTypeAny> {
+  name: string;
+  schema: TSchema;
+  handler: JobHandler<z.infer<TSchema>>;
+  retry?: RetryOptions;
+  /**
+   * Field names that may hold strings even though they do not end in Id/Ids/Key/Keys.
+   * Keep this list empty for payloads carrying prescription data (INV-2).
+   */
+  allowStringFields?: readonly string[];
+}
+
+export class JobDefinitionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "JobDefinitionError";
+  }
+}
+
+const JOB_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
+const ID_FIELD_PATTERN = /(?:Id|Ids|Key|Keys)$/;
+
+const DEFAULT_RETRY: JobDefinition["retry"] = Object.freeze({
+  retryLimit: 2,
+  retryDelay: 0,
+  retryBackoff: false,
+});
+
+const registry = new Map<string, AnyJobDefinition>();
+
+function unwrapSchema(schema: z.ZodTypeAny): z.ZodTypeAny {
+  if (schema instanceof z.ZodOptional) return unwrapSchema(schema.unwrap());
+  if (schema instanceof z.ZodNullable) return unwrapSchema(schema.unwrap());
+  if (schema instanceof z.ZodDefault) return unwrapSchema(schema.removeDefault());
+  if (schema instanceof z.ZodCatch) return unwrapSchema(schema.removeCatch());
+  if (schema instanceof z.ZodEffects) return unwrapSchema(schema.innerType());
+  if (schema instanceof z.ZodBranded) return unwrapSchema(schema.unwrap());
+  if (schema instanceof z.ZodReadonly) return unwrapSchema(schema.unwrap());
+  return schema;
+}
+
+function schemaPath(path: readonly string[]): string {
+  return path.length === 0 ? "payload" : path.join(".");
+}
+
+function assertPayloadSchema(schema: z.ZodTypeAny, allowStringFields: ReadonlySet<string>): void {
+  const root = unwrapSchema(schema);
+  if (!(root instanceof z.ZodObject)) {
+    throw new JobDefinitionError(
+      "Job payload schema must be a zod object so pg-boss can store an id/enum payload"
+    );
+  }
+  assertNode(root, [], allowStringFields);
+}
+
+function assertNode(
+  schema: z.ZodTypeAny,
+  path: readonly string[],
+  allowStringFields: ReadonlySet<string>
+): void {
+  if (schema instanceof z.ZodString) {
+    const field = path[path.length - 1] ?? "";
+    if (field === "" || (!ID_FIELD_PATTERN.test(field) && !allowStringFields.has(field))) {
+      throw new JobDefinitionError(
+        `Job payload field "${schemaPath(path)}" is a string but does not end in Id/Ids/Key/Keys ` +
+          "(INV-2: job payloads carry ids and enums only)"
+      );
+    }
+    return;
+  }
+
+  if (
+    schema instanceof z.ZodEnum ||
+    schema instanceof z.ZodNativeEnum ||
+    schema instanceof z.ZodLiteral ||
+    schema instanceof z.ZodNumber ||
+    schema instanceof z.ZodBoolean ||
+    schema instanceof z.ZodBigInt ||
+    schema instanceof z.ZodNull ||
+    schema instanceof z.ZodUndefined ||
+    schema instanceof z.ZodVoid ||
+    schema instanceof z.ZodNever
+  ) {
+    return;
+  }
+
+  if (schema instanceof z.ZodObject) {
+    if (schema._def.unknownKeys === "passthrough") {
+      throw new JobDefinitionError(
+        `Job payload object "${schemaPath(path)}" is passthrough; unknown string values could carry Rx data (INV-2)`
+      );
+    }
+    if (!(schema._def.catchall instanceof z.ZodNever)) {
+      throw new JobDefinitionError(
+        `Job payload object "${schemaPath(path)}" has a catchall schema; declare each id/enum field instead (INV-2)`
+      );
+    }
+    for (const [key, child] of Object.entries(schema.shape)) {
+      assertNode(child as z.ZodTypeAny, [...path, key], allowStringFields);
+    }
+    return;
+  }
+
+  if (schema instanceof z.ZodArray) {
+    assertNode(schema.element as z.ZodTypeAny, path, allowStringFields);
+    return;
+  }
+
+  if (schema instanceof z.ZodTuple) {
+    schema.items.forEach((item: z.ZodTypeAny, index: number) => {
+      assertNode(item, [...path, String(index)], allowStringFields);
+    });
+    return;
+  }
+
+  if (schema instanceof z.ZodUnion) {
+    for (const option of schema.options) {
+      assertNode(option as z.ZodTypeAny, path, allowStringFields);
+    }
+    return;
+  }
+
+  if (schema instanceof z.ZodDiscriminatedUnion) {
+    for (const option of schema.options.values()) {
+      assertNode(option as z.ZodTypeAny, path, allowStringFields);
+    }
+    return;
+  }
+
+  if (schema instanceof z.ZodIntersection) {
+    assertNode(schema._def.left, path, allowStringFields);
+    assertNode(schema._def.right, path, allowStringFields);
+    return;
+  }
+
+  if (schema instanceof z.ZodOptional) {
+    assertNode(schema.unwrap(), path, allowStringFields);
+    return;
+  }
+
+  if (schema instanceof z.ZodNullable) {
+    assertNode(schema.unwrap(), path, allowStringFields);
+    return;
+  }
+
+  if (schema instanceof z.ZodDefault) {
+    assertNode(schema.removeDefault(), path, allowStringFields);
+    return;
+  }
+
+  if (schema instanceof z.ZodCatch) {
+    assertNode(schema.removeCatch(), path, allowStringFields);
+    return;
+  }
+
+  if (schema instanceof z.ZodEffects) {
+    assertNode(schema.innerType(), path, allowStringFields);
+    return;
+  }
+
+  if (schema instanceof z.ZodBranded || schema instanceof z.ZodReadonly) {
+    assertNode(schema.unwrap(), path, allowStringFields);
+    return;
+  }
+
+  throw new JobDefinitionError(
+    `Job payload field "${schemaPath(path)}" uses ${schema.constructor.name}, which is not an id/enum payload type (INV-2)`
+  );
+}
+
+function normaliseRetry(retry: RetryOptions | undefined): JobDefinition["retry"] {
+  const retryLimit = retry?.retryLimit ?? DEFAULT_RETRY.retryLimit;
+  const retryDelay = retry?.retryDelay ?? DEFAULT_RETRY.retryDelay;
+  const retryBackoff = retry?.retryBackoff ?? DEFAULT_RETRY.retryBackoff;
+
+  if (!Number.isInteger(retryLimit) || retryLimit < 0) {
+    throw new JobDefinitionError("retryLimit must be a non-negative integer");
+  }
+  if (typeof retryDelay !== "number" || !Number.isFinite(retryDelay) || retryDelay < 0) {
+    throw new JobDefinitionError("retryDelay must be a non-negative number of seconds");
+  }
+
+  return Object.freeze({ retryLimit, retryDelay, retryBackoff });
+}
+
+export function isJobDefinition(value: unknown): value is AnyJobDefinition {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { __jobDefinition?: unknown }).__jobDefinition === true
+  );
+}
+
+export function registerJob(definition: AnyJobDefinition): void {
+  const existing = registry.get(definition.name);
+  if (existing && existing !== definition) {
+    throw new JobDefinitionError(`Duplicate job definition for "${definition.name}"`);
+  }
+  registry.set(definition.name, definition);
+}
+
+export function defineJob<TSchema extends z.ZodTypeAny>(
+  options: DefineJobOptions<TSchema>
+): JobDefinition<TSchema> {
+  if (!JOB_NAME_PATTERN.test(options.name)) {
+    throw new JobDefinitionError(
+      `Job name "${options.name}" must be lowercase letters, digits, dots, hyphens or underscores`
+    );
+  }
+
+  const allowStringFields = Object.freeze([...(options.allowStringFields ?? [])]);
+  assertPayloadSchema(options.schema, new Set(allowStringFields));
+
+  const definition: JobDefinition<TSchema, z.infer<TSchema>> = Object.freeze({
+    __jobDefinition: true as const,
+    name: options.name,
+    schema: options.schema,
+    handler: options.handler,
+    retry: normaliseRetry(options.retry),
+    allowStringFields,
+  });
+
+  registerJob(definition);
+  return definition;
+}
+
+/**
+ * Registers every job definition exported by the given job modules. Feature
+ * modules register themselves when imported; calling this again after a module
+ * cache hit keeps discovery deterministic.
+ */
+export function registerJobExports(modules: readonly unknown[]): AnyJobDefinition[] {
+  const found: AnyJobDefinition[] = [];
+  for (const module of modules) {
+    if (typeof module !== "object" || module === null) continue;
+    for (const value of Object.values(module)) {
+      if (isJobDefinition(value)) {
+        registerJob(value);
+        found.push(value);
+      }
+    }
+  }
+  return found;
+}
+
+export function getJobDefinition(name: string): AnyJobDefinition | undefined {
+  return registry.get(name);
+}
+
+export function getJobDefinitions(): AnyJobDefinition[] {
+  return [...registry.values()];
+}
+
+export function clearJobRegistry(): void {
+  registry.clear();
+}
+
+export function deadLetterQueueName(name: string): string {
+  return `${name}.dead`;
+}
+
+/**
+ * Parses a payload for a job and rejects unknown fields loudly. Zod's default
+ * strip mode would otherwise silently drop an extra `rxText`, so the guard also
+ * walks the schema and input together (INV-2, INV-8).
+ */
+export function validateJobPayload(
+  definition: AnyJobDefinition,
+  payload: unknown
+): unknown {
+  const parsed = definition.schema.parse(payload);
+  assertNoUnknownKeys(definition.schema, payload, []);
+  return parsed;
+}
+
+function assertNoUnknownKeys(
+  schema: z.ZodTypeAny,
+  value: unknown,
+  path: readonly string[]
+): void {
+  if (value === undefined || value === null) return;
+
+  if (schema instanceof z.ZodOptional) {
+    assertNoUnknownKeys(schema.unwrap(), value, path);
+    return;
+  }
+  if (schema instanceof z.ZodNullable) {
+    assertNoUnknownKeys(schema.unwrap(), value, path);
+    return;
+  }
+  if (schema instanceof z.ZodDefault) {
+    assertNoUnknownKeys(schema.removeDefault(), value, path);
+    return;
+  }
+  if (schema instanceof z.ZodCatch) {
+    assertNoUnknownKeys(schema.removeCatch(), value, path);
+    return;
+  }
+  if (schema instanceof z.ZodEffects) {
+    assertNoUnknownKeys(schema.innerType(), value, path);
+    return;
+  }
+  if (schema instanceof z.ZodBranded || schema instanceof z.ZodReadonly) {
+    assertNoUnknownKeys(schema.unwrap(), value, path);
+    return;
+  }
+
+  if (schema instanceof z.ZodObject) {
+    if (typeof value !== "object" || Array.isArray(value)) return;
+
+    const record = value as Record<string, unknown>;
+    for (const key of Object.keys(record)) {
+      if (!(key in schema.shape)) {
+        throw new JobDefinitionError(
+          `Job payload field "${schemaPath([...path, key])}" is not declared by its zod schema (INV-2: ids and enums only)`
+        );
+      }
+    }
+    for (const [key, child] of Object.entries(schema.shape)) {
+      assertNoUnknownKeys(child as z.ZodTypeAny, record[key], [...path, key]);
+    }
+    return;
+  }
+
+  if (schema instanceof z.ZodArray) {
+    if (!Array.isArray(value)) return;
+    value.forEach((item, index) => {
+      assertNoUnknownKeys(schema.element as z.ZodTypeAny, item, [...path, String(index)]);
+    });
+    return;
+  }
+
+  if (schema instanceof z.ZodTuple) {
+    if (!Array.isArray(value)) return;
+    schema.items.forEach((item: z.ZodTypeAny, index: number) => {
+      assertNoUnknownKeys(item, value[index], [...path, String(index)]);
+    });
+    return;
+  }
+
+  if (schema instanceof z.ZodUnion) {
+    const matching = schema.options.find(
+      (option: z.ZodTypeAny) => option.safeParse(value).success
+    );
+    if (matching) assertNoUnknownKeys(matching as z.ZodTypeAny, value, path);
+    return;
+  }
+
+  if (schema instanceof z.ZodDiscriminatedUnion) {
+    for (const option of schema.options.values()) {
+      if (option.safeParse(value).success) {
+        assertNoUnknownKeys(option as z.ZodTypeAny, value, path);
+        return;
+      }
+    }
+  }
+}
