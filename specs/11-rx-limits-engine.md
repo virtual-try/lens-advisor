@@ -110,4 +110,5 @@ Hundredths. Limits inclusive. Lens L: SPH −800..+600, CYL −400..0, rx types 
   - `pnpm typecheck` → exit 0
   - `pnpm lint` (`eslint . --max-warnings 0`) → exit 0
   - `pnpm build` → exit 0
-- **2026-11-07** — Evidence (orchestro spec verify, tree a3ad4b1b): install pass · typecheck pass · lint pass · build pass · test pass 273/0/0
+- **2026-11-08** — Review R1 fix (R1-F1): no rounding applies (integer hundredths in and out, INV-5) and limits are inclusive at both ends. Added unit tests for single-lens list (one available, one not), inclusive max boundary (OD +600 available, +625 SPH_ABOVE_MAX), and Rx failing both min and max checks across different eyes.
+- **2026-11-07** — Evidence (orchestro spec verify, tree 7d541551): install pass · typecheck pass · lint pass · build pass · test pass 279/0/0

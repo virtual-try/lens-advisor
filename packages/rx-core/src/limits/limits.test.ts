@@ -285,9 +285,76 @@ describe("Fixed check order (rx type, OD SPH, OD CYL, OD ADD, OS SPH, OS CYL, OS
       expect(result.reason.limit).toBe(300);
     }
   });
+
+  it("Rx failing both min and max checks on different eyes: OD fails min and OS fails max -> reports OD SPH_BELOW_MIN", () => {
+    const rx: Prescription = {
+      od: { sph: -825 as Diopter }, // fails SPH_BELOW_MIN (-800)
+      os: { sph: 625 as Diopter }, // fails SPH_ABOVE_MAX (+600)
+      pd: { single: 630 },
+    };
+    const result = checkLens(rx, "SINGLE_VISION", fixtureLensL);
+    expect(result).toEqual({
+      available: false,
+      reason: {
+        code: "SPH_BELOW_MIN",
+        field: "sph",
+        eye: "OD",
+        value: -825,
+        limit: -800,
+      },
+    });
+  });
+
+  it("Rx failing both min and max checks on different eyes: OD fails max and OS fails min -> reports OD SPH_ABOVE_MAX", () => {
+    const rx: Prescription = {
+      od: { sph: 625 as Diopter }, // fails SPH_ABOVE_MAX (+600)
+      os: { sph: -825 as Diopter }, // fails SPH_BELOW_MIN (-800)
+      pd: { single: 630 },
+    };
+    const result = checkLens(rx, "SINGLE_VISION", fixtureLensL);
+    expect(result).toEqual({
+      available: false,
+      reason: {
+        code: "SPH_ABOVE_MAX",
+        field: "sph",
+        eye: "OD",
+        value: 625,
+        limit: 600,
+      },
+    });
+  });
 });
 
 describe("Boundaries and ADD restrictions", () => {
+  it("inclusive max boundary: OD +600 available, +625 SPH_ABOVE_MAX", () => {
+    // OD +600 is at the max boundary -> available
+    const rxAtMax: Prescription = {
+      od: { sph: 600 as Diopter },
+      os: { sph: 0 as Diopter },
+      pd: { single: 630 },
+    };
+    expect(checkLens(rxAtMax, "SINGLE_VISION", fixtureLensL)).toEqual({
+      available: true,
+    });
+
+    // OD +625 is just above max boundary -> SPH_ABOVE_MAX
+    const rxAboveMax: Prescription = {
+      od: { sph: 625 as Diopter },
+      os: { sph: 0 as Diopter },
+      pd: { single: 630 },
+    };
+    expect(checkLens(rxAboveMax, "SINGLE_VISION", fixtureLensL)).toEqual({
+      available: false,
+      reason: {
+        code: "SPH_ABOVE_MAX",
+        field: "sph",
+        eye: "OD",
+        value: 625,
+        limit: 600,
+      },
+    });
+  });
+
   it("boundaries are inclusive for SPH min and max", () => {
     const rxMin: Prescription = {
       od: { sph: -800 as Diopter },
@@ -489,6 +556,56 @@ describe("filterLenses", () => {
     expect(results[2].lens.id).toBe("lens-c");
     expect(results[2].available).toBe(true);
     expect(results[2].result).toEqual({ available: true });
+  });
+
+  it("single-lens list: one available lens is preserved with available: true", () => {
+    const rx: Prescription = {
+      od: { sph: -200 as Diopter },
+      os: { sph: -200 as Diopter },
+      pd: { single: 630 },
+    };
+    const results = filterLenses(rx, "SINGLE_VISION", [fixtureLensL]);
+    expect(results).toHaveLength(1);
+    expect(results[0].lens.id).toBe("lens-l");
+    expect(results[0].available).toBe(true);
+    expect(results[0].result).toEqual({ available: true });
+    expect(results[0].reason).toBeUndefined();
+  });
+
+  it("single-lens list: one unavailable lens is preserved with available: false and failure reason", () => {
+    const rx: Prescription = {
+      od: { sph: -825 as Diopter },
+      os: { sph: -200 as Diopter },
+      pd: { single: 630 },
+    };
+    const results = filterLenses(rx, "SINGLE_VISION", [fixtureLensL]);
+    expect(results).toHaveLength(1);
+    expect(results[0].lens.id).toBe("lens-l");
+    expect(results[0].available).toBe(false);
+    expect(results[0].reason).toEqual({
+      code: "SPH_BELOW_MIN",
+      field: "sph",
+      eye: "OD",
+      value: -825,
+      limit: -800,
+    });
+    expect(results[0].result.available).toBe(false);
+  });
+
+  it("tie handling: equally eligible lenses preserve input order (no tie-breaking or reordering)", () => {
+    const lens1: Lens = { ...fixtureLensL, id: "lens-1", position: 10 };
+    const lens2: Lens = { ...fixtureLensL, id: "lens-2", position: 20 };
+    const rx: Prescription = {
+      od: { sph: -200 as Diopter },
+      os: { sph: -200 as Diopter },
+      pd: { single: 630 },
+    };
+    const results = filterLenses(rx, "SINGLE_VISION", [lens1, lens2]);
+    expect(results).toHaveLength(2);
+    expect(results[0].lens.id).toBe("lens-1");
+    expect(results[0].available).toBe(true);
+    expect(results[1].lens.id).toBe("lens-2");
+    expect(results[1].available).toBe(true);
   });
 });
 
