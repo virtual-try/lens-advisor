@@ -1,9 +1,12 @@
 import { z } from "zod";
 
 export class ConfigError extends Error {
-  constructor(public readonly variableName: string, reason: string) {
+  readonly variableName: string;
+
+  constructor(variableName: string, reason: string) {
     super(`Configuration error for ${variableName}: ${reason}`);
     this.name = "ConfigError";
+    this.variableName = variableName;
   }
 }
 
@@ -70,92 +73,165 @@ export function resetConfigCache(): void {
   cachedAppProxy = undefined;
 }
 
+function validateWithZod<T>(
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+  data: unknown,
+  fallbackVarName = "CONFIG"
+): T {
+  const result = schema.safeParse(data);
+  if (!result.success) {
+    const issue = result.error.issues[0];
+    const varName = (issue.path[0] as string) || fallbackVarName;
+    throw new ConfigError(varName, issue.message);
+  }
+  return result.data;
+}
+
+const databaseSchema = z.object({
+  DATABASE_URL: z
+    .string({ required_error: "DATABASE_URL is required" })
+    .trim()
+    .min(1, "DATABASE_URL is required")
+    .url("DATABASE_URL must be a valid URL"),
+  DIRECT_URL: z
+    .string()
+    .trim()
+    .min(1)
+    .url("DIRECT_URL must be a valid URL")
+    .optional(),
+  TEST_DATABASE_URL: z
+    .string()
+    .trim()
+    .min(1)
+    .url("TEST_DATABASE_URL must be a valid URL")
+    .optional(),
+});
+
 export function getDatabaseConfig(): DatabaseConfig {
   if (cachedDatabase) return cachedDatabase;
 
-  const rawUrl = process.env.DATABASE_URL;
-  if (!rawUrl || rawUrl.trim() === "") {
-    throw new ConfigError("DATABASE_URL", "Variable is required but missing or empty");
-  }
+  const parsed = validateWithZod(databaseSchema, {
+    DATABASE_URL: process.env.DATABASE_URL,
+    DIRECT_URL: process.env.DIRECT_URL?.trim() || undefined,
+    TEST_DATABASE_URL: process.env.TEST_DATABASE_URL?.trim() || undefined,
+  });
 
-  const directUrl = process.env.DIRECT_URL?.trim() || rawUrl;
-
-  cachedDatabase = {
-    databaseUrl: rawUrl,
-    directUrl,
+  const config: DatabaseConfig = {
+    databaseUrl: parsed.DATABASE_URL,
+    directUrl: parsed.DIRECT_URL || parsed.DATABASE_URL,
   };
-  return cachedDatabase;
+  cachedDatabase = config;
+  return config;
 }
+
+const shopifySchema = z.object({
+  SHOPIFY_API_KEY: z
+    .string({ required_error: "SHOPIFY_API_KEY is required" })
+    .trim()
+    .min(1, "SHOPIFY_API_KEY is required"),
+  SHOPIFY_API_SECRET: z
+    .string({ required_error: "SHOPIFY_API_SECRET is required" })
+    .trim()
+    .min(1, "SHOPIFY_API_SECRET is required"),
+  SHOPIFY_APP_URL: z
+    .string({ required_error: "SHOPIFY_APP_URL is required" })
+    .trim()
+    .min(1, "SHOPIFY_APP_URL is required")
+    .url("SHOPIFY_APP_URL must be a valid URL"),
+  SCOPES: z
+    .string()
+    .trim()
+    .min(1)
+    .default("read_products,write_products,read_orders,write_app_proxy"),
+  SHOP_CUSTOM_DOMAIN: z
+    .string()
+    .trim()
+    .min(1)
+    .optional(),
+});
 
 export function getShopifyConfig(): ShopifyConfig {
   if (cachedShopify) return cachedShopify;
 
-  const apiKey = process.env.SHOPIFY_API_KEY;
-  if (!apiKey || apiKey.trim() === "") {
-    throw new ConfigError("SHOPIFY_API_KEY", "Variable is required but missing or empty");
+  const parsed = validateWithZod(shopifySchema, {
+    SHOPIFY_API_KEY: process.env.SHOPIFY_API_KEY,
+    SHOPIFY_API_SECRET: process.env.SHOPIFY_API_SECRET,
+    SHOPIFY_APP_URL: process.env.SHOPIFY_APP_URL,
+    SCOPES: process.env.SCOPES?.trim() || undefined,
+    SHOP_CUSTOM_DOMAIN: process.env.SHOP_CUSTOM_DOMAIN?.trim() || undefined,
+  });
+
+  const scopes = parsed.SCOPES.split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (scopes.length === 0) {
+    throw new ConfigError("SCOPES", "At least one scope is required");
   }
 
-  const apiSecretKey = process.env.SHOPIFY_API_SECRET;
-  if (!apiSecretKey || apiSecretKey.trim() === "") {
-    throw new ConfigError("SHOPIFY_API_SECRET", "Variable is required but missing or empty");
-  }
-
-  const appUrl = process.env.SHOPIFY_APP_URL || "";
-  const rawScopes = process.env.SCOPES || "read_products,write_products,read_orders,write_app_proxy";
-  const scopes = rawScopes.split(",").map((s) => s.trim()).filter(Boolean);
-  const shopCustomDomain = process.env.SHOP_CUSTOM_DOMAIN?.trim() || undefined;
-
-  cachedShopify = {
-    apiKey,
-    apiSecretKey,
-    appUrl,
+  const config: ShopifyConfig = {
+    apiKey: parsed.SHOPIFY_API_KEY,
+    apiSecretKey: parsed.SHOPIFY_API_SECRET,
+    appUrl: parsed.SHOPIFY_APP_URL,
     scopes,
-    shopCustomDomain,
+    shopCustomDomain: parsed.SHOP_CUSTOM_DOMAIN,
   };
-  return cachedShopify;
+  cachedShopify = config;
+  return config;
 }
+
+const rxEnvSchema = z.object({
+  RX_ENCRYPTION_KEYS: z
+    .string({ required_error: "RX_ENCRYPTION_KEYS is required" })
+    .trim()
+    .min(1, "RX_ENCRYPTION_KEYS is required"),
+  RX_ENCRYPTION_ACTIVE_KEY_ID: z
+    .string({ required_error: "RX_ENCRYPTION_ACTIVE_KEY_ID is required" })
+    .trim()
+    .min(1, "RX_ENCRYPTION_ACTIVE_KEY_ID is required"),
+});
 
 export function getRxConfig(): RxConfig {
   if (cachedRx) return cachedRx;
 
-  const rawKeys = process.env.RX_ENCRYPTION_KEYS;
-  if (!rawKeys || rawKeys.trim() === "") {
-    throw new ConfigError("RX_ENCRYPTION_KEYS", "Variable is required but missing or empty");
-  }
+  const parsedEnv = validateWithZod(rxEnvSchema, {
+    RX_ENCRYPTION_KEYS: process.env.RX_ENCRYPTION_KEYS,
+    RX_ENCRYPTION_ACTIVE_KEY_ID: process.env.RX_ENCRYPTION_ACTIVE_KEY_ID,
+  });
 
-  let parsedKeys: Record<string, string>;
+  let rawJson: unknown;
   try {
-    parsedKeys = JSON.parse(rawKeys);
+    rawJson = JSON.parse(parsedEnv.RX_ENCRYPTION_KEYS);
   } catch {
     throw new ConfigError("RX_ENCRYPTION_KEYS", "Invalid JSON format: malformed key list");
   }
 
-  if (typeof parsedKeys !== "object" || parsedKeys === null || Array.isArray(parsedKeys)) {
-    throw new ConfigError("RX_ENCRYPTION_KEYS", "Must be a key-value object of keyId to base64 key");
+  const rxKeysRecordSchema = z
+    .record(
+      z.string().min(1, "Key id must not be empty"),
+      z.string({ required_error: "Key value must be a string" }).refine(
+        (val) => {
+          try {
+            return Buffer.from(val, "base64").length === 32;
+          } catch {
+            return false;
+          }
+        },
+        (val) => ({
+          message: `Key must decode to exactly 32 bytes (got ${Buffer.from(val, "base64").length})`,
+        })
+      )
+    )
+    .refine((obj) => Object.keys(obj).length > 0, "Key list is empty; at least one key required");
+
+  const keysResult = rxKeysRecordSchema.safeParse(rawJson);
+  if (!keysResult.success) {
+    const firstIssue = keysResult.error.issues[0];
+    throw new ConfigError("RX_ENCRYPTION_KEYS", firstIssue.message);
   }
 
-  const keyEntries = Object.entries(parsedKeys);
-  if (keyEntries.length === 0) {
-    throw new ConfigError("RX_ENCRYPTION_KEYS", "Key list is empty; at least one key required");
-  }
-
-  for (const [keyId, keyVal] of keyEntries) {
-    if (typeof keyVal !== "string") {
-      throw new ConfigError("RX_ENCRYPTION_KEYS", `Key value for '${keyId}' must be a string`);
-    }
-    const buf = Buffer.from(keyVal, "base64");
-    if (buf.length !== 32) {
-      throw new ConfigError(
-        "RX_ENCRYPTION_KEYS",
-        `Key '${keyId}' must decode to exactly 32 bytes (got ${buf.length})`
-      );
-    }
-  }
-
-  const activeKeyId = process.env.RX_ENCRYPTION_ACTIVE_KEY_ID;
-  if (!activeKeyId || activeKeyId.trim() === "") {
-    throw new ConfigError("RX_ENCRYPTION_ACTIVE_KEY_ID", "Variable is required but missing or empty");
-  }
+  const parsedKeys = keysResult.data;
+  const activeKeyId = parsedEnv.RX_ENCRYPTION_ACTIVE_KEY_ID;
 
   if (!(activeKeyId in parsedKeys)) {
     throw new ConfigError(
@@ -164,25 +240,41 @@ export function getRxConfig(): RxConfig {
     );
   }
 
-  cachedRx = {
+  const config: RxConfig = {
     keys: parsedKeys,
     activeKeyId,
   };
-  return cachedRx;
+  cachedRx = config;
+  return config;
 }
+
+const s3Schema = z.object({
+  S3_BUCKET: z
+    .string({ required_error: "S3_BUCKET is required" })
+    .trim()
+    .min(1, "S3_BUCKET is required"),
+  S3_REGION: z
+    .string({ required_error: "S3_REGION is required" })
+    .trim()
+    .min(1, "S3_REGION is required"),
+  S3_KMS_KEY_ID: z
+    .string({ required_error: "S3_KMS_KEY_ID is required" })
+    .trim()
+    .min(1, "S3_KMS_KEY_ID is required"),
+  AWS_ACCESS_KEY_ID: z
+    .string({ required_error: "AWS_ACCESS_KEY_ID is required" })
+    .trim()
+    .min(1, "AWS_ACCESS_KEY_ID is required"),
+  AWS_SECRET_ACCESS_KEY: z
+    .string({ required_error: "AWS_SECRET_ACCESS_KEY is required" })
+    .trim()
+    .min(1, "AWS_SECRET_ACCESS_KEY is required"),
+});
 
 export function getS3Config(): S3Config {
   if (cachedS3) return cachedS3;
 
-  const schema = z.object({
-    S3_BUCKET: z.string().min(1, "S3_BUCKET is required"),
-    S3_REGION: z.string().min(1, "S3_REGION is required"),
-    S3_KMS_KEY_ID: z.string().min(1, "S3_KMS_KEY_ID is required"),
-    AWS_ACCESS_KEY_ID: z.string().min(1, "AWS_ACCESS_KEY_ID is required"),
-    AWS_SECRET_ACCESS_KEY: z.string().min(1, "AWS_SECRET_ACCESS_KEY is required"),
-  });
-
-  const parsed = schema.safeParse({
+  const parsed = validateWithZod(s3Schema, {
     S3_BUCKET: process.env.S3_BUCKET,
     S3_REGION: process.env.S3_REGION,
     S3_KMS_KEY_ID: process.env.S3_KMS_KEY_ID,
@@ -190,56 +282,96 @@ export function getS3Config(): S3Config {
     AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY,
   });
 
-  if (!parsed.success) {
-    const firstIssue = parsed.error.issues[0];
-    const varName = String(firstIssue.path[0] || "S3_CONFIG");
-    throw new ConfigError(varName, firstIssue.message);
-  }
-
-  cachedS3 = {
-    bucket: parsed.data.S3_BUCKET,
-    region: parsed.data.S3_REGION,
-    kmsKeyId: parsed.data.S3_KMS_KEY_ID,
-    accessKeyId: parsed.data.AWS_ACCESS_KEY_ID,
-    secretAccessKey: parsed.data.AWS_SECRET_ACCESS_KEY,
+  const config: S3Config = {
+    bucket: parsed.S3_BUCKET,
+    region: parsed.S3_REGION,
+    kmsKeyId: parsed.S3_KMS_KEY_ID,
+    accessKeyId: parsed.AWS_ACCESS_KEY_ID,
+    secretAccessKey: parsed.AWS_SECRET_ACCESS_KEY,
   };
-  return cachedS3;
+  cachedS3 = config;
+  return config;
 }
+
+const resendSchema = z.object({
+  RESEND_API_KEY: z
+    .string({ required_error: "RESEND_API_KEY is required" })
+    .trim()
+    .min(1, "RESEND_API_KEY is required"),
+  MAIL_FROM: z
+    .string()
+    .trim()
+    .min(1)
+    .default("Lens Advisor <orders@mail.lensadvisor.io>"),
+});
 
 export function getResendConfig(): ResendConfig {
   if (cachedResend) return cachedResend;
 
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey || apiKey.trim() === "") {
-    throw new ConfigError("RESEND_API_KEY", "Variable is required but missing or empty");
-  }
+  const parsed = validateWithZod(resendSchema, {
+    RESEND_API_KEY: process.env.RESEND_API_KEY,
+    MAIL_FROM: process.env.MAIL_FROM?.trim() || undefined,
+  });
 
-  const mailFrom = process.env.MAIL_FROM || "Lens Advisor <orders@mail.lensadvisor.io>";
-
-  cachedResend = {
-    apiKey,
-    mailFrom,
+  const config: ResendConfig = {
+    apiKey: parsed.RESEND_API_KEY,
+    mailFrom: parsed.MAIL_FROM,
   };
-  return cachedResend;
+  cachedResend = config;
+  return config;
 }
+
+const appProxySchema = z.object({
+  APP_PROXY_SUBPATH: z
+    .string()
+    .trim()
+    .min(1)
+    .default("lens-advisor"),
+});
 
 export function getAppProxyConfig(): AppProxyConfig {
   if (cachedAppProxy) return cachedAppProxy;
 
-  const subpath = process.env.APP_PROXY_SUBPATH?.trim() || "lens-advisor";
-  cachedAppProxy = { subpath };
-  return cachedAppProxy;
+  const parsed = validateWithZod(appProxySchema, {
+    APP_PROXY_SUBPATH: process.env.APP_PROXY_SUBPATH?.trim() || undefined,
+  });
+
+  const config: AppProxyConfig = {
+    subpath: parsed.APP_PROXY_SUBPATH,
+  };
+  cachedAppProxy = config;
+  return config;
 }
 
+const baseEnvSchema = z.object({
+  NODE_ENV: z
+    .string()
+    .trim()
+    .min(1)
+    .default("development"),
+  PORT: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .refine((val) => {
+      if (val === undefined) return true;
+      const n = Number(val);
+      return Number.isInteger(n) && n > 0;
+    }, "PORT must be a positive integer")
+    .transform((val) => (val === undefined ? 3000 : Number(val))),
+});
+
 export function getConfig(): AppConfig {
-  const nodeEnv = process.env.NODE_ENV || "development";
-  const isProduction = nodeEnv === "production";
-  const port = Number(process.env.PORT || 3000);
+  const base = validateWithZod(baseEnvSchema, {
+    NODE_ENV: process.env.NODE_ENV?.trim() || undefined,
+    PORT: process.env.PORT?.trim() || undefined,
+  });
 
   return {
-    nodeEnv,
-    isProduction,
-    port,
+    nodeEnv: base.NODE_ENV,
+    isProduction: base.NODE_ENV === "production",
+    port: base.PORT,
     get database() {
       return getDatabaseConfig();
     },

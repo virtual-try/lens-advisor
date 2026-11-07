@@ -52,7 +52,6 @@ export default tsPlugin.config(
           varsIgnorePattern: "^_",
         },
       ],
-      "@typescript-eslint/no-explicit-any": "off",
     },
   }
 );

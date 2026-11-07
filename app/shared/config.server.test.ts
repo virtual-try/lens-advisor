@@ -95,6 +95,110 @@ describe("config.server", () => {
     expect(config.database.databaseUrl).toBe("postgresql://localhost:5432/test");
   });
 
+  it("throws ConfigError for missing SHOPIFY_APP_URL when getConfig().shopify is read", () => {
+    vi.stubEnv("DATABASE_URL", "postgresql://localhost:5432/test");
+    vi.stubEnv("SHOPIFY_API_KEY", "shopify_key");
+    vi.stubEnv("SHOPIFY_API_SECRET", "shopify_secret");
+    // SHOPIFY_APP_URL not set
+
+    const config = getConfig();
+
+    let thrownError: unknown;
+    try {
+      void config.shopify;
+    } catch (err) {
+      thrownError = err;
+    }
+
+    expect(thrownError).toBeInstanceOf(ConfigError);
+    const err = thrownError as ConfigError;
+    expect(err.variableName).toBe("SHOPIFY_APP_URL");
+    expect(err.message).toContain("SHOPIFY_APP_URL");
+  });
+
+  it("throws ConfigError when SHOPIFY_APP_URL is not a valid URL", () => {
+    vi.stubEnv("DATABASE_URL", "postgresql://localhost:5432/test");
+    vi.stubEnv("SHOPIFY_API_KEY", "shopify_key");
+    vi.stubEnv("SHOPIFY_API_SECRET", "shopify_secret");
+    vi.stubEnv("SHOPIFY_APP_URL", "not-a-valid-url");
+
+    const config = getConfig();
+
+    let thrownError: unknown;
+    try {
+      void config.shopify;
+    } catch (err) {
+      thrownError = err;
+    }
+
+    expect(thrownError).toBeInstanceOf(ConfigError);
+    const err = thrownError as ConfigError;
+    expect(err.variableName).toBe("SHOPIFY_APP_URL");
+    expect(err.message).toContain("SHOPIFY_APP_URL");
+  });
+
+  it("throws ConfigError when SHOPIFY_APP_URL is an empty string", () => {
+    vi.stubEnv("DATABASE_URL", "postgresql://localhost:5432/test");
+    vi.stubEnv("SHOPIFY_API_KEY", "shopify_key");
+    vi.stubEnv("SHOPIFY_API_SECRET", "shopify_secret");
+    vi.stubEnv("SHOPIFY_APP_URL", "");
+
+    const config = getConfig();
+
+    let thrownError: unknown;
+    try {
+      void config.shopify;
+    } catch (err) {
+      thrownError = err;
+    }
+
+    expect(thrownError).toBeInstanceOf(ConfigError);
+    const err = thrownError as ConfigError;
+    expect(err.variableName).toBe("SHOPIFY_APP_URL");
+    expect(err.message).toContain("SHOPIFY_APP_URL");
+  });
+
+  it("throws ConfigError when DATABASE_URL is missing or invalid URL", () => {
+    vi.stubEnv("DATABASE_URL", "not-a-database-url");
+
+    const config = getConfig();
+
+    expect(() => config.database).toThrow(ConfigError);
+    try {
+      void config.database;
+    } catch (err) {
+      const configErr = err as ConfigError;
+      expect(configErr.variableName).toBe("DATABASE_URL");
+    }
+  });
+
+  it("throws ConfigError when DIRECT_URL is invalid URL", () => {
+    vi.stubEnv("DATABASE_URL", "postgresql://localhost:5432/test");
+    vi.stubEnv("DIRECT_URL", "invalid-direct-url");
+
+    const config = getConfig();
+
+    expect(() => config.database).toThrow(ConfigError);
+    try {
+      void config.database;
+    } catch (err) {
+      const configErr = err as ConfigError;
+      expect(configErr.variableName).toBe("DIRECT_URL");
+    }
+  });
+
+  it("throws ConfigError when PORT is not a valid number", () => {
+    vi.stubEnv("PORT", "not-a-number");
+
+    expect(() => getConfig()).toThrow(ConfigError);
+    try {
+      getConfig();
+    } catch (err) {
+      const configErr = err as ConfigError;
+      expect(configErr.variableName).toBe("PORT");
+    }
+  });
+
   it("returns full valid config when all variables are provided", () => {
     const valid32ByteKey = Buffer.alloc(32, 7).toString("base64");
     vi.stubEnv("DATABASE_URL", "postgresql://localhost:5432/test");

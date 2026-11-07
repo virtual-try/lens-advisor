@@ -92,4 +92,4 @@ route until specs 21–25 — in dev Shopify gets 404s, which is acceptable befo
   - `render.yaml` blueprint created with web and worker services.
   - `specs/inventory/01-scaffold.md` recorded for config getters, `AppError`, `getPrisma`, nav contract, and worker contract.
   - All automated gates green: typecheck 0 errors, lint 0 errors 0 warnings, vitest 17/17 tests passing across 2 projects, build passing.
-- **2026-11-07** — Evidence (orchestro spec verify, tree da2cf689): install pass · typecheck pass · lint pass · build pass · test pass 17/0/0
+- **2026-11-07** — Evidence (orchestro spec verify, tree b2667dfe): install pass · typecheck pass · lint pass · build pass · test pass 23/0/0
