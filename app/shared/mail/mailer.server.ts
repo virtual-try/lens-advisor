@@ -120,6 +120,17 @@ export function extractRecipientDomains(to: string | string[]): string {
   return domains.length > 0 ? domains.join(",") : "unknown";
 }
 
+function getSafeIdentifier(name?: string, code?: string): string {
+  const candidate =
+    name && name !== "Error" && name !== "TypeError" && name !== "RangeError" && name !== "Object"
+      ? name
+      : code;
+  if (candidate && /^[a-zA-Z0-9_-]+$/.test(candidate) && candidate.length <= 64) {
+    return candidate;
+  }
+  return "";
+}
+
 export function mapToMailError(error: unknown): Error {
   if (
     error instanceof MailRejectedError ||
@@ -153,6 +164,40 @@ export function mapToMailError(error: unknown): Error {
       ? parsedStatus
       : undefined;
 
+  const id = getSafeIdentifier(name, code);
+
+  // 1. Status is authoritative when present:
+  //    429 and 5xx -> transient; every other 4xx (408 included) -> MailRejectedError
+  if (statusCode !== undefined) {
+    if (statusCode === 429) {
+      return new MailTransientError(
+        `Mail provider rate limit exceeded (429${id ? `: ${id}` : ""})`,
+        { status: 429 }
+      );
+    }
+
+    if (statusCode >= 500 && statusCode < 600) {
+      return new MailTransientError(
+        `Mail provider server error (${statusCode}${id ? `: ${id}` : ""})`,
+        { status: statusCode }
+      );
+    }
+
+    if (statusCode >= 400 && statusCode < 500) {
+      return new MailRejectedError(
+        `Mail provider rejected the message (${statusCode}${id ? `: ${id}` : ""})`,
+        { status: statusCode }
+      );
+    }
+
+    return new MailTransientError(
+      `Mail provider error (${statusCode}${id ? `: ${id}` : ""})`,
+      { status: statusCode }
+    );
+  }
+
+  // 2. Text matching applies only when there is no HTTP status (thrown fetch/socket errors, ECONNRESET)
+  const lowerMsg = message.toLowerCase();
   const isNetwork =
     code === "ECONNRESET" ||
     code === "ETIMEDOUT" ||
@@ -161,59 +206,29 @@ export function mapToMailError(error: unknown): Error {
     code === "EHOSTUNREACH" ||
     code === "ENETUNREACH" ||
     code === "UND_ERR_CONNECT_TIMEOUT" ||
-    message.includes("ECONNRESET") ||
-    message.includes("fetch failed") ||
-    message.includes("network") ||
-    message.includes("socket") ||
-    message.includes("timeout") ||
     name === "TimeoutError" ||
-    name === "AbortError";
+    name === "AbortError" ||
+    lowerMsg.includes("econnreset") ||
+    lowerMsg.includes("etimedout") ||
+    lowerMsg.includes("econnrefused") ||
+    lowerMsg.includes("enotfound") ||
+    lowerMsg.includes("fetch failed") ||
+    lowerMsg.includes("network") ||
+    lowerMsg.includes("socket") ||
+    lowerMsg.includes("timeout");
 
   if (isNetwork) {
-    return new MailTransientError(`Network error sending mail: ${message}`, {
-      cause: error,
-      status: statusCode ?? 503,
-    });
-  }
-
-  // 429 Rate limit is always transient, never rejected
-  if (statusCode === 429 || name === "rate_limit_exceeded") {
-    return new MailTransientError(`Rate limit exceeded sending mail: ${message}`, {
-      cause: error,
-      status: 429,
-    });
-  }
-
-  // 5xx Server errors are transient
-  if (statusCode !== undefined && statusCode >= 500 && statusCode < 600) {
     return new MailTransientError(
-      `Server error sending mail (${statusCode}): ${message}`,
-      {
-        cause: error,
-        status: statusCode,
-      }
+      `Mail provider network error${id ? ` (${id})` : ""}`,
+      { status: 503 }
     );
   }
 
-  // 408 Request Timeout is transient
-  if (statusCode === 408) {
+  // 3. Provider error name heuristics when no HTTP status exists
+  if (name === "rate_limit_exceeded") {
     return new MailTransientError(
-      `Request timeout sending mail (408): ${message}`,
-      {
-        cause: error,
-        status: 408,
-      }
-    );
-  }
-
-  // Other 4xx errors are permanent rejections
-  if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
-    return new MailRejectedError(
-      `Mail delivery rejected (${statusCode}): ${message}`,
-      {
-        cause: error,
-        status: statusCode,
-      }
+      "Mail provider rate limit exceeded (429: rate_limit_exceeded)",
+      { status: 429 }
     );
   }
 
@@ -222,23 +237,24 @@ export function mapToMailError(error: unknown): Error {
     name === "invalid_parameter" ||
     name === "missing_required_field"
   ) {
-    return new MailRejectedError(`Mail delivery rejected (${name}): ${message}`, {
-      cause: error,
-      status: 422,
-    });
+    return new MailRejectedError(
+      `Mail provider rejected the message (422: ${name})`,
+      { status: 422 }
+    );
   }
 
   if (name === "internal_server_error" || name === "application_error") {
-    return new MailTransientError(`Transient mail error (${name}): ${message}`, {
-      cause: error,
-      status: 500,
-    });
+    return new MailTransientError(
+      `Mail provider server error (500: ${name})`,
+      { status: 500 }
+    );
   }
 
-  return new MailTransientError(`Unexpected mail error: ${message}`, {
-    cause: error,
-    status: 500,
-  });
+  // 4. Unexpected error fallback
+  return new MailTransientError(
+    `Mail provider unexpected error${id ? ` (${id})` : ""}`,
+    { status: 500 }
+  );
 }
 
 export interface Mailer {

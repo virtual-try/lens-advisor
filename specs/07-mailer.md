@@ -78,9 +78,9 @@ Real, used now: config. In tests: fake Resend client. Stubbed: none. Consumers: 
   - Injected Resend client with `emails.send` support and passed `idempotencyKey` through `requestOptions` to Resend's idempotency header (`Idempotency-Key`).
   - Error classes `MailRejectedError`, `MailTransientError`, and `MailTooLargeError` extending `AppError` from `app/shared/http/errors.server.ts`.
   - Comprehensive error mapping via `mapToMailError`:
-    - 4xx errors (except 429) → `MailRejectedError` (permanent, not retried).
+    - 4xx errors (except 429, including 408) → `MailRejectedError` (permanent, not retried).
     - 429 (rate limited) → `MailTransientError` (retryable).
-    - 5xx (server errors) and 408 (timeout) → `MailTransientError` (retryable).
+    - 5xx (server errors) → `MailTransientError` (retryable).
     - Network errors (`ECONNRESET`, `ETIMEDOUT`, `ECONNREFUSED`, `fetch failed`) → `MailTransientError` (retryable).
   - Pre-flight total attachment size verification against 10 MB limit (`MAX_ATTACHMENTS_TOTAL_BYTES` = 10,485,760 bytes); throws `MailTooLargeError` before invoking provider.
   - Logging on send (INV-2): logs only `providerId`, recipient domain (parsed via `extractRecipientDomains`), and `subjectLength`; never logs body text, attachment content, or filenames.
@@ -104,4 +104,8 @@ Real, used now: config. In tests: fake Resend client. Stubbed: none. Consumers: 
   - `pnpm typecheck` → 0 errors
   - `pnpm lint` → 0 errors, 0 warnings
   - `pnpm build` → client and SSR server build passed
-- **2026-11-07** — Evidence (orchestro spec verify, tree 8bf8be94): install pass · typecheck pass · lint pass · build pass · test pass 313/0/0
+- **2026-11-08** — Review round R1 fixes applied by coder agy-1:
+  - R1-F1: Sanitized error reporting to prevent data leaks under INV-2. `AppError.message` is now a fixed, data-free string with status code and safe identifier only; `cause` is no longer set with the raw provider error. Added tests ensuring clinical Rx text and recipient email never appear in error message, cause, serialized error response, or logs.
+  - R1-F2: Made HTTP status authoritative: 429 and 5xx are transient; every other 4xx (including 408) is classified as `MailRejectedError`. Text matching for network/timeout heuristics is only applied when no HTTP status code exists. Added tests for 408, 400 with "timeout" message, and 422 with "network" message.
+  - Gates: `pnpm vitest run app/shared/mail/mailer.server.test.ts` (38/38 passed), `pnpm test` (18 files, 317/317 passed), `pnpm typecheck` (0 errors), `pnpm lint` (0 errors), `pnpm build` (passed).
+- **2026-11-07** — Evidence (orchestro spec verify, tree 6b637d17): install pass · typecheck pass · lint pass · build pass · test pass 317/0/0

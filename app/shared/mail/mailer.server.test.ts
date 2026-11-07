@@ -16,6 +16,7 @@ import {
 } from "./mailer.server";
 import { getMailer, resetMailer } from "../container/mailer.server";
 import { resetConfigCache, ConfigError } from "../config.server";
+import { errorResponse } from "../http/errors.server";
 
 interface MockClientHarness {
   fakeClient: ResendClientLike;
@@ -225,7 +226,7 @@ describe("Spec 07 — Mailer adapter (Resend)", () => {
         });
       } catch (err) {
         expect(err).toBeInstanceOf(MailTransientError);
-        expect((err as MailTransientError).cause).toBe(networkError);
+        expect((err as MailTransientError).cause).toBeUndefined();
       }
     });
 
@@ -484,16 +485,69 @@ describe("Spec 07 — Mailer adapter (Resend)", () => {
       ).rejects.toThrow(MailTransientError);
     });
 
-    it("maps 408 Request Timeout to MailTransientError", async () => {
+    it("maps 408 Request Timeout to MailRejectedError (4xx rule is authoritative over timeout)", async () => {
       const { fakeClient } = createMockClient(async () => ({
         data: null,
-        error: { statusCode: 408, message: "Request Timeout", name: "internal_server_error" },
+        error: { statusCode: 408, message: "Request Timeout", name: "invalid_parameter" },
         headers: null,
       }));
       const mailer = createTestMailer({ client: fakeClient });
       await expect(
         mailer.send({ to: "lab@lenslab.com", subject: "Test", text: "Hi" })
-      ).rejects.toThrow(MailTransientError);
+      ).rejects.toThrow(MailRejectedError);
+
+      try {
+        await mailer.send({ to: "lab@lenslab.com", subject: "Test", text: "Hi" });
+      } catch (err) {
+        expect(err).toBeInstanceOf(MailRejectedError);
+        expect((err as MailRejectedError).statusCode).toBe(408);
+      }
+    });
+
+    it("maps 400 Bad Request with message mentioning 'timeout' to MailRejectedError (status is authoritative over message)", async () => {
+      const { fakeClient } = createMockClient(async () => ({
+        data: null,
+        error: {
+          statusCode: 400,
+          message: "Request parameter 'timeout' is invalid",
+          name: "invalid_parameter",
+        },
+        headers: null,
+      }));
+      const mailer = createTestMailer({ client: fakeClient });
+      await expect(
+        mailer.send({ to: "lab@lenslab.com", subject: "Test", text: "Hi" })
+      ).rejects.toThrow(MailRejectedError);
+
+      try {
+        await mailer.send({ to: "lab@lenslab.com", subject: "Test", text: "Hi" });
+      } catch (err) {
+        expect(err).toBeInstanceOf(MailRejectedError);
+        expect((err as MailRejectedError).statusCode).toBe(400);
+      }
+    });
+
+    it("maps 422 Unprocessable Entity with message mentioning 'network' to MailRejectedError (status is authoritative over message)", async () => {
+      const { fakeClient } = createMockClient(async () => ({
+        data: null,
+        error: {
+          statusCode: 422,
+          message: "Network address is unreachable",
+          name: "validation_error",
+        },
+        headers: null,
+      }));
+      const mailer = createTestMailer({ client: fakeClient });
+      await expect(
+        mailer.send({ to: "lab@lenslab.com", subject: "Test", text: "Hi" })
+      ).rejects.toThrow(MailRejectedError);
+
+      try {
+        await mailer.send({ to: "lab@lenslab.com", subject: "Test", text: "Hi" });
+      } catch (err) {
+        expect(err).toBeInstanceOf(MailRejectedError);
+        expect((err as MailRejectedError).statusCode).toBe(422);
+      }
     });
 
     it("maps ETIMEDOUT network error to MailTransientError", async () => {
@@ -704,6 +758,104 @@ describe("Spec 07 — Mailer adapter (Resend)", () => {
       } finally {
         consoleSpy.mockRestore();
       }
+    });
+
+    it("ensures an Rx-bearing and email-bearing provider error never appears in error message, cause, or logs (INV-2)", async () => {
+      const sensitiveEmail = "patient.secret@privateclinic.org";
+      const sensitiveRx = "SPH -4.25 CYL +1.75 AXIS 090 ADD +2.50";
+      const rawErrorMessage = `Invalid recipient ${sensitiveEmail}: rejected clinical prescription payload with ${sensitiveRx}`;
+
+      const capturedLogs: string[] = [];
+      const mockLogger = {
+        info: vi.fn((msg: string) => capturedLogs.push(msg)),
+        error: vi.fn((msg: string) => capturedLogs.push(msg)),
+      };
+
+      const { fakeClient } = createMockClient(async () => ({
+        data: null,
+        error: {
+          statusCode: 422,
+          name: "validation_error",
+          message: rawErrorMessage,
+        },
+        headers: null,
+      }));
+
+      const mailer = createResendMailer({
+        client: fakeClient,
+        logger: mockLogger,
+      });
+
+      let caughtError: unknown;
+      try {
+        await mailer.send({
+          to: sensitiveEmail,
+          subject: "Your prescription",
+          text: sensitiveRx,
+        });
+      } catch (err) {
+        caughtError = err;
+      }
+
+      expect(caughtError).toBeInstanceOf(MailRejectedError);
+      const err = caughtError as MailRejectedError;
+
+      // 1. AppError.message must be a fixed, data-free string (status code and name/code only)
+      expect(err.message).not.toContain(sensitiveEmail);
+      expect(err.message).not.toContain(sensitiveRx);
+      expect(err.message).not.toContain(rawErrorMessage);
+      expect(err.message).toBe("Mail provider rejected the message (422: validation_error)");
+
+      // 2. cause must not contain the raw error or sensitive text
+      expect(err.cause).toBeUndefined();
+
+      // 3. Serialized error / errorResponse does not contain sensitive data
+      const jsonResponse = errorResponse(err);
+      const body = await jsonResponse.json();
+      expect(JSON.stringify(body)).not.toContain(sensitiveEmail);
+      expect(JSON.stringify(body)).not.toContain(sensitiveRx);
+
+      // 4. Logs do not contain sensitive data
+      const allLogs = capturedLogs.join("\n");
+      expect(allLogs).not.toContain(sensitiveEmail);
+      expect(allLogs).not.toContain(sensitiveRx);
+    });
+
+    it("ensures thrown network errors containing sensitive Rx/email never appear in message or cause (INV-2)", async () => {
+      const sensitiveEmail = "patient.secret@privateclinic.org";
+      const sensitiveRx = "SPH -4.25 CYL +1.75 AXIS 090";
+      const thrownError = Object.assign(
+        new Error(
+          `Network timeout connecting to provider for ${sensitiveEmail} with data ${sensitiveRx}`
+        ),
+        { code: "ETIMEDOUT" }
+      );
+
+      const { fakeClient } = createMockClient(async () => {
+        throw thrownError;
+      });
+
+      const mailer = createResendMailer({
+        client: fakeClient,
+      });
+
+      let caughtError: unknown;
+      try {
+        await mailer.send({
+          to: sensitiveEmail,
+          subject: "Prescription",
+          text: sensitiveRx,
+        });
+      } catch (err) {
+        caughtError = err;
+      }
+
+      expect(caughtError).toBeInstanceOf(MailTransientError);
+      const transientErr = caughtError as MailTransientError;
+      expect(transientErr.message).not.toContain(sensitiveEmail);
+      expect(transientErr.message).not.toContain(sensitiveRx);
+      expect(transientErr.message).toBe("Mail provider network error (ETIMEDOUT)");
+      expect(transientErr.cause).toBeUndefined();
     });
   });
 
