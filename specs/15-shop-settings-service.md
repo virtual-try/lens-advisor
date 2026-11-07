@@ -1,6 +1,6 @@
 # Spec 15 — Shop settings repository and service
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 02, Spec 03
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —
@@ -81,4 +81,4 @@ Real, used now: Prisma (02). Stubbed: none. Consumers: 20, 21, 30, 31.
   - `pnpm typecheck` exit 0
   - `pnpm lint` (`eslint . --max-warnings 0`) exit 0
   - `pnpm build` exit 0
-- **2026-11-07** — Evidence (orchestro spec verify, tree bb05ba4f): install pass · typecheck pass · lint pass · build pass · test pass 289/0/0
+- **2026-11-07** — Evidence (orchestro spec verify, tree 9a2d0a6b): install pass · typecheck pass · lint pass · build pass · test pass 340/0/0
