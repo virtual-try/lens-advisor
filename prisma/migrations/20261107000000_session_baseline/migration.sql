@@ -1,3 +1,6 @@
+-- PostgreSQL commits each statement on its own unless this script opens a transaction.
+BEGIN;
+
 -- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "public";
 
@@ -23,3 +26,5 @@ CREATE TABLE "Session" (
 
     CONSTRAINT "Session_pkey" PRIMARY KEY ("id")
 );
+
+COMMIT;

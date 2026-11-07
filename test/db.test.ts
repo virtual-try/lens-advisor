@@ -1,4 +1,7 @@
 import { Prisma, PrismaClient } from "@prisma/client";
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   createTestDb,
@@ -10,6 +13,11 @@ import {
   SESSION_BASELINE_MIGRATION,
   type TestDb,
 } from "./db";
+
+const repoRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
 
 type DmmfModel = (typeof Prisma.dmmf.datamodel.models)[number];
 
@@ -67,6 +75,59 @@ function hasShopLeadingIndex(model: DmmfModel): boolean {
 
 function delegateName(modelName: string): string {
   return modelName.slice(0, 1).toLowerCase() + modelName.slice(1);
+}
+
+/** Line comments removed. These migrations have no semicolons inside literals. */
+function sqlStatements(source: string): string[] {
+  const stripped = source
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("--"))
+    .join("\n");
+  return stripped
+    .split(";")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
+function migrationSqlFiles(): string[] {
+  const root = path.join(repoRoot, "prisma", "migrations");
+  return readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(root, entry.name, "migration.sql"))
+    .sort();
+}
+
+/** A failure before COMMIT must not commit the earlier statements. */
+function sabotage(statements: string[]): string[] {
+  const next = [...statements];
+  const commitAt = next.lastIndexOf("COMMIT");
+  const insertAt = commitAt === -1 ? next.length : commitAt;
+  next.splice(insertAt, 0, "SELECT 1/0");
+  return next;
+}
+
+/**
+ * Honors a leading BEGIN and a trailing COMMIT. Without that pair, each
+ * statement autocommits, which is the partial-migration failure mode.
+ */
+async function applyMigrationStatements(
+  prisma: PrismaClient,
+  statements: string[],
+): Promise<void> {
+  const transactional =
+    statements[0] === "BEGIN" && statements[statements.length - 1] === "COMMIT";
+  const body = transactional ? statements.slice(1, -1) : statements;
+  if (!transactional) {
+    for (const statement of body) {
+      await prisma.$executeRawUnsafe(statement);
+    }
+    return;
+  }
+  await prisma.$transaction(async (tx) => {
+    for (const statement of body) {
+      await tx.$executeRawUnsafe(statement);
+    }
+  });
 }
 
 function counter(prisma: PrismaClient, modelName: string): ShopCounter {
@@ -278,6 +339,56 @@ describe("createTestDb", () => {
         SESSION_BASELINE_MIGRATION,
         "20261107120000_init",
       ]);
+    } finally {
+      await client.$disconnect();
+      await holding.drop();
+    }
+  });
+});
+
+describe("migration transactions", () => {
+  it("wraps every migration in one BEGIN/COMMIT transaction", () => {
+    const files = migrationSqlFiles();
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const label = path.relative(repoRoot, file);
+      const statements = sqlStatements(readFileSync(file, "utf8"));
+      expect(statements[0], label).toBe("BEGIN");
+      expect(statements[statements.length - 1], label).toBe("COMMIT");
+      const control = statements.filter(
+        (statement) =>
+          statement === "BEGIN" ||
+          statement === "COMMIT" ||
+          statement === "ROLLBACK",
+      );
+      expect(control, label).toEqual(["BEGIN", "COMMIT"]);
+    }
+  });
+
+  it("rolls the baseline back when a statement fails before COMMIT", async () => {
+    const file = path.join(
+      repoRoot,
+      "prisma",
+      "migrations",
+      SESSION_BASELINE_MIGRATION,
+      "migration.sql",
+    );
+    const holding = await createTestSchema();
+    const client = new PrismaClient({
+      datasources: { db: { url: holding.url } },
+    });
+    try {
+      await expect(
+        applyMigrationStatements(
+          client,
+          sabotage(sqlStatements(readFileSync(file, "utf8"))),
+        ),
+      ).rejects.toThrow();
+
+      const session = await client.$queryRaw<Array<{ rel: string | null }>>`
+        SELECT to_regclass('"Session"')::text AS rel
+      `;
+      expect(session[0]?.rel).toBeNull();
     } finally {
       await client.$disconnect();
       await holding.drop();
