@@ -220,15 +220,19 @@ export function validateShopScopedPrefix(prefix: string): void {
   assertValidId("shopId", shopId);
 
   const remainder = match[2];
-  if (remainder.length > 0) {
-    const subSegments = remainder.slice(0, -1).split("/");
-    for (const segment of subSegments) {
-      if (segment.length === 0) {
-        throw new InvalidKeyError(`Prefix '${prefix}' contains empty segments`);
-      }
-      assertValidId("prefix segment", segment);
-    }
+  if (remainder === "" || remainder === "tickets/" || remainder === "rx/") {
+    return;
   }
+
+  const rxMatch = remainder.match(/^rx\/([^/]+)\/$/);
+  if (rxMatch) {
+    assertValidId("prescriptionId", rxMatch[1]);
+    return;
+  }
+
+  throw new InvalidKeyError(
+    `Prefix '${prefix}' is not an allowed canonical prefix shape. Allowed prefix shapes: 'shops/<id>/', 'shops/<id>/rx/', 'shops/<id>/rx/<prescriptionId>/', or 'shops/<id>/tickets/'.`
+  );
 }
 
 export function validateKey(key: string): void {

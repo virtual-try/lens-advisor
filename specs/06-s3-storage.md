@@ -103,4 +103,4 @@ Stubbed: none. Consumers: 22, 25, 30.
     - `pnpm lint`: 0 errors, 0 warnings.
     - `pnpm build`: passed.
 - **2026-11-07** — Presigned upload to real bucket box left unticked: requires a live AWS account, S3 bucket, and KMS key provided by the owner. Offline unit and integration tests with fake S3 client and signature generation pass 100%.
-- **2026-11-07** — Evidence (orchestro spec verify, tree 26b78158): install pass · typecheck pass · lint pass · build pass · test pass 49/0/0
+- **2026-11-07** — Evidence (orchestro spec verify, tree a5d37619): install pass · typecheck pass · lint pass · build pass · test pass 50/0/0

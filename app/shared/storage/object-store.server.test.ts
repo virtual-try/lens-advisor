@@ -201,31 +201,53 @@ describe("Spec 06 — S3 Storage Adapter", () => {
     });
 
     it("deletePrefix with 1,500 objects -> 2 list pages, 2 delete batches, returns 1500 (pagination)", async () => {
+      const targetPrefix = "shops/shop123/rx/rx1/";
       let listCallCount = 0;
       const deleteCommands: DeleteObjectsCommand[] = [];
 
-      const { store } = createTestHarness({
+      const page1Objects = Array.from({ length: 1000 }, (_, i) => ({
+        Key: `${targetPrefix}file-${i}.png`,
+      }));
+      const page2Objects = Array.from({ length: 500 }, (_, i) => ({
+        Key: `${targetPrefix}file-${1000 + i}.png`,
+      }));
+
+      const { store, recorded } = createTestHarness({
         onSend: (command) => {
           if (command instanceof ListObjectsV2Command) {
             listCallCount++;
+
+            // INV-10 proof: Assert both command inputs on every call
+            expect(command.input.Prefix).toBe(targetPrefix);
             if (listCallCount === 1) {
-              const contents = Array.from({ length: 1000 }, (_, i) => ({
-                Key: `shops/shop123/rx/rx1/file-${i}.png`,
-              }));
+              expect(command.input.ContinuationToken).toBeUndefined();
+            } else if (listCallCount === 2) {
+              expect(command.input.ContinuationToken).toBe("token-page-2");
+            } else {
+              expect.unreachable(`Unexpected list call #${listCallCount}`);
+            }
+
+            // Responses are driven strictly by Prefix and ContinuationToken inputs:
+            if (command.input.Prefix !== targetPrefix) {
+              return { Contents: [], IsTruncated: false };
+            }
+
+            if (command.input.ContinuationToken === undefined) {
               return {
-                Contents: contents,
+                Contents: page1Objects,
                 IsTruncated: true,
                 NextContinuationToken: "token-page-2",
               };
-            } else if (listCallCount === 2) {
-              const contents = Array.from({ length: 500 }, (_, i) => ({
-                Key: `shops/shop123/rx/rx1/file-${1000 + i}.png`,
-              }));
+            }
+
+            if (command.input.ContinuationToken === "token-page-2") {
               return {
-                Contents: contents,
+                Contents: page2Objects,
                 IsTruncated: false,
               };
             }
+
+            return { Contents: [], IsTruncated: false };
           }
           if (command instanceof DeleteObjectsCommand) {
             deleteCommands.push(command);
@@ -237,11 +259,20 @@ describe("Spec 06 — S3 Storage Adapter", () => {
         },
       });
 
-      const prefix = "shops/shop123/rx/rx1/";
-      const totalDeleted = await store.deletePrefix(prefix);
+      const totalDeleted = await store.deletePrefix(targetPrefix);
 
       expect(totalDeleted).toBe(1500);
       expect(listCallCount).toBe(2);
+
+      const listCommands = recorded
+        .map((r) => r.command)
+        .filter((c): c is ListObjectsV2Command => c instanceof ListObjectsV2Command);
+      expect(listCommands.length).toBe(2);
+      expect(listCommands[0].input.Prefix).toBe(targetPrefix);
+      expect(listCommands[0].input.ContinuationToken).toBeUndefined();
+      expect(listCommands[1].input.Prefix).toBe(targetPrefix);
+      expect(listCommands[1].input.ContinuationToken).toBe("token-page-2");
+
       expect(deleteCommands.length).toBe(2);
       expect(deleteCommands[0].input.Delete?.Objects?.length).toBe(1000);
       expect(deleteCommands[1].input.Delete?.Objects?.length).toBe(500);
@@ -315,6 +346,10 @@ describe("Spec 06 — S3 Storage Adapter", () => {
         "../shops/shop1/",
         "shops/shop1\\evil",
         "shops/shop1/evil\0/",
+        "shops/shop1/unmanaged/",
+        "shops/shop1/rx/rx1/extra/",
+        "shops/shop1/tickets/extra/",
+        "shops/shop1/arbitrary/",
       ];
 
       for (const prefix of hostilePrefixes) {
@@ -329,6 +364,26 @@ describe("Spec 06 — S3 Storage Adapter", () => {
       await expect(store.deletePrefix("shops/shop1/rx/")).resolves.toBe(0);
       await expect(store.deletePrefix("shops/shop1/rx/rx123/")).resolves.toBe(0);
       await expect(store.deletePrefix("shops/shop1/tickets/")).resolves.toBe(0);
+    });
+
+    it("R2-F1: deletePrefix restricts validation to exact key-builder prefix shapes and rejects arbitrary sub-prefixes", async () => {
+      const { store } = createTestHarness();
+
+      // Allowed key-builder prefixes:
+      // 1. buildShopPrefix: shops/<shopId>/
+      await expect(store.deletePrefix("shops/shop1/")).resolves.toBe(0);
+      // 2. buildRxPrefix (shop only): shops/<shopId>/rx/
+      await expect(store.deletePrefix("shops/shop1/rx/")).resolves.toBe(0);
+      // 3. buildRxPrefix (shop + rx): shops/<shopId>/rx/<prescriptionId>/
+      await expect(store.deletePrefix("shops/shop1/rx/rx123/")).resolves.toBe(0);
+      // 4. buildTicketPrefix: shops/<shopId>/tickets/
+      await expect(store.deletePrefix("shops/shop1/tickets/")).resolves.toBe(0);
+
+      // Arbitrary/non-builder sub-prefixes are rejected:
+      await expect(store.deletePrefix("shops/shop1/unmanaged/")).rejects.toThrow(InvalidKeyError);
+      await expect(store.deletePrefix("shops/shop1/rx/rx1/extra/")).rejects.toThrow(InvalidKeyError);
+      await expect(store.deletePrefix("shops/shop1/tickets/lab1/")).rejects.toThrow(InvalidKeyError);
+      await expect(store.deletePrefix("shops/shop1/arbitrary/")).rejects.toThrow(InvalidKeyError);
     });
   });
 
