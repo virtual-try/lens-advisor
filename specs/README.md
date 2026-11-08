@@ -16,7 +16,7 @@ prefer; `00` is the decision everything else depends on.
   configurator (v1 gpt-taste → v2 animate → v3 impeccable), in the VirtualTry brand system. The admin
   uses Polaris web components and has no custom design.
 - **Research and raw planning:** [`../docs/`](../docs/).
-- **Size:** 35 specs (00–34), about 58% of ai-gallery's 60.
+- **Size:** 36 specs (00–35), about 58% of ai-gallery's 60.
 
 Track progress in [PROGRESS.md](./PROGRESS.md).
 

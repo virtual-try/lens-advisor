@@ -241,6 +241,7 @@ test.describe("Spec 33 Flows 11 & 12: Orders intake and lab dispatch (compliance
     const pendingOrder = await db.prisma.labOrder.findUnique({
       where: { id: failedOrder.id },
     });
+    expect(pendingOrder).not.toBeNull();
     expect(pendingOrder?.status).toBe("PENDING");
 
     // Execute dispatch handler
@@ -256,6 +257,7 @@ test.describe("Spec 33 Flows 11 & 12: Orders intake and lab dispatch (compliance
     const sentOrder = await db.prisma.labOrder.findUnique({
       where: { id: failedOrder.id },
     });
+    expect(sentOrder).not.toBeNull();
     expect(sentOrder?.status).toBe("SENT");
     expect(sentOrder?.sentAt).not.toBeNull();
     expect(new Date(sentOrder!.sentAt!).getTime()).toBeGreaterThanOrEqual(

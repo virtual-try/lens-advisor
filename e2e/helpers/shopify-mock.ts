@@ -276,12 +276,9 @@ export function setupShopifyMock(): void {
         }
       }
 
-      // Fallback GraphQL response
-      return new Response(
-        JSON.stringify({
-          data: {},
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
+      // Fallback: throw on unmatched queries per R1-F8 so unexpected Shopify calls fail fast
+      throw new Error(
+        `Unmatched Shopify GraphQL query in test mock:\n${query}\nVariables: ${JSON.stringify(variables)}`
       );
     }
 

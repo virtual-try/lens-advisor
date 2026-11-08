@@ -102,4 +102,15 @@ store — so the integrated paths are proven once, after every implementation sp
   - `pnpm build`: `build/client ... build/server/index.js 523.30 kB ... Done in 745ms` (0 errors)
   - `pnpm test`: `Test Files 72 passed (72), Tests 1307 passed (1307), Duration 14.28s`
 - **Inventory Fragment**: `specs/inventory/33-e2e-suite.md` recorded for `e2e-shared-db`, `e2e-shopify-auth-fixtures`, `e2e-shopify-mock`, `e2e-storage-mail-mock`, and `e2e-seed-helpers`.
-- **2026-11-08** — Evidence (orchestro spec verify, tree e0cbeb76): install pass · typecheck pass · lint pass · build pass · test pass 1307/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 822bad46): install pass · typecheck pass · lint pass · build pass · test pass 1307/0/0
+- **2026-11-08** — Review round R1 fixes applied by coder agy-3:
+  - R1-F1: Added Spec 35 row to `specs/PROGRESS.md`, updated spec count to 36 (00–35), and recorded log entry.
+  - R1-F2: Formatted `specs/35-fix-web-feature-jobs-glob.md` with full template (Explicit non-scope, Steps, Log), typed glob check (`typeof (import.meta as { glob?: unknown }).glob === "function"`), and explicit non-Vite fallback definition list.
+  - R1-F3: Widened spec 35 Scope to include queue test seam and `TEST_DATABASE_URL` guarantee. Maintained `fixme` on Flows 11 & 12 in `e2e/server/orders.spec.ts` naming spec 35.
+  - R1-F4: Derived all storefront locators in `e2e/storefront/configurator.spec.ts` from real step markup in `packages/configurator/src`.
+  - R1-F5: Storefront tests updated: Flow 6 selects option and add-on, asserts nested lines and total equality; Flow 8 uploads real tiny PNG fixture without `isVisible` guard and asserts `rxRef`; Flow 9 explicitly enforces `storeRxInOrder: false` and asserts cart JSON properties; removed loops and networkidle in favor of web-first assertions.
+  - R1-F6: Registered `globalTeardown: "./e2e/helpers/global-teardown.ts"` in `playwright.config.ts` and updated `e2e/helpers/shared-db.ts` to drop schema both in-memory and via schema tracking file so test schemas are never leaked.
+  - R1-F7: Deleted `test-results/.last-run.json` and added `/test-results/` and `/playwright-report/` to `.gitignore`.
+  - R1-F8: Updated `e2e/helpers/shopify-mock.ts` to throw an Error on unmatched GraphQL queries; removed mock import from `playwright.config.ts`; added `e2e/server/shopify-mock.spec.ts` testing that unmatched queries throw.
+  - R1-F9: Updated `e2e/server/compliance.spec.ts` (Flow 13) to assert `shopSettings` is deleted and iterate Prisma DMMF models with `shopId` to assert all are empty.
+  - R1-F10: In `e2e/server/admin-lenses.spec.ts`, replaced `toBeDefined()` on Prisma `findFirst` with `not.toBeNull()`, and asserted sync status fields the badge reads (`isFailed === false`, `isSynced === true`).

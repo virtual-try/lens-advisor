@@ -1,5 +1,6 @@
 import "../helpers/shopify-mock";
 import { test, expect } from "@playwright/test";
+import { Prisma } from "@prisma/client";
 import { getSharedTestDb } from "../helpers/shared-db";
 import type { TestDb } from "../../test/db";
 import { runShopRedact } from "../../app/features/compliance/redact.server";
@@ -86,11 +87,25 @@ test.describe("Spec 33 Flow 13: Compliance shop/redact (compliance-webhooks)", (
       complianceRequestId: "compliance-req-123",
     });
 
-    // Verify shop rows are deleted from DB
+    // Verify shop rows are deleted from DB (INV-10: every model with shopId is empty for the redacted shop)
     const shopAfter = await db.prisma.shop.findUnique({ where: { id: shopId } });
     expect(shopAfter).toBeNull();
+    const settingsAfter = await db.prisma.shopSettings.findUnique({ where: { shopId } });
+    expect(settingsAfter).toBeNull();
     const groupAfter = await db.prisma.lensGroup.findUnique({ where: { id: group.id } });
     expect(groupAfter).toBeNull();
+
+    const modelsWithShopId = Prisma.dmmf.datamodel.models.filter((m) =>
+      m.fields.some((f) => f.name === "shopId")
+    );
+    for (const model of modelsWithShopId) {
+      const delegateName = model.name.charAt(0).toLowerCase() + model.name.slice(1);
+      const delegate = (db.prisma as unknown as Record<string, { count: (args: { where: { shopId: string } }) => Promise<number> }>)[delegateName];
+      if (delegate && typeof delegate.count === "function") {
+        const count = await delegate.count({ where: { shopId } });
+        expect(count, `Expected model ${model.name} to have 0 rows for shopId ${shopId}`).toBe(0);
+      }
+    }
 
     // Verify S3 prefix is deleted
     expect(mockStore.storedObjects.has(ticketKey)).toBe(false);

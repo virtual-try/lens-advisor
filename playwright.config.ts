@@ -1,8 +1,8 @@
-import "./e2e/helpers/shopify-mock";
 import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
+  globalTeardown: "./e2e/helpers/global-teardown.ts",
   timeout: 60_000,
   expect: {
     timeout: 10_000,

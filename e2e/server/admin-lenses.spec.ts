@@ -87,7 +87,7 @@ test.describe("Spec 33 Flow 2: Admin Lenses (admin-lenses)", () => {
     const storedLens = await db.prisma.lens.findFirst({
       where: { shopId, name: "1.67 High Index" },
     });
-    expect(storedLens).toBeDefined();
+    expect(storedLens).not.toBeNull();
     expect(storedLens?.sphMin).toBe(-800);
     expect(storedLens?.sphMax).toBe(600);
     expect(storedLens?.shopifyVariantId).toBeTruthy();
@@ -117,8 +117,16 @@ test.describe("Spec 33 Flow 2: Admin Lenses (admin-lenses)", () => {
     expect(loadedGroup).toBeDefined();
     const loadedLens = loadedGroup?.lenses.find((l) => l.name === "1.67 High Index");
     expect(loadedLens).toBeDefined();
-    // Synced status: has shopifyVariantId and syncFailedId is not this lens
-    expect(loadedLens?.shopifyVariantId).toBeTruthy();
+
+    // Assert the exact sync status conditions the badge reads:
+    // Sync failed condition: syncFailedId matches lens id -> false
     expect(loaderData.syncFailedId).toBeNull();
+    const isFailed = loaderData.syncFailedId === loadedLens?.id;
+    expect(isFailed).toBe(false);
+
+    // Synced condition: has shopifyVariantId and !isFailed -> true (renders <s-badge tone="success">Synced</s-badge>)
+    const isSynced = Boolean(loadedLens?.shopifyVariantId) && !isFailed;
+    expect(isSynced).toBe(true);
+    expect(loadedLens?.shopifyVariantId).toContain("gid://shopify/ProductVariant/");
   });
 });
