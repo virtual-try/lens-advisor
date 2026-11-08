@@ -82,7 +82,7 @@ test DB). Stubbed: none.
 - **2026-11-08** — Spec 30 implemented by coder agy-3 (engine agy) in worktree `spec-30` on branch `spec/30-lab-order-dispatch`. No git writes (lead commits).
 - **2026-11-08** — Real dispatch to test inbox box left unticked per Ruling R7: requires live Resend account with verified domain and AWS S3 bucket with KMS key provided by owner.
 - **2026-11-08** — Repository `app/features/lab-dispatch/lab-dispatch.repository.server.ts`:
-  - `transitionToSending`: executes a single atomic `UPDATE ... WHERE status IN ('PENDING', 'FAILED')` and increments attempts (Self-check 1). Validates returned count: concurrent workers get `transitioned: false` and exit without sending email (INV-8).
+  - `transitionToSending`: executes a single atomic `UPDATE ... RETURNING attempts` from `PENDING` or `FAILED` (incrementing attempts) or reclaiming a stale `SENDING` row (reusing existing attempts) (Self-check 1, R1-F2, R1-F9, R2-F9). Validates returned count: concurrent workers get `transitioned: false` and active workers throw retryable `IN_PROGRESS` (INV-8, R2-F4).
   - `markSent`, `markFailed`, `resetLabOrderStatus`, `getLabOrder`, `getPrescription`, `getLens`, `getOptionValues`, `getAddOns`: all take `shopId` as the first argument and strictly filter by it (INV-1).
   - `getLens`, `getOptionValues`, and `getAddOns` omit `archivedAt: null` filtering so archived lenses and options remain readable on old orders (Self-check 3).
 - **2026-11-08** — Ticket Loader `app/features/lab-dispatch/load-ticket-data.server.ts`:
@@ -113,11 +113,22 @@ test DB). Stubbed: none.
   - Fixed R1-F10: Extended Self-check 3 test to archive an option value and an add-on in addition to the lens, asserting all archived labels appear in `ticketData`.
   - Fixed R1-F11: Asserted `dispatchJob.retry` options (`retryLimit: 5`, `retryBackoff: true`) and added fail-then-succeed test run ending `SENT` with attempts 2 and distinct idempotency key.
   - Fixed R1-F12: Dropped `getObject` duck-typing in upload file reading. Added `UPLOAD_DOWNLOAD_TIMEOUT_MS` (15s) and `UPLOAD_MAX_FILE_SIZE_BYTES` (10MB) bounds. Tested presign-and-fetch path with injected `fetch` (HTTP 200 success, HTTP 403 failure).
+- **2026-11-08** — Review round R2 fixes (coder agy-3):
+  - Fixed R2-F1: Seeded `orderBSending` as `SENDING` in shop B in INV-1 test; asserted `markSent(shopA, orderBSending)` and `markFailed(shopA, orderBSending)` return null and that shop B's row remains untouched in `SENDING` with null providerId and lastErrorCode.
+  - Fixed R2-F2: Enforced presence checks in `loadTicketData` for lens (`LENS_NOT_FOUND`), unique option values (`OPTION_VALUE_NOT_FOUND`), unique add-ons (`ADD_ON_NOT_FOUND`), and prescription (`RX_NOT_FOUND`), preventing blank or incomplete tickets. Process dispatch records `FAILED LOAD_FAILED` and sends no email. Tested each missing kind.
+  - Fixed R2-F3: If email send succeeded but `markSent` throws, leave row in `SENDING` without marking `FAILED` or incrementing attempts. On retry, stale lease reclaim reuses the exact same attempts and idempotency key, allowing mail provider deduplication (INV-8). Tested throw after send and key reuse on retry.
+  - Fixed R2-F4: When `transitionToSending` returns false for a fresh `SENDING` row, throw retryable `DispatchInProgressError` (`IN_PROGRESS`) instead of returning `SKIPPED`, ensuring crashed workers are reclaimed by pg-boss retries. Only return `SKIPPED` for `SENT` or not found. Tested fresh SENDING error and handler throw.
+  - Fixed R2-F5: Passed typed fakeQueue to `resend(shopA, orderB)` in INV-1 test, asserted `rejects.toThrow(NotFoundError)`, verified `fakeQueue.enqueue` was not called, and asserted `orderB` status was unchanged.
+  - Fixed R2-F6: Checked result of `resetLabOrderStatus` in `resend` (throws `ConflictError` if null). Wrapped `queue.enqueue` in try/catch to revert order status and lastErrorCode if enqueue throws, preventing stranded `PENDING` rows. Tested both race/conflict and rollback on enqueue failure.
+  - Fixed R2-F7: Enforced streaming size cap (`UPLOAD_MAX_FILE_SIZE_BYTES` = 10MB) checking Content-Length header first, then running chunk byte totals with stream cancellation, plus download timeout abort. Tested oversized stream, Content-Length cap, and timeout with injected fetch.
+  - Fixed R2-F8: Removed unused `s3Reader` test hook from `DispatchServiceDeps` and production download branch.
+  - Fixed R2-F9: Changed `transitionToSending` to pass a single JS Date parameter (`now`) for both `"updatedAt" = ${now}` write and stale cutoff `"updatedAt" <= ${staleCutoff}`, eliminating DB session time zone skew on timestamp without time zone. Tested parameter passing.
+  - Fixed R2-F11: Removed duplicate `expect(handled).toBe(false)` assertion in `app/shared/queue/define-job.test.ts`. Refreshed Spec 30 Log counts and transitionToSending description.
 - **2026-11-08** — Gates verified:
-  - `pnpm vitest run app/features/lab-dispatch`: 1 test file, 16/16 passed.
-  - `pnpm test`: 52 test files, 832/832 passed, 0 failures.
+  - `pnpm vitest run app/features/lab-dispatch`: 1 test file, 29/29 passed.
+  - `pnpm test`: 52 test files, 846/846 passed, 0 failures.
   - `pnpm typecheck`: exit 0.
   - `pnpm lint`: exit 0 (0 errors, 0 warnings).
   - `pnpm build`: exit 0.
   - `git diff --check`: clean.
-- **2026-11-08** — Evidence (orchestro spec verify, tree bb76ed40): install pass · typecheck pass · lint pass · build pass · test pass 841/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree e4fd2527): install pass · typecheck pass · lint pass · build pass · test pass 846/0/0

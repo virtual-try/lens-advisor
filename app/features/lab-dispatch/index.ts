@@ -20,6 +20,7 @@ export {
   type LoadTicketDataDeps,
 } from "./load-ticket-data.server";
 export {
+  DispatchInProgressError,
   defaultDispatchLogger,
   processDispatch,
   resend,

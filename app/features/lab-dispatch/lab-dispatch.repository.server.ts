@@ -73,9 +73,10 @@ export async function transitionToSending(
   labOrderId: string,
   db?: LabDispatchDb,
   staleTimeoutMs = SENDING_STALE_TIMEOUT_MS,
+  now = new Date(),
 ): Promise<{ transitioned: boolean; attempts: number }> {
   const client = db ?? getPrisma();
-  const staleCutoff = new Date(Date.now() - staleTimeoutMs);
+  const staleCutoff = new Date(now.getTime() - staleTimeoutMs);
 
   const rows = await client.$queryRaw<Array<{ attempts: number }>>`
     UPDATE "LabOrder"
@@ -85,7 +86,7 @@ export async function transitionToSending(
         WHEN "status" = 'SENDING'::"LabOrderStatus" THEN "attempts"
         ELSE "attempts" + 1
       END,
-      "updatedAt" = NOW()
+      "updatedAt" = ${now}
     WHERE "shopId" = ${shopId}
       AND "id" = ${labOrderId}
       AND (

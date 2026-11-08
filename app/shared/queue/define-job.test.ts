@@ -760,7 +760,6 @@ describe("defineJob payload guard (INV-2)", () => {
         },
       });
       expect(handled).toBe(false);
-      expect(handled).toBe(false);
       expect(consumerDef.handler).toBeDefined();
       expect(getJobDefinition(name)).toBe(consumerDef);
     });

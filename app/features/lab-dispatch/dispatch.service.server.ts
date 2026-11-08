@@ -5,7 +5,7 @@ import { getMailer } from "../../shared/container/mailer.server";
 import { getObjectStore } from "../../shared/container/object-store.server";
 import { getPrisma } from "../../shared/container/prisma.server";
 import { getQueue } from "../../shared/container/queue.server";
-import { NotFoundError } from "../../shared/http/errors.server";
+import { AppError, ConflictError, NotFoundError } from "../../shared/http/errors.server";
 import type { MailAttachment, Mailer, SendMailResult } from "../../shared/mail/mailer.server";
 import type { Queue } from "../../shared/queue/queue";
 import {
@@ -30,6 +30,13 @@ import { loadTicketData, RxDecryptError } from "./load-ticket-data.server";
 
 export const UPLOAD_DOWNLOAD_TIMEOUT_MS = 15_000; // 15s timeout for S3 presigned downloads (R1-F12)
 export const UPLOAD_MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB size cap for S3 uploads (R1-F12)
+
+export class DispatchInProgressError extends AppError {
+  constructor(message = "Dispatch is already in progress") {
+    super(409, "IN_PROGRESS", message);
+    this.name = "DispatchInProgressError";
+  }
+}
 
 export interface DispatchLogger {
   info(event: string, meta?: Record<string, unknown>): void;
@@ -57,7 +64,6 @@ export interface DispatchServiceDeps {
   logger?: DispatchLogger;
   queue?: Pick<Queue, "enqueue">;
   fetch?: typeof fetch;
-  s3Reader?: (key: string) => Promise<Buffer>;
 }
 
 export interface DispatchResult {
@@ -113,10 +119,25 @@ export async function processDispatch(
   // 1. Status SENDING: atomic conditional update from PENDING/FAILED or stale SENDING (INV-8, Self-check 1, R1-F2, R1-F9)
   const { transitioned, attempts } = await transitionToSending(shopId, labOrderId, db);
   if (!transitioned) {
+    const existing = await getLabOrder(shopId, labOrderId, db);
+    if (!existing) {
+      logger.info("lab_dispatch.skipped", { shopId, labOrderId, reason: "order_not_found" });
+      return { status: "SKIPPED", reason: "order_not_found" };
+    }
+    if (existing.status === "SENT") {
+      logger.info("lab_dispatch.skipped", { shopId, labOrderId, reason: "already_sent" });
+      return { status: "SKIPPED", reason: "already_sent" };
+    }
+    if (existing.status === "SENDING") {
+      // R2-F4: Fresh SENDING row must throw retryable error so pg-boss retries with backoff
+      logger.info("lab_dispatch.in_progress", { shopId, labOrderId });
+      throw new DispatchInProgressError(`Dispatch for order ${labOrderId} is currently in progress`);
+    }
     logger.info("lab_dispatch.skipped", { shopId, labOrderId, reason: "not_transitioned" });
     return { status: "SKIPPED", reason: "not_transitioned" };
   }
 
+  let sendResult: SendMailResult | undefined;
   // R1-F2: Wrap the entire body after transition so a row never sticks in SENDING
   try {
     // 2. Fetch shop settings and check lab emails (Spec 15)
@@ -238,25 +259,47 @@ export async function processDispatch(
           for (const key of prescription.uploadKeys) {
             try {
               let fileBuffer: Buffer;
-              if (deps.s3Reader) {
-                fileBuffer = await deps.s3Reader(key);
+              // R2-F7 & R2-F8: Presign download, stream with running size cap, drop dead s3Reader hook
+              const downloadUrl = await objectStore.presignDownload(key);
+              const fetchFn = deps.fetch ?? globalThis.fetch;
+              const res = await fetchFn(downloadUrl, {
+                signal: AbortSignal.timeout(UPLOAD_DOWNLOAD_TIMEOUT_MS),
+              });
+              if (!res.ok) {
+                throw new Error(`S3 download failed with status ${res.status}`);
+              }
+
+              const contentLength = res.headers?.get("content-length");
+              if (contentLength && parseInt(contentLength, 10) > UPLOAD_MAX_FILE_SIZE_BYTES) {
+                throw new Error(
+                  `Prescription upload file exceeds maximum allowed size of ${UPLOAD_MAX_FILE_SIZE_BYTES} bytes`,
+                );
+              }
+
+              if (res.body) {
+                const reader = res.body.getReader();
+                const chunks: Uint8Array[] = [];
+                let totalBytes = 0;
+                try {
+                  while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    if (value) {
+                      totalBytes += value.byteLength;
+                      if (totalBytes > UPLOAD_MAX_FILE_SIZE_BYTES) {
+                        throw new Error(
+                          `Prescription upload file exceeds maximum allowed size of ${UPLOAD_MAX_FILE_SIZE_BYTES} bytes`,
+                        );
+                      }
+                      chunks.push(value);
+                    }
+                  }
+                } catch (streamErr) {
+                  await reader.cancel().catch(() => {});
+                  throw streamErr;
+                }
+                fileBuffer = Buffer.concat(chunks);
               } else {
-                const downloadUrl = await objectStore.presignDownload(key);
-                const fetchFn = deps.fetch ?? globalThis.fetch;
-                const res = await fetchFn(downloadUrl, {
-                  signal: AbortSignal.timeout(UPLOAD_DOWNLOAD_TIMEOUT_MS),
-                });
-                if (!res.ok) {
-                  throw new Error(`S3 download failed with status ${res.status}`);
-                }
-
-                const contentLength = res.headers?.get("content-length");
-                if (contentLength && parseInt(contentLength, 10) > UPLOAD_MAX_FILE_SIZE_BYTES) {
-                  throw new Error(
-                    `Prescription upload file exceeds maximum allowed size of ${UPLOAD_MAX_FILE_SIZE_BYTES} bytes`,
-                  );
-                }
-
                 const arrayBuf = await res.arrayBuffer();
                 if (arrayBuf.byteLength > UPLOAD_MAX_FILE_SIZE_BYTES) {
                   throw new Error(
@@ -285,7 +328,6 @@ export async function processDispatch(
 
     // 6. Mailer.send with idempotencyKey = labOrder.id + ':' + attempts
     const idempotencyKey = `${labOrderId}:${attempts}`;
-    let sendResult: SendMailResult;
     try {
       sendResult = await mailer.send({
         to: labEmails,
@@ -301,6 +343,8 @@ export async function processDispatch(
     }
 
     // 7. SENT + providerId, sentAt
+    // R2-F3: Once Mailer.send has succeeded, a markSent failure must NOT mark FAILED or increment attempts.
+    // Leave the row SENDING so the retry reclaims it after the lease with the same attempts and idempotency key.
     try {
       await markSent(
         shopId,
@@ -313,7 +357,6 @@ export async function processDispatch(
         db,
       );
     } catch (err: unknown) {
-      await markFailed(shopId, labOrderId, "LOAD_FAILED", db);
       logger.error("lab_dispatch.mark_sent_failed", { shopId, labOrderId, attempts });
       throw err;
     }
@@ -331,11 +374,14 @@ export async function processDispatch(
       providerId: sendResult.providerId,
     };
   } catch (err: unknown) {
-    // R1-F2: Safety net ensures row is never left stuck in SENDING
-    try {
-      await markFailed(shopId, labOrderId, "LOAD_FAILED", db);
-    } catch {
-      // secondary DB failure ignored
+    // R1-F2 & R2-F3: Safety net marks FAILED only if email was not yet sent.
+    // If email was already sent (sendResult defined), leave row in SENDING so retry reclaims with same attempts.
+    if (!sendResult) {
+      try {
+        await markFailed(shopId, labOrderId, "LOAD_FAILED", db);
+      } catch {
+        // secondary DB failure ignored
+      }
     }
     throw err;
   }
@@ -361,13 +407,33 @@ export async function resend(
   }
 
   // Reset status to PENDING and clear lastErrorCode (refuses PENDING or SENDING with ConflictError, R1-F5)
-  await resetLabOrderStatus(shopId, labOrderId, "PENDING", db);
+  // R2-F6: Check reset result; throw ConflictError if reset returned null
+  const resetResult = await resetLabOrderStatus(shopId, labOrderId, "PENDING", db);
+  if (!resetResult) {
+    throw new ConflictError("Lab order could not be reset for resend", "CONFLICT");
+  }
 
-  await queue.enqueue(
-    DISPATCH_JOB_NAME,
-    { labOrderId },
-    { singletonKey: labOrderId },
-  );
+  try {
+    await queue.enqueue(
+      DISPATCH_JOB_NAME,
+      { labOrderId },
+      { singletonKey: labOrderId },
+    );
+  } catch (err: unknown) {
+    // R2-F6: If enqueue fails, revert status and lastErrorCode so the row is not stranded in PENDING with no job
+    try {
+      await db.labOrder.updateMany({
+        where: { shopId, id: labOrderId, status: "PENDING" },
+        data: {
+          status: order.status,
+          lastErrorCode: order.lastErrorCode,
+        },
+      });
+    } catch {
+      // rollback failure ignored
+    }
+    throw err;
+  }
 
   return { enqueued: true, labOrderId };
 }

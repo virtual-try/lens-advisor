@@ -13,6 +13,7 @@ import {
 import { createTestDb, type TestDb } from "../../../test/db";
 import { DISPATCH_JOB_NAME } from "../lab-orders/constants";
 import {
+  DispatchInProgressError,
   createDispatchHandler,
   dispatchJob,
   getAddOns,
@@ -422,13 +423,21 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
       const { logger } = createCapturingLogger();
 
       // Run two concurrent dispatch executions
-      const [res1, res2] = await Promise.all([
+      const results = await Promise.allSettled([
         processDispatch(shop.id, order.id, { db: prisma, cipher, objectStore, mailer, logger }),
         processDispatch(shop.id, order.id, { db: prisma, cipher, objectStore, mailer, logger }),
       ]);
 
-      const statuses = [res1.status, res2.status].sort();
-      expect(statuses).toEqual(["SENT", "SKIPPED"]);
+      const fulfilled = results.filter((r) => r.status === "fulfilled") as PromiseFulfilledResult<{ status: string }>[];
+      const rejected = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+
+      // One worker succeeds and dispatches
+      expect(fulfilled).toHaveLength(1);
+      expect(fulfilled[0].value.status).toBe("SENT");
+
+      // The concurrent worker receives retryable IN_PROGRESS error (R2-F4)
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0].reason).toBeInstanceOf(DispatchInProgressError);
 
       // Exactly one email sent
       expect(sentEmails).toHaveLength(1);
@@ -795,23 +804,47 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
       const orderBCheck = await getLabOrder(shopB.id, orderB.id, prisma);
       expect(orderBCheck?.status).toBe("PENDING");
 
-      // 7. markSent cross-shop isolation
-      const sentCross = await markSent(shopA.id, orderB.id, { providerId: "prov_bad", ticketKeys: [] }, prisma);
+      // R2-F1: Seed orderBSending in SENDING status to prove shop scoping in markSent & markFailed
+      const orderBSending = await prisma.labOrder.create({
+        data: {
+          shopId: shopB.id,
+          shopifyOrderId: "2002",
+          orderName: "#2002-B",
+          bundleId: "bundle-2002-b",
+          prescriptionId: rxB.id,
+          lensId: catalogB.lens.id,
+          frameTitle: "Frame B Sending",
+          status: "SENDING",
+        },
+      });
+
+      // 7. markSent cross-shop isolation (R2-F1)
+      const sentCross = await markSent(shopA.id, orderBSending.id, { providerId: "prov_bad", ticketKeys: [] }, prisma);
       expect(sentCross).toBeNull();
 
-      // 8. markFailed cross-shop isolation
-      const failCross = await markFailed(shopA.id, orderB.id, "MAIL_FAILED", prisma);
+      // 8. markFailed cross-shop isolation (R2-F1)
+      const failCross = await markFailed(shopA.id, orderBSending.id, "MAIL_FAILED", prisma);
       expect(failCross).toBeNull();
+
+      // Assert shop B's orderBSending is unchanged: still SENDING, untouched providerId and lastErrorCode
+      const orderBSendingCheck = await getLabOrder(shopB.id, orderBSending.id, prisma);
+      expect(orderBSendingCheck?.status).toBe("SENDING");
+      expect(orderBSendingCheck?.providerId).toBeNull();
+      expect(orderBSendingCheck?.lastErrorCode).toBeNull();
 
       // 9. resetLabOrderStatus cross-shop isolation
       const resetCross = await resetLabOrderStatus(shopA.id, orderB.id, "PENDING", prisma);
       expect(resetCross).toBeNull();
 
       // 10. loadTicketData cross-shop isolation
-      await expect(loadTicketData(shopA.id, orderB.id, { db: prisma, cipher })).rejects.toThrow();
+      await expect(loadTicketData(shopA.id, orderB.id, { db: prisma, cipher })).rejects.toThrow(NotFoundError);
 
-      // 11. resend cross-shop isolation
-      await expect(resend(shopA.id, orderB.id, { db: prisma })).rejects.toThrow();
+      // 11. resend cross-shop isolation (R2-F5)
+      const fakeQueue = { enqueue: vi.fn() };
+      await expect(resend(shopA.id, orderB.id, { db: prisma, queue: fakeQueue })).rejects.toThrow(NotFoundError);
+      expect(fakeQueue.enqueue).not.toHaveBeenCalled();
+      const orderBCheckAfterResend = await getLabOrder(shopB.id, orderB.id, prisma);
+      expect(orderBCheckAfterResend?.status).toBe("PENDING");
     });
 
     it("INV-2 (R1-F3): logger and console spies across MAIL_FAILED and STORAGE_FAILED rows find zero Rx values", async () => {
@@ -966,7 +999,7 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
       const { objectStore } = createFakeObjectStore();
 
       // Launch 3 concurrent workers
-      await Promise.all([
+      await Promise.allSettled([
         processDispatch(shop.id, order.id, { db: prisma, cipher, objectStore, mailer }),
         processDispatch(shop.id, order.id, { db: prisma, cipher, objectStore, mailer }),
         processDispatch(shop.id, order.id, { db: prisma, cipher, objectStore, mailer }),
@@ -1085,18 +1118,18 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
       expect(sentEmails).toHaveLength(1);
     });
 
-    it("R1-F2: markSent throw records FAILED with LOAD_FAILED and does not leave order stuck in SENDING", async () => {
-      const shop = await seedShop("shop-r1f2-mark-sent.example.test");
+    it("R2-F3: once Mailer.send succeeds, markSent failure leaves row in SENDING, and retry reuses same attempts and idempotency key", async () => {
+      const shop = await seedShop("shop-r2f3-mark-sent.example.test");
       const catalog = await seedCatalog(shop.id);
       const cipher = getCipher();
 
       const rxRow = await prisma.prescription.create({
         data: {
-          id: "rx-r1f2-marksent",
+          id: "rx-r2f3-marksent",
           shopId: shop.id,
           rxType: "SINGLE_VISION",
           source: "MANUAL",
-          cipher: cipher.encrypt(sensitiveRx, `${shop.id}:rx-r1f2-marksent`),
+          cipher: cipher.encrypt(sensitiveRx, `${shop.id}:rx-r2f3-marksent`),
         },
       });
 
@@ -1105,7 +1138,7 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
           shopId: shop.id,
           shopifyOrderId: "1007-marksent",
           orderName: "#1007-marksent",
-          bundleId: "bundle-r1f2-marksent",
+          bundleId: "bundle-r2f3-marksent",
           prescriptionId: rxRow.id,
           lensId: catalog.lens.id,
           frameTitle: "MarkSent Crash Test",
@@ -1113,12 +1146,13 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
         },
       });
 
-      const { mailer } = createFakeMailer();
+      const { mailer, sentEmails } = createFakeMailer();
       const { objectStore } = createFakeObjectStore();
 
       const repoModule = await import("./lab-dispatch.repository.server");
       const markSentSpy = vi.spyOn(repoModule, "markSent").mockRejectedValueOnce(new Error("Database crash in markSent"));
 
+      // 1. First run: mailer sends, but markSent throws
       await expect(
         processDispatch(shop.id, order.id, {
           db: prisma,
@@ -1130,10 +1164,38 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
 
       markSentSpy.mockRestore();
 
-      // Verify row is NOT stuck in SENDING; it is FAILED with LOAD_FAILED
-      const updated = await prisma.labOrder.findUnique({ where: { id: order.id } });
-      expect(updated?.status).toBe("FAILED");
-      expect(updated?.lastErrorCode).toBe("LOAD_FAILED");
+      // Verify row is NOT marked FAILED; it is left in SENDING with attempts = 1
+      const intermediate = await prisma.labOrder.findUnique({ where: { id: order.id } });
+      expect(intermediate?.status).toBe("SENDING");
+      expect(intermediate?.attempts).toBe(1);
+      expect(intermediate?.lastErrorCode).toBeNull();
+      expect(sentEmails).toHaveLength(1);
+      expect(sentEmails[0].idempotencyKey).toBe(`${order.id}:1`);
+
+      // 2. Simulate lease expiration so stale SENDING row can be reclaimed
+      await prisma.labOrder.update({
+        where: { id: order.id },
+        data: {
+          updatedAt: new Date(Date.now() - 20 * 60 * 1000),
+        },
+      });
+
+      // 3. Retry run: reclaims stale SENDING row, reuses attempts = 1 and same idempotency key
+      const retryResult = await processDispatch(shop.id, order.id, {
+        db: prisma,
+        cipher,
+        objectStore,
+        mailer,
+      });
+
+      expect(retryResult.status).toBe("SENT");
+      expect(sentEmails).toHaveLength(2);
+      expect(sentEmails[1].idempotencyKey).toBe(`${order.id}:1`); // Provider deduplicates because idempotency key is identical
+
+      const finalOrder = await prisma.labOrder.findUnique({ where: { id: order.id } });
+      expect(finalOrder?.status).toBe("SENT");
+      expect(finalOrder?.attempts).toBe(1);
+      expect(finalOrder?.providerId).toBeDefined();
     });
 
     it("R1-F2: stale SENDING row (updatedAt older than 15 min) is reclaimed and reuses same attempts value", async () => {
@@ -1599,6 +1661,460 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
       const updated = await prisma.labOrder.findUnique({ where: { id: order.id } });
       expect(updated?.status).toBe("FAILED");
       expect(updated?.lastErrorCode).toBe("STORAGE_FAILED");
+    });
+
+    it("R2-F2: missing lens, option value, add-on, or prescription never produces blank ticket; throws NotFoundError, records FAILED LOAD_FAILED, sends no email", async () => {
+      const shop = await seedShop("shop-r2f2-missing.example.test");
+      const catalog = await seedCatalog(shop.id);
+      const cipher = getCipher();
+
+      const rxRow = await prisma.prescription.create({
+        data: {
+          id: "rx-r2f2-valid",
+          shopId: shop.id,
+          rxType: "SINGLE_VISION",
+          source: "MANUAL",
+          cipher: cipher.encrypt(sensitiveRx, `${shop.id}:rx-r2f2-valid`),
+        },
+      });
+
+      const { mailer, sentEmails } = createFakeMailer();
+      const { objectStore } = createFakeObjectStore();
+
+      // Case 1: labOrder.lensId is null
+      const orderNullLens = await prisma.labOrder.create({
+        data: {
+          shopId: shop.id,
+          shopifyOrderId: "201",
+          orderName: "#201",
+          bundleId: "bundle-null-lens",
+          prescriptionId: rxRow.id,
+          lensId: null,
+          frameTitle: "Null Lens Frame",
+          status: "PENDING",
+        },
+      });
+
+      await expect(loadTicketData(shop.id, orderNullLens.id, { db: prisma, cipher })).rejects.toThrow(NotFoundError);
+      await expect(processDispatch(shop.id, orderNullLens.id, { db: prisma, cipher, objectStore, mailer })).rejects.toThrow(NotFoundError);
+      const orderNullLensDb = await prisma.labOrder.findUnique({ where: { id: orderNullLens.id } });
+      expect(orderNullLensDb?.status).toBe("FAILED");
+      expect(orderNullLensDb?.lastErrorCode).toBe("LOAD_FAILED");
+
+      // Case 2: labOrder.lensId is set, but getLens resolves to null (e.g. cross-shop or deleted)
+      const orderMissingLens = await prisma.labOrder.create({
+        data: {
+          shopId: shop.id,
+          shopifyOrderId: "202",
+          orderName: "#202",
+          bundleId: "bundle-missing-lens",
+          prescriptionId: rxRow.id,
+          lensId: catalog.lens.id,
+          frameTitle: "Missing Lens Frame",
+          status: "PENDING",
+        },
+      });
+
+      const repoModule = await import("./lab-dispatch.repository.server");
+      const getLensSpy = vi.spyOn(repoModule, "getLens").mockResolvedValueOnce(null);
+      await expect(loadTicketData(shop.id, orderMissingLens.id, { db: prisma, cipher })).rejects.toThrow(NotFoundError);
+      getLensSpy.mockRestore();
+
+      const getLensSpy2 = vi.spyOn(repoModule, "getLens").mockResolvedValueOnce(null);
+      await expect(processDispatch(shop.id, orderMissingLens.id, { db: prisma, cipher, objectStore, mailer })).rejects.toThrow(NotFoundError);
+      getLensSpy2.mockRestore();
+
+      const orderMissingLensDb = await prisma.labOrder.findUnique({ where: { id: orderMissingLens.id } });
+      expect(orderMissingLensDb?.status).toBe("FAILED");
+      expect(orderMissingLensDb?.lastErrorCode).toBe("LOAD_FAILED");
+
+      // Case 3: labOrder.optionValueIds contains a non-existent option value id
+      const orderMissingOption = await prisma.labOrder.create({
+        data: {
+          shopId: shop.id,
+          shopifyOrderId: "203",
+          orderName: "#203",
+          bundleId: "bundle-missing-opt",
+          prescriptionId: rxRow.id,
+          lensId: catalog.lens.id,
+          optionValueIds: ["missing-option-val-id"],
+          frameTitle: "Missing Option Frame",
+          status: "PENDING",
+        },
+      });
+
+      await expect(loadTicketData(shop.id, orderMissingOption.id, { db: prisma, cipher })).rejects.toThrow(NotFoundError);
+      await expect(processDispatch(shop.id, orderMissingOption.id, { db: prisma, cipher, objectStore, mailer })).rejects.toThrow(NotFoundError);
+      const orderMissingOptionDb = await prisma.labOrder.findUnique({ where: { id: orderMissingOption.id } });
+      expect(orderMissingOptionDb?.status).toBe("FAILED");
+      expect(orderMissingOptionDb?.lastErrorCode).toBe("LOAD_FAILED");
+
+      // Case 4: labOrder.addOnIds contains a non-existent add-on id
+      const orderMissingAddon = await prisma.labOrder.create({
+        data: {
+          shopId: shop.id,
+          shopifyOrderId: "204",
+          orderName: "#204",
+          bundleId: "bundle-missing-addon",
+          prescriptionId: rxRow.id,
+          lensId: catalog.lens.id,
+          addOnIds: ["missing-addon-id"],
+          frameTitle: "Missing Addon Frame",
+          status: "PENDING",
+        },
+      });
+
+      await expect(loadTicketData(shop.id, orderMissingAddon.id, { db: prisma, cipher })).rejects.toThrow(NotFoundError);
+      await expect(processDispatch(shop.id, orderMissingAddon.id, { db: prisma, cipher, objectStore, mailer })).rejects.toThrow(NotFoundError);
+      const orderMissingAddonDb = await prisma.labOrder.findUnique({ where: { id: orderMissingAddon.id } });
+      expect(orderMissingAddonDb?.status).toBe("FAILED");
+      expect(orderMissingAddonDb?.lastErrorCode).toBe("LOAD_FAILED");
+
+      // Case 5: labOrder.prescriptionId is null
+      const orderNullRx = await prisma.labOrder.create({
+        data: {
+          shopId: shop.id,
+          shopifyOrderId: "205",
+          orderName: "#205",
+          bundleId: "bundle-null-rx",
+          prescriptionId: null,
+          lensId: catalog.lens.id,
+          frameTitle: "Null Rx Frame",
+          status: "PENDING",
+        },
+      });
+
+      await expect(loadTicketData(shop.id, orderNullRx.id, { db: prisma, cipher })).rejects.toThrow(NotFoundError);
+      await expect(processDispatch(shop.id, orderNullRx.id, { db: prisma, cipher, objectStore, mailer })).rejects.toThrow(NotFoundError);
+      const orderNullRxDb = await prisma.labOrder.findUnique({ where: { id: orderNullRx.id } });
+      expect(orderNullRxDb?.status).toBe("FAILED");
+      expect(orderNullRxDb?.lastErrorCode).toBe("LOAD_FAILED");
+
+      // Case 6: labOrder.prescriptionId is set, but getPrescription resolves to null (e.g. cross-shop or deleted)
+      const orderMissingRx = await prisma.labOrder.create({
+        data: {
+          shopId: shop.id,
+          shopifyOrderId: "206",
+          orderName: "#206",
+          bundleId: "bundle-missing-rx",
+          prescriptionId: rxRow.id,
+          lensId: catalog.lens.id,
+          frameTitle: "Missing Rx Frame",
+          status: "PENDING",
+        },
+      });
+
+      const getRxSpy = vi.spyOn(repoModule, "getPrescription").mockResolvedValueOnce(null);
+      await expect(loadTicketData(shop.id, orderMissingRx.id, { db: prisma, cipher })).rejects.toThrow(NotFoundError);
+      getRxSpy.mockRestore();
+
+      const getRxSpy2 = vi.spyOn(repoModule, "getPrescription").mockResolvedValueOnce(null);
+      await expect(processDispatch(shop.id, orderMissingRx.id, { db: prisma, cipher, objectStore, mailer })).rejects.toThrow(NotFoundError);
+      getRxSpy2.mockRestore();
+
+      const orderMissingRxDb = await prisma.labOrder.findUnique({ where: { id: orderMissingRx.id } });
+      expect(orderMissingRxDb?.status).toBe("FAILED");
+      expect(orderMissingRxDb?.lastErrorCode).toBe("LOAD_FAILED");
+
+      // Across all missing cases, no email was ever sent
+      expect(sentEmails).toHaveLength(0);
+    });
+
+    it("R2-F4: fresh SENDING row throws retryable DispatchInProgressError; returns SKIPPED only for SENT or not found", async () => {
+      const shop = await seedShop("shop-r2f4-fresh.example.test");
+      const catalog = await seedCatalog(shop.id);
+      const cipher = getCipher();
+
+      const rxRow = await prisma.prescription.create({
+        data: {
+          id: "rx-r2f4-fresh",
+          shopId: shop.id,
+          rxType: "SINGLE_VISION",
+          source: "MANUAL",
+          cipher: cipher.encrypt(sensitiveRx, `${shop.id}:rx-r2f4-fresh`),
+        },
+      });
+
+      // 1. Fresh SENDING order (updatedAt is current)
+      const orderSending = await prisma.labOrder.create({
+        data: {
+          shopId: shop.id,
+          shopifyOrderId: "301",
+          orderName: "#301",
+          bundleId: "bundle-fresh-sending",
+          prescriptionId: rxRow.id,
+          lensId: catalog.lens.id,
+          frameTitle: "Fresh Sending Frame",
+          status: "SENDING",
+          updatedAt: new Date(),
+        },
+      });
+
+      // Calling processDispatch must throw DispatchInProgressError (IN_PROGRESS)
+      await expect(
+        processDispatch(shop.id, orderSending.id, { db: prisma, cipher }),
+      ).rejects.toThrow(DispatchInProgressError);
+
+      // Calling worker handler must throw so pg-boss retries with backoff
+      const handler = createDispatchHandler({ db: prisma, cipher });
+      await expect(handler({ labOrderId: orderSending.id })).rejects.toThrow(DispatchInProgressError);
+
+      // 2. Already SENT order returns SKIPPED
+      const orderSent = await prisma.labOrder.create({
+        data: {
+          shopId: shop.id,
+          shopifyOrderId: "302",
+          orderName: "#302",
+          bundleId: "bundle-already-sent",
+          prescriptionId: rxRow.id,
+          lensId: catalog.lens.id,
+          frameTitle: "Already Sent Frame",
+          status: "SENT",
+        },
+      });
+
+      const sentResult = await processDispatch(shop.id, orderSent.id, { db: prisma, cipher });
+      expect(sentResult).toEqual({ status: "SKIPPED", reason: "already_sent" });
+
+      // 3. Non-existent order returns SKIPPED
+      const notFoundResult = await processDispatch(shop.id, "non-existent-order-id-404", { db: prisma, cipher });
+      expect(notFoundResult).toEqual({ status: "SKIPPED", reason: "order_not_found" });
+    });
+
+    it("R2-F6: resend checks resetLabOrderStatus and restores previous status if enqueue fails", async () => {
+      const shop = await seedShop("shop-r2f6-resend.example.test");
+      const catalog = await seedCatalog(shop.id);
+      const cipher = getCipher();
+
+      const rxRow = await prisma.prescription.create({
+        data: {
+          id: "rx-r2f6",
+          shopId: shop.id,
+          rxType: "SINGLE_VISION",
+          source: "MANUAL",
+          cipher: cipher.encrypt(sensitiveRx, `${shop.id}:rx-r2f6`),
+        },
+      });
+
+      const orderFailed = await prisma.labOrder.create({
+        data: {
+          shopId: shop.id,
+          shopifyOrderId: "401",
+          orderName: "#401",
+          bundleId: "bundle-r2f6-fail",
+          prescriptionId: rxRow.id,
+          lensId: catalog.lens.id,
+          frameTitle: "R2F6 Frame",
+          status: "FAILED",
+          lastErrorCode: "MAIL_FAILED",
+        },
+      });
+
+      // 1. If resetLabOrderStatus returns null (simulated race condition) -> throws ConflictError
+      const repoModule = await import("./lab-dispatch.repository.server");
+      const resetSpy = vi.spyOn(repoModule, "resetLabOrderStatus").mockResolvedValueOnce(null);
+      const fakeQueue = { enqueue: vi.fn() };
+
+      await expect(
+        resend(shop.id, orderFailed.id, { db: prisma, queue: fakeQueue }),
+      ).rejects.toThrow(ConflictError);
+
+      expect(fakeQueue.enqueue).not.toHaveBeenCalled();
+      resetSpy.mockRestore();
+
+      // 2. If enqueue fails after reset -> restores previous status & lastErrorCode
+      const failingQueue = {
+        enqueue: vi.fn().mockRejectedValueOnce(new Error("Queue broker disconnected")),
+      };
+
+      await expect(
+        resend(shop.id, orderFailed.id, { db: prisma, queue: failingQueue }),
+      ).rejects.toThrow("Queue broker disconnected");
+
+      // Verify row was NOT left stuck in PENDING with no job; restored to FAILED with MAIL_FAILED
+      const reverted = await prisma.labOrder.findUnique({ where: { id: orderFailed.id } });
+      expect(reverted?.status).toBe("FAILED");
+      expect(reverted?.lastErrorCode).toBe("MAIL_FAILED");
+
+      // Subsequent resend with working queue succeeds
+      const workingQueue = { enqueue: vi.fn().mockResolvedValueOnce("job-ok") };
+      const resendSuccess = await resend(shop.id, orderFailed.id, { db: prisma, queue: workingQueue });
+      expect(resendSuccess.enqueued).toBe(true);
+
+      const finalPending = await prisma.labOrder.findUnique({ where: { id: orderFailed.id } });
+      expect(finalPending?.status).toBe("PENDING");
+      expect(finalPending?.lastErrorCode).toBeNull();
+    });
+
+    it("R2-F7: upload download enforces streaming size cap and timeout with injected fetch", async () => {
+      const shop = await seedShop("shop-r2f7-stream.example.test");
+      const catalog = await seedCatalog(shop.id);
+      const cipher = getCipher();
+
+      const fileKey = buildRxKey(shop.id, "rx-r2f7", "oversized", "pdf");
+      const rxRow = await prisma.prescription.create({
+        data: {
+          id: "rx-r2f7",
+          shopId: shop.id,
+          rxType: "SINGLE_VISION",
+          source: "UPLOAD",
+          cipher: cipher.encrypt({}, `${shop.id}:rx-r2f7`),
+          uploadKeys: [fileKey],
+        },
+      });
+
+      const orderStream = await prisma.labOrder.create({
+        data: {
+          shopId: shop.id,
+          shopifyOrderId: "501",
+          orderName: "#501",
+          bundleId: "bundle-r2f7-stream",
+          prescriptionId: rxRow.id,
+          lensId: catalog.lens.id,
+          frameTitle: "Stream Frame",
+          status: "PENDING",
+        },
+      });
+
+      const { mailer, sentEmails } = createFakeMailer();
+      const { objectStore } = createFakeObjectStore();
+
+      // 1. Streaming body exceeds 10MB running cap without Content-Length
+      const chunk6MB = new Uint8Array(6 * 1024 * 1024);
+      let chunkCount = 0;
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (chunkCount < 2) {
+            chunkCount++;
+            controller.enqueue(chunk6MB);
+          } else {
+            controller.close();
+          }
+        },
+      });
+
+      const streamingFetch = vi.fn(async () => new Response(stream)) as unknown as typeof fetch;
+
+      await expect(
+        processDispatch(shop.id, orderStream.id, {
+          db: prisma,
+          cipher,
+          objectStore,
+          mailer,
+          fetch: streamingFetch,
+        }),
+      ).rejects.toThrow("exceeds maximum allowed size");
+
+      const streamDb = await prisma.labOrder.findUnique({ where: { id: orderStream.id } });
+      expect(streamDb?.status).toBe("FAILED");
+      expect(streamDb?.lastErrorCode).toBe("STORAGE_FAILED");
+      expect(sentEmails).toHaveLength(0);
+
+      // 2. Content-Length header exceeds 10MB cap
+      const orderHeader = await prisma.labOrder.create({
+        data: {
+          shopId: shop.id,
+          shopifyOrderId: "502",
+          orderName: "#502",
+          bundleId: "bundle-r2f7-header",
+          prescriptionId: rxRow.id,
+          lensId: catalog.lens.id,
+          frameTitle: "Header Frame",
+          status: "PENDING",
+        },
+      });
+
+      const headerFetch = vi.fn(async () =>
+        new Response("large body", {
+          headers: { "content-length": "15000000" },
+        }),
+      ) as unknown as typeof fetch;
+
+      await expect(
+        processDispatch(shop.id, orderHeader.id, {
+          db: prisma,
+          cipher,
+          objectStore,
+          mailer,
+          fetch: headerFetch,
+        }),
+      ).rejects.toThrow("exceeds maximum allowed size");
+
+      const headerDb = await prisma.labOrder.findUnique({ where: { id: orderHeader.id } });
+      expect(headerDb?.status).toBe("FAILED");
+      expect(headerDb?.lastErrorCode).toBe("STORAGE_FAILED");
+      expect(sentEmails).toHaveLength(0);
+
+      // 3. Injected fetch abort/timeout
+      const orderTimeout = await prisma.labOrder.create({
+        data: {
+          shopId: shop.id,
+          shopifyOrderId: "503",
+          orderName: "#503",
+          bundleId: "bundle-r2f7-timeout",
+          prescriptionId: rxRow.id,
+          lensId: catalog.lens.id,
+          frameTitle: "Timeout Frame",
+          status: "PENDING",
+        },
+      });
+
+      const timeoutFetch = vi.fn(async () => {
+        throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+      }) as unknown as typeof fetch;
+
+      await expect(
+        processDispatch(shop.id, orderTimeout.id, {
+          db: prisma,
+          cipher,
+          objectStore,
+          mailer,
+          fetch: timeoutFetch,
+        }),
+      ).rejects.toThrow("aborted due to timeout");
+
+      const timeoutDb = await prisma.labOrder.findUnique({ where: { id: orderTimeout.id } });
+      expect(timeoutDb?.status).toBe("FAILED");
+      expect(timeoutDb?.lastErrorCode).toBe("STORAGE_FAILED");
+      expect(sentEmails).toHaveLength(0);
+    });
+
+    it("R2-F9: transitionToSending uses a single JS Date parameter for both write and stale cutoff", async () => {
+      const shop = await seedShop("shop-r2f9-date.example.test");
+      const catalog = await seedCatalog(shop.id);
+      const cipher = getCipher();
+
+      const rxRow = await prisma.prescription.create({
+        data: {
+          id: "rx-r2f9",
+          shopId: shop.id,
+          rxType: "SINGLE_VISION",
+          source: "MANUAL",
+          cipher: cipher.encrypt(sensitiveRx, `${shop.id}:rx-r2f9`),
+        },
+      });
+
+      const order = await prisma.labOrder.create({
+        data: {
+          shopId: shop.id,
+          shopifyOrderId: "601",
+          orderName: "#601",
+          bundleId: "bundle-r2f9",
+          prescriptionId: rxRow.id,
+          lensId: catalog.lens.id,
+          frameTitle: "Date Param Frame",
+          status: "PENDING",
+        },
+      });
+
+      // Pass an explicit now Date
+      const fixedNow = new Date("2026-11-08T12:00:00.000Z");
+      const trans = await transitionToSending(shop.id, order.id, prisma, 15 * 60 * 1000, fixedNow);
+      expect(trans.transitioned).toBe(true);
+
+      const dbOrder = await prisma.labOrder.findUnique({ where: { id: order.id } });
+      expect(dbOrder?.status).toBe("SENDING");
+      expect(dbOrder?.updatedAt.toISOString()).toBe(fixedNow.toISOString());
     });
   });
 
