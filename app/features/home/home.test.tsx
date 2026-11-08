@@ -52,6 +52,12 @@ describe("Admin Home & Setup Checklist (Spec 31)", () => {
     } as unknown as ActivePlanContext;
   }
 
+  function getLiveSection(container: HTMLElement) {
+    return Array.from(container.querySelectorAll("s-section")).find(
+      (s) => s.getAttribute("heading") === "You're live",
+    );
+  }
+
   // =========================================================================
   // Spec 31 Examples Table Rows
   // =========================================================================
@@ -97,7 +103,7 @@ describe("Admin Home & Setup Checklist (Spec 31)", () => {
       expect(badges[2].textContent).toBe("To do");
 
       // "You're live" card is NOT present
-      expect(screen.queryByText("You're live")).toBeNull();
+      expect(getLiveSection(container)).toBeUndefined();
     });
 
     it("Row 2: 1 lens, lab email set -> both ticked, \"You're live\" card (done)", async () => {
@@ -127,7 +133,9 @@ describe("Admin Home & Setup Checklist (Spec 31)", () => {
       ).toBeTruthy();
 
       // "You're live" card is rendered with links to Lab orders and Lenses
-      expect(screen.getByText("You're live")).toBeTruthy();
+      const liveSection = getLiveSection(container);
+      expect(liveSection).toBeDefined();
+      expect(container.querySelector("s-heading")).toBeNull();
       const labOrdersLink = screen.getByText("Lab orders");
       expect(labOrdersLink).toBeTruthy();
       expect(labOrdersLink.tagName.toLowerCase()).toBe("s-link");
@@ -161,7 +169,7 @@ describe("Admin Home & Setup Checklist (Spec 31)", () => {
       expect(badges[1].textContent).toBe("To do");
 
       // "You're live" is not rendered
-      expect(screen.queryByText("You're live")).toBeNull();
+      expect(getLiveSection(container)).toBeUndefined();
     });
 
     it("Row 4: no plan -> redirect to plan page (09 gate)", async () => {
@@ -291,7 +299,27 @@ describe("Admin Home & Setup Checklist (Spec 31)", () => {
       ).toBeTruthy();
 
       // "You're live" card is displayed
-      expect(screen.getByText("You're live")).toBeTruthy();
+      const liveSection = getLiveSection(container);
+      expect(liveSection).toBeDefined();
+      expect(container.querySelector("s-heading")).toBeNull();
+    });
+
+    it("R1-F3: renders 'You're live' once via section heading without nested s-heading", () => {
+      const fixtureData: HomeLoaderData = {
+        hasLens: true,
+        hasLabEmail: true,
+        apiKey: "api-key-xyz",
+        themeDeepLink:
+          "/admin/themes/current/editor?template=product&addAppBlockId=api-key-xyz/select-lenses",
+      };
+
+      const { container } = render(<HomeView {...fixtureData} />);
+
+      const section = getLiveSection(container);
+      expect(section).toBeDefined();
+      // Remove nested s-heading so 'You're live' renders once through section heading
+      expect(section?.querySelector("s-heading")).toBeNull();
+      expect(container.querySelector("s-heading")).toBeNull();
     });
 
     it("Self-check 2: INV-7 holds — Polaris components only, no raw style or className in owned files", () => {

@@ -1,6 +1,6 @@
 # Spec 17 — Shopify product sync for lenses, options and add-ons
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 13, Spec 14
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —

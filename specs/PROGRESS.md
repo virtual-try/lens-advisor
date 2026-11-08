@@ -23,15 +23,15 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | 14 | [Catalog repository and service](./14-catalog-service.md) | Done | 02, 03 | Standard | — | PR #31 |
 | 15 | [Shop settings repository and service](./15-shop-settings-service.md) | Done | 02, 03 | Standard | — | PR #32 |
 | 16 | [Configurator shell, state machine and API client](./16-configurator-shell.md) | Not started | 03, 04 | Heavy | — |  |
-| 17 | [Shopify product sync for lenses, options and add-ons](./17-shopify-product-sync.md) | Not started | 13, 14 | Standard | — |  |
+| 17 | [Shopify product sync for lenses, options and add-ons](./17-shopify-product-sync.md) | Done | 13, 14 | Standard | — | PR #46 |
 | 18 | [Admin: lens groups and lenses](./18-admin-lenses.md) | Not started | 09, 10, 12, 13, 14, 17 | Standard | — |  |
 | 19 | [Admin: lens options and add-ons](./19-admin-options-addons.md) | Not started | 09, 13, 14, 17 | Standard | — |  |
-| 20 | [Admin: settings page](./20-admin-settings.md) | Not started | 09, 15 | Standard | — |  |
+| 20 | [Admin: settings page](./20-admin-settings.md) | Done | 09, 15 | Standard | — | PR #38 |
 | 21 | [App proxy: storefront catalog endpoint](./21-proxy-catalog-endpoint.md) | Done | 09, 14, 15 | Standard | — | PR #47 |
-| 22 | [App proxy: prescription submit and upload endpoints](./22-proxy-prescription-endpoints.md) | Not started | 02, 05, 06, 10 | Heavy | — |  |
+| 22 | [App proxy: prescription submit and upload endpoints](./22-proxy-prescription-endpoints.md) | Done | 02, 05, 06, 10 | Heavy | — | PR #40 |
 | 23 | [orders/create webhook → lab orders](./23-orders-webhook.md) | Not started | 02, 08, 11, 22 | Heavy | — |  |
-| 24 | [Lab job ticket renderer (PDF and CSV)](./24-lab-ticket-renderer.md) | Not started | 03, 12 | Standard | — |  |
-| 25 | [Compliance and uninstall webhooks](./25-compliance-webhooks.md) | Not started | 02, 06, 07, 08 | Heavy | — |  |
+| 24 | [Lab job ticket renderer (PDF and CSV)](./24-lab-ticket-renderer.md) | Done | 03, 12 | Standard | — | PR #41 |
+| 25 | [Compliance and uninstall webhooks](./25-compliance-webhooks.md) | Done | 02, 06, 07, 08 | Heavy | — | PR #50 |
 | 26 | [Configurator steps 1–2: Rx type and prescription](./26-step-rx-type-and-prescription.md) | Not started | 10, 16 | Standard | — |  |
 | 27 | [Configurator steps 3–4: lens group and lens, with Rx limits](./27-step-lens-selection.md) | Not started | 11, 13, 16 | Standard | — |  |
 | 28 | [Configurator steps 5–6: options, add-ons and price summary](./28-step-options-addons.md) | Not started | 13, 16 | Standard | — |  |
@@ -78,3 +78,8 @@ Not started · In progress · Blocked · Done
 - **2026-11-08** — Spec 14 merged (PR #31).
 - **2026-11-08** — Spec 08 merged (PR #17).
 - **2026-11-08** — Spec 21 merged (PR #47).
+- **2026-11-08** — Spec 20 merged (PR #38).
+- **2026-11-08** — Spec 24 merged (PR #41).
+- **2026-11-08** — Spec 17 merged (PR #46).
+- **2026-11-08** — Spec 22 merged (PR #40).
+- **2026-11-08** — Spec 25 merged (PR #50).

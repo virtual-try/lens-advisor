@@ -14,7 +14,6 @@ export function HomeView({
     <s-page heading="Lens Advisor">
       {allDataItemsDone && (
         <s-section heading="You're live">
-          <s-heading>You're live</s-heading>
           <s-paragraph>
             Your configurator is ready to take prescription orders.
           </s-paragraph>
