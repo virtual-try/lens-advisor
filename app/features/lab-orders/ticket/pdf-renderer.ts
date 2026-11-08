@@ -127,8 +127,12 @@ export async function renderPdf(data: TicketData): Promise<Buffer> {
       });
       doc.moveDown(0.3);
 
-      doc.fontSize(12).font("DejaVuSans-Bold").text(`Order: ${data.orderName}`, {
+      const truncatedOrderName = truncateString(data.orderName ?? "", 60);
+      doc.fontSize(12).font("DejaVuSans-Bold").text(`Order: ${truncatedOrderName}`, {
         align: "center",
+        width: contentWidth,
+        height: 20,
+        ellipsis: true,
       });
       doc.moveDown(0.5);
 
@@ -179,8 +183,13 @@ export async function renderPdf(data: TicketData): Promise<Buffer> {
       });
       doc.moveDown(0.3);
 
-      // Lab code
-      doc.font("DejaVuSans-Bold").text(`Lab Code: ${labCode}`);
+      // Lab code (bounded with explicit truncation and fixed box)
+      const truncatedLabCode = truncateString(labCode, 100);
+      doc.font("DejaVuSans-Bold").text(`Lab Code: ${truncatedLabCode}`, {
+        width: contentWidth,
+        height: 28,
+        ellipsis: true,
+      });
 
       // Lab code compiler warnings (printed directly under the code)
       if (labCodeWarnings && labCodeWarnings.length > 0) {
@@ -234,7 +243,11 @@ export async function renderPdf(data: TicketData): Promise<Buffer> {
             ellipsis: true,
           });
         } else {
-          doc.text("Attached files: (Document attached to dispatch email)");
+          doc.text("Attached files: (Document attached to dispatch email)", {
+            width: contentWidth,
+            height: 20,
+            ellipsis: true,
+          });
         }
         doc.moveDown(0.4);
       }

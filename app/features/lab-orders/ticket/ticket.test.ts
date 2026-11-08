@@ -437,6 +437,69 @@ describe("Spec 24: Lab job ticket renderer", () => {
     });
   });
 
+  // --- Stress test & Rx space reservation (R2-F1) ---
+
+  describe("Bounded free-text fields & Rx reservation under stress (R2-F1)", () => {
+    it("stress: 10,000-char lab code and order name -> exactly 1 page, OD/OS/PD text extractable, truncation marker present", async () => {
+      const longLabCodeTemplate = "A".repeat(10000);
+      const longOrderName = "Order-".repeat(2000); // 12,000 chars
+
+      const data: TicketData = {
+        ...baseFixture,
+        orderName: longOrderName,
+        labCodeTemplate: longLabCodeTemplate,
+        prescription: {
+          od: { sph: -225, cyl: -50, axis: 180 },
+          os: { sph: -200 },
+          pd: { single: 635 },
+        },
+      };
+
+      const pdfBuf = await renderPdf(data);
+      const info = await getPdfInfo(pdfBuf);
+      expect(info.total).toBe(1);
+
+      const text = await extractPdfText(pdfBuf);
+      // Both eyes and PD must be present and extractable
+      expect(text).toContain("OD (Right)");
+      expect(text).toContain("-2.25");
+      expect(text).toContain("OS (Left)");
+      expect(text).toContain("-2.00");
+      expect(text).toContain("Pupillary Distance (PD): 63.5 mm");
+
+      // Truncation marker must be present
+      expect(text).toContain("…");
+    });
+
+    it("bounds all free-text fields (order name, frame title, lens, lab code, notes) simultaneously under extreme load", async () => {
+      const data: TicketData = {
+        ...baseFixture,
+        orderName: "Order-".repeat(2000),
+        frameTitle: "Frame-".repeat(2000),
+        frameSku: "SKU-".repeat(500),
+        lensName: "Lens-".repeat(2000),
+        labCodeTemplate: "LABCODE-".repeat(1500),
+        rxOutOfLimits: true,
+        notes: "Notes-".repeat(2000),
+        prescription: {
+          od: { sph: -225, cyl: -50, axis: 180 },
+          os: { sph: -200 },
+          pd: { single: 635 },
+        },
+      };
+
+      const pdfBuf = await renderPdf(data);
+      const info = await getPdfInfo(pdfBuf);
+      expect(info.total).toBe(1);
+
+      const text = await extractPdfText(pdfBuf);
+      expect(text).toContain("OD (Right)");
+      expect(text).toContain("OS (Left)");
+      expect(text).toContain("Pupillary Distance (PD): 63.5 mm");
+      expect(text).toContain("…");
+    });
+  });
+
   // --- Deterministic PDF output (R1-F5) ---
 
   describe("Deterministic PDF output (R1-F5)", () => {

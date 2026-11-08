@@ -92,7 +92,7 @@ Ties and rounding do not apply in spec 24: all prescription values come pre-form
   - `pnpm typecheck` exit 0
   - `pnpm lint` (`eslint . --max-warnings 0`) exit 0
   - `pnpm build` exit 0
-- **2026-11-08** — Evidence (orchestro spec verify, tree 25d6b2f2): install pass · typecheck pass · lint pass · build pass · test pass 447/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 5afea671): install pass · typecheck pass · lint pass · build pass · test pass 449/0/0
 - **2026-11-08** — Review R1 fixes applied by agy-1 (accepted findings R1-F1..R1-F6):
   - R1-F1: Fixed INV-2 error privacy so all renderer failures (including PDFKit-layer and stream errors) surface as a fixed, data-free error (`TICKET_RENDER_FAILED`) with no original message or cause. Added test forcing a PDFKit text-layer failure with sensitive Rx notes and asserted none reaches error or logs.
   - R1-F2: Formatted CSV axes via rx-core `formatAxis` for both eyes (INV-5); added unit test verifying boundary axes 1 -> `001` and 180 -> `180`.
@@ -100,3 +100,5 @@ Ties and rounding do not apply in spec 24: all prescription values come pre-form
   - R1-F4: Enforced one-page A4 contract by truncating long lists with explicit '+N more' marker and constraining long text/notes. Added test for 200 options, 100 add-ons, and long notes, asserting parsed page count is exactly 1.
   - R1-F5: Made PDF output deterministic by fixing PDF metadata timestamps `CreationDate` and `ModDate` to a fixed constant (no random IDs). Added test verifying byte equality across advanced fake clocks.
   - R1-F6: Updated Examples table and test suite with minimal data (no options, no add-ons, no notes) and single-item list cases. Noted that ties and rounding do not apply (values come pre-formatted from rx-core, INV-5).
+- **2026-11-08** — Review R2 fix applied by agy-1 (accepted finding R2-F1):
+  - R2-F1: Bound every free-text field (`labCode`, `orderName`, `frameTitle`, `lensName`, `notes`) to a fixed box with explicit truncation and visible marker (`…`), laid out so the Rx block (`OD`, `OS`, `PD`) always has reserved space. Added stress tests asserting 10,000-character lab code and order name result in exactly one page with extractable OD, OS, and PD text and truncation marker present.
