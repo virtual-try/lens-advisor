@@ -40,7 +40,7 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | 31 | [Admin home and setup checklist](./31-admin-home-setup.md) | Done | 09, 14, 15 | Light | — | PR #52 |
 | 32 | [Admin: lab orders list, resend and ticket download](./32-admin-lab-orders.md) | Done | 06, 09, 30 | Standard | — | PR #70 |
 | 33 | [End-to-end suite](./33-e2e-suite.md) | Done | 18, 19, 20, 21, 22, 25, 26, 27, 29, 31, 32 | Heavy | — | PR #73 |
-| 34 | [Verification pass](./34-verification-pass.md) | Not started | 33 | Heavy | — | Final gate |
+| 34 | [Verification pass](./34-verification-pass.md) | Done | 33 | Heavy | — | PR #75 |
 
 `Notes` is a **one-line pointer**, not a summary — the real detail lives in each spec's own Log. `Model`
 is the tier from the spec's own `**Model:**` line. `Issue` is `—` until a session opens the GitHub issue,
@@ -95,3 +95,4 @@ Not started · In progress · Blocked · Done
 - **2026-11-08** — Spec 32 merged (PR #70).
 - **2026-11-08** — Spec 29 merged (PR #71).
 - **2026-11-08** — Spec 33 merged (PR #73).
+- **2026-11-08** — Spec 34 merged (PR #75).
