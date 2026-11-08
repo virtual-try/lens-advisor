@@ -67,11 +67,52 @@ Real, used now: shell (16), rx-core (10). Tests: fake API client in context. Stu
 
 ## Done when
 
-- [ ] `pnpm vitest run packages/configurator/src/steps/01-rx-type packages/configurator/src/steps/02-prescription` passes: every Examples row is a case, asserted by role and text. [unit]
-- [ ] INV-2: a test spies on `console.*` across a full manual submit and asserts no Rx value is passed. [unit]
-- [ ] INV-7: the raw-value `rg` from INVARIANTS.md finds nothing in these folders. [static]
-- [ ] INV-9: every message comes from the steps' `strings.ts` (`rg` for JSX text literals finds none). [static]
-- [ ] `pnpm test` passes with 0 failures. [unit]
-- [ ] `specs/inventory/26-step-rx-type-and-prescription.md` lists the step modules and any shared field component. [static]
-- [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
-- [ ] `pnpm build` passes. [static]
+- [x] `pnpm vitest run packages/configurator/src/steps/01-rx-type packages/configurator/src/steps/02-prescription` passes: every Examples row is a case, asserted by role and text. [unit]
+- [x] INV-2: a test spies on `console.*` across a full manual submit and asserts no Rx value is passed. [unit]
+- [x] INV-7: the raw-value `rg` from INVARIANTS.md finds nothing in these folders. [static]
+- [x] INV-9: every message comes from the steps' `strings.ts` (`rg` for JSX text literals finds none). [static]
+- [x] `pnpm test` passes with 0 failures. [unit]
+- [x] `specs/inventory/26-step-rx-type-and-prescription.md` lists the step modules and any shared field component. [static]
+- [x] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
+- [x] `pnpm build` passes. [static]
+
+## Log
+
+- **2026-11-08** — Spec 26 implemented by agy-2 in worktree `spec-26` (branch `spec/26-step-rx-type-and-prescription`). No git writes (lead commits).
+- **2026-11-08** — Created `packages/configurator/src/steps/01-rx-type/`:
+  - `strings.ts`: Centralized user-visible strings for Step 1 radio cards, prices, and guidance disclosure (INV-9).
+  - `rx-type.css`: Fully tokenized CSS using variables from `tokens.css` with responsive mobile layout at `<= 40rem` (INV-7).
+  - `RxTypeStep.tsx`: Radio cards for `SINGLE_VISION`, `PROGRESSIVE`, `READING`, `NON_PRESCRIPTION`. Computes "from <lowest lens price>" dynamically from `catalog.lensGroups`. Types without available lenses in the catalog are hidden.
+  - `index.tsx`: StepModule contract export (`id: "rx-type"`, `titleKey: "Vision"`, `isComplete: (state) => state.rxType !== null`, `isApplicable: () => true`).
+  - `rx-type.test.tsx`: 8 unit tests verifying card selection, dynamic pricing, absence of options without lenses, clinical guidance disclosure, and StepModule contract.
+- **2026-11-08** — Created `packages/configurator/src/steps/02-prescription/`:
+  - `strings.ts`: Centralized user-visible strings for tabs, table headers, OD/OS inputs, dual PD toggle, validation error codes (`RX_VALIDATION_CODES`), disclosures, upload prompt, progress, file chip, and privacy note (INV-9).
+  - `prescription.css`: Fully tokenized CSS using variables from `tokens.css`. At mobile (`<= 40rem`), row labels stack above 2-column input grid (`minmax(0, 1fr) minmax(0, 1fr)`) ensuring zero horizontal overflow at 375 px (INV-7).
+  - `PrescriptionStep.tsx`:
+    - Tab switching between manual entry and file upload based on `settings.manualRxEnabled` and `settings.rxUploadEnabled`.
+    - Manual entry: OD/OS inputs for SPH, CYL, AXIS, ADD (ADD rendered only for Progressive and Reading), single/dual PD toggle.
+    - Blur validation uses spec 10 parsers (`parseSphText`, `parseCylText`, `parseAxis`, `parseAddText`, `parsePd`) and cross-field checks. All inputs have visible labels and `aria-describedby` linking to error spans.
+    - Quick-fill: "Same as right eye? Copy to left" duplicates OD SPH, CYL, and AXIS into OS.
+    - Upload panel: File picker and drag-and-drop supporting JPEG, PNG, HEIC, and PDF up to 10 MB (`accept`, `capture`). Preflight rejects files exceeding 10 MB without making network calls. Presigned upload via `api.getUploadUrl` and `api.uploadFile`, progress indicator, and file chip with remove action.
+    - Submission handling: Intercepts Continue click on the shell footer during step 2. Calls `api.submitPrescription(...)`. Maps server 400 validation error paths (e.g. `od.axis`) back to individual field errors. On success, dispatches `SET_PRESCRIPTION_REF` and `CONTINUE`.
+  - `index.tsx`: StepModule contract export (`id: "prescription"`, `titleKey: "Prescription"`, `isComplete`, `isApplicable: (state) => state.rxType !== "NON_PRESCRIPTION"`).
+  - `prescription.test.tsx`: 14 unit tests covering all 7 Examples table rows, copy-to-left, dual PD mode, upload progress/remove flow, 375 px mobile layout verification, and accessible label/error relationships.
+- **2026-11-08** — Self-checks:
+  - 1. At 375 px, the OD/OS grid fits without horizontal scroll: verified responsive styles in `prescription.css` and unit test asserting mobile container layout rules.
+  - 2. Every field has a visible label and an `aria-describedby` pointing to its error container: verified in unit test across all manual input fields.
+  - 3. INV-2: Verified by unit test spying on `console.log`, `console.info`, `console.warn`, `console.error`, and `console.debug` across full manual submission, asserting no Rx diopter or parameter value is passed to console.
+  - 4. UI checklist (`spec-quality.md` §8) satisfied.
+- **2026-11-08** — Sabotage verifications:
+  - Sabotage 1: In `packages/configurator/src/steps/01-rx-type/index.tsx`, temporarily forced `isComplete: () => false`. Test failed: `AssertionError: expected false to be true // Object.is equality`. Restored, verified green.
+  - Sabotage 2: In `packages/configurator/src/steps/02-prescription/PrescriptionStep.tsx`, temporarily commented out line setting `newErrors.odAxis = strings.errors.AXIS_REQUIRED` on CYL blur with empty AXIS. Test failed: `TestingLibraryElementError: Unable to find an element with the text: Axis is required when you enter a cylinder`. Restored, verified green.
+- **2026-11-08** — Inventory fragment created: `specs/inventory/26-step-rx-type-and-prescription.md` documenting `configurator-step-rx-type` and `configurator-step-prescription`.
+- **2026-11-08** — Gate results:
+  - `pnpm vitest run packages/configurator/src/steps/01-rx-type packages/configurator/src/steps/02-prescription`: 2 test files, 22 passed (0 failures).
+  - INV-7 static check: 0 matches for raw hex, rgb, px, or ms outside `tokens.css`.
+  - INV-9 static check: 0 matches for raw JSX text literals in `.tsx` files.
+  - `pnpm typecheck`: clean (0 errors).
+  - `pnpm lint`: clean (0 errors, 0 warnings).
+  - `pnpm build`: passed (`configurator.js` 142948 B, `loader.css` 3319 B, `loader.js` 1314 B <= 10240 B limit).
+  - `pnpm test`: 60 test files passed, 1009 tests passed (0 failures).
+  - `git diff --check`: clean (no whitespace errors or conflict markers).
+- **2026-11-08** — Evidence (orchestro spec verify, tree cfff4fa0): install pass · typecheck pass · lint pass · build pass · test pass 1009/0/0
