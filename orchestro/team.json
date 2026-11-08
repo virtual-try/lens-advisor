@@ -130,6 +130,22 @@
       "sandboxMode": "read-only",
       "effort": "high",
       "account": "codex-1"
+    },
+    "rev-claude-1-sonnet": {
+      "engine": "claude",
+      "model": "claude-sonnet-5-5",
+      "tier": "Standard",
+      "sandboxMode": "read-only",
+      "effort": "high",
+      "account": "claude-1"
+    },
+    "rev-claude-1-haiku": {
+      "engine": "claude",
+      "model": "claude-haiku-5-5",
+      "tier": "Standard",
+      "sandboxMode": "read-only",
+      "effort": "high",
+      "account": "claude-1"
     }
   },
   "accounts": [
@@ -217,6 +233,11 @@
       "id": "opencode-8",
       "engine": "opencode",
       "launcherCommand": "opencode-8"
+    },
+    {
+      "id": "claude-1",
+      "engine": "claude",
+      "launcherCommand": "claude-1"
     }
   ],
   "policy": {
