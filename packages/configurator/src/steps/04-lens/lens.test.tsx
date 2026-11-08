@@ -249,6 +249,47 @@ describe("Step 4: Lens Selection with Rx Limits", () => {
     );
   });
 
+  it("formats zero limit as '0.00' instead of 'PL' in rendered reason text (R2-F1)", () => {
+    const zeroLimitLens: Lens = {
+      ...fixtureLensL,
+      id: "lens-zero-limit",
+      limits: {
+        ...fixtureLensL.limits,
+        sphMax: 0,
+      },
+    };
+    const zeroLimitCatalog: CatalogResponse = {
+      ...fixtureCatalog,
+      lensGroups: [
+        {
+          ...fixtureCatalog.lensGroups[0],
+          lenses: [zeroLimitLens],
+        },
+      ],
+    };
+    const rx: Prescription = {
+      od: { sph: 100 },
+      os: { sph: 50 },
+      pd: { single: 630 },
+    };
+    const state = createTestState({
+      catalog: zeroLimitCatalog,
+      rxType: "SINGLE_VISION",
+      prescription: rx,
+    });
+    const dispatch = vi.fn();
+
+    const { container } = render(
+      <LensStep state={state} dispatch={dispatch} api={mockApi} />,
+    );
+
+    const reasonEl = container.querySelector("#la-reason-lens-zero-limit");
+    expect(reasonEl).not.toBeNull();
+    expect(reasonEl?.textContent).toBe(
+      "Not available for your prescription — SPH +1.00 is beyond 0.00",
+    );
+  });
+
   // Ordering check: available listed first, then unavailable, each keeping catalog order
   it("lists available lenses first, then unavailable, each keeping catalog order", () => {
     // With OD -825:
@@ -413,109 +454,6 @@ describe("Step 4: Lens Selection with Rx Limits", () => {
     expect(document.activeElement).toBe(radioExtra);
   });
 
-  it("Examples row 6 & R1-F10: real keyboard event with unavailable lens in the middle skips it and moves focus", () => {
-    // Radiogroup with 3 OptionCards where middle card is unavailable
-    // Proves that when an unavailable card is in the middle of a sequence,
-    // real keyboard arrow events skip the middle card and move focus directly to the next available card
-    let selectedId = "lens-1";
-    const setSelected = (id: string) => {
-      selectedId = id;
-    };
-
-    const inputRefs: Record<string, HTMLInputElement | null> = {};
-
-    function TestGroup() {
-      const items = [
-        { id: "lens-1", title: "Lens 1", available: true },
-        { id: "lens-2", title: "Lens 2 (Unavailable)", available: false },
-        { id: "lens-3", title: "Lens 3", available: true },
-      ];
-
-      const onKeyDown = (e: KeyboardEvent) => {
-        if (e.key === "ArrowDown" || e.key === "ArrowRight") {
-          e.preventDefault();
-          const currentId =
-            (document.activeElement as HTMLInputElement)?.value || selectedId;
-          const currentIndex = items.findIndex((i) => i.id === currentId);
-          for (let i = 1; i <= items.length; i++) {
-            const candidateIdx = (currentIndex + i) % items.length;
-            const candidate = items[candidateIdx];
-            if (candidate.available) {
-              setSelected(candidate.id);
-              inputRefs[candidate.id]?.focus();
-              break;
-            }
-          }
-        } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
-          e.preventDefault();
-          const currentId =
-            (document.activeElement as HTMLInputElement)?.value || selectedId;
-          const currentIndex = items.findIndex((i) => i.id === currentId);
-          for (let i = 1; i <= items.length; i++) {
-            const candidateIdx = (currentIndex - i + items.length) % items.length;
-            const candidate = items[candidateIdx];
-            if (candidate.available) {
-              setSelected(candidate.id);
-              inputRefs[candidate.id]?.focus();
-              break;
-            }
-          }
-        }
-      };
-
-      return (
-        <div role="radiogroup" aria-label="Lenses" onKeyDown={onKeyDown}>
-          {items.map((item) => (
-            <label key={item.id}>
-              <input
-                type="radio"
-                name="test-lens"
-                value={item.id}
-                checked={selectedId === item.id}
-                aria-disabled={!item.available ? "true" : undefined}
-                onChange={() => {
-                  if (item.available) setSelected(item.id);
-                }}
-                ref={(el) => {
-                  inputRefs[item.id] = el;
-                }}
-              />
-              {item.title}
-            </label>
-          ))}
-        </div>
-      );
-    }
-
-    const { container } = render(<TestGroup />);
-
-    const radio1 = container.querySelector<HTMLInputElement>('input[value="lens-1"]');
-    const radio2 = container.querySelector<HTMLInputElement>('input[value="lens-2"]');
-    const radio3 = container.querySelector<HTMLInputElement>('input[value="lens-3"]');
-
-    expect(radio1).not.toBeNull();
-    expect(radio2).not.toBeNull();
-    expect(radio3).not.toBeNull();
-
-    // Radio 2 in the middle is unavailable
-    expect(radio2?.getAttribute("aria-disabled")).toBe("true");
-    expect(radio2?.disabled).toBe(false);
-
-    // Focus on radio 1
-    radio1!.focus();
-    expect(document.activeElement).toBe(radio1);
-
-    // ArrowDown from radio 1 skips unavailable radio 2 in the middle, lands on radio 3
-    fireEvent.keyDown(radio1!, { key: "ArrowDown" });
-    expect(selectedId).toBe("lens-3");
-    expect(document.activeElement).toBe(radio3);
-
-    // ArrowUp from radio 3 skips unavailable radio 2 in the middle, lands on radio 1
-    fireEvent.keyDown(radio3!, { key: "ArrowUp" });
-    expect(selectedId).toBe("lens-1");
-    expect(document.activeElement).toBe(radio1);
-  });
-
   // Invariant INV-5: reason values come from integers through formatDiopter
   describe("Invariant INV-5: diopter values formatting", () => {
     it("formats integer hundredths through formatDiopter without float math", () => {
@@ -523,7 +461,18 @@ describe("Step 4: Lens Selection with Rx Limits", () => {
       expect(formatReasonDiopter(-800)).toBe("−8.00");
       expect(formatReasonDiopter(650)).toBe("+6.50");
       expect(formatReasonDiopter(600)).toBe("+6.00");
-      expect(formatReasonDiopter(0)).toBe("PL");
+      // Zero limit edge case (R2-F1): limit of 0 formats as "0.00", not "PL"
+      const zeroLimitReason = formatLensReason({
+        code: "SPH_ABOVE_MAX",
+        field: "sph",
+        eye: "OD",
+        value: 100,
+        limit: 0,
+      });
+      expect(zeroLimitReason).toBe(
+        "Not available for your prescription — SPH +1.00 is beyond 0.00",
+      );
+      expect(formatReasonDiopter(0)).toBe("0.00");
       expect(formatDiopter(-825)).toBe("-8.25");
     });
 

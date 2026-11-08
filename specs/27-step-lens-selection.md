@@ -75,7 +75,7 @@ Fixture lens L: SPH −800..+600, CYL −400..0, SV + PROGRESSIVE.
 
 - **2026-11-08** — Spec 27 implemented by coder agy-5 (engine agy) in worktree `spec-27` (branch `spec/27-step-lens-selection`). No git writes (lead commits).
 - **2026-11-08** — Landed `packages/configurator/src/steps/03-lens-group/`:
-  - `store.ts`: In-memory chosen lens group ID accessor (`getSelectedLensGroupId`, `setSelectedLensGroupId`, `clearSelectedLensGroupId`), deriving from `state.selection.lensId` when set.
+  - ~~`store.ts`: In-memory chosen lens group ID accessor (`getSelectedLensGroupId`, `setSelectedLensGroupId`, `clearSelectedLensGroupId`), deriving from `state.selection.lensId` when set.~~ (Deleted in review R1 in favor of shell reducer `state.lensGroupId`).
   - `strings.ts`: User-visible strings for Step 3 (INV-9).
   - `ChoiceCard.css`: Accessible choice card styling adhering strictly to `tokens.css` with zero raw values (INV-7).
   - `OptionCard.tsx`: Accessible choice card component with radio input, touch target (min 44 px), badge, description, price label, and screen reader announcements (`aria-describedby` linked to `.la-choice__reason`).
@@ -86,7 +86,7 @@ Fixture lens L: SPH −800..+600, CYL −400..0, SV + PROGRESSIVE.
   - `strings.ts`: User-visible strings and reason text templates for Step 4 (INV-9).
   - `format-reason.ts`: Diopter reason formatter mapping `LimitExceededReason` codes to human text via `formatDiopter` and typographic minus (`\u2212`, INV-5).
   - `lens.css`: Banner and notice styles adhering strictly to `tokens.css` (INV-7).
-  - `LensStep.tsx`: Step 4 Preact view rendering lenses of the chosen group. Integrates `filterLenses` (spec 11) using the in-memory prescription and `rxType`. Lists available lenses first (catalog order) followed by unavailable lenses (catalog order). Renders disabled lenses with `aria-disabled="true"`, `disabled`, and `aria-describedby` linked to reason text. When all lenses are unavailable, renders notice banner with "Change prescription" button dispatching `{ type: "GO_TO_STEP", stepIndex: 1 }`. Handles ArrowDown/ArrowRight and ArrowUp/ArrowLeft skipping disabled lenses.
+  - `LensStep.tsx`: Step 4 Preact view rendering lenses of the chosen group. Integrates `filterLenses` (spec 11) using the in-memory prescription and `rxType`. Lists available lenses first (catalog order) followed by unavailable lenses (catalog order). Renders unavailable lenses with `aria-disabled="true"` (no native `disabled` attribute) and `aria-describedby` linked to reason text. When all lenses are unavailable, renders notice banner with "Change prescription" button dispatching `{ type: "GO_TO_STEP", stepId: "prescription" }`. Handles ArrowDown/ArrowRight and ArrowUp/ArrowLeft skipping disabled lenses.
   - `index.tsx`: StepModule contract implementation (`id: "lens"`, `titleKey: "lens"`, `isComplete`, `isApplicable`, `Component`).
   - `lens.test.tsx`: Comprehensive unit tests covering all Examples rows: Row 1 (SV, OD −2.25 enabled and selectable), Row 2 (SV, OD −8.25 disabled with reason mentioning "−8.25" and "−8.00"), Row 3 (SV, OD +5.00/+1.50x90 disabled after transposition to +6.50), Row 5 (all lenses unavailable renders explanation and "Change prescription" returning to Step 2), Row 6 (arrow keys skip disabled lenses), and static invariants (INV-5, INV-7, INV-9).
 - **2026-11-08** — Created inventory fragment `specs/inventory/27-step-lens-selection.md` documenting step modules, shared store, `OptionCard`, and reason formatter.
@@ -119,4 +119,9 @@ Fixture lens L: SPH −800..+600, CYL −400..0, SV + PROGRESSIVE.
     - `pnpm lint` (`eslint . --max-warnings 0`): exit 0.
     - `pnpm build`: exit 0 (`loader.js` 1314 B <= 10 KB limit, `configurator.js` 113683 B, `loader.css` 3319 B).
     - `git diff --check`: clean (exit 0).
-- **2026-11-08** — Evidence (orchestro spec verify, tree c6c47cca): install pass · typecheck pass · lint pass · build pass · test pass 1026/0/0
+- **2026-11-08** — Review 2 fixes landed by coder agy-5:
+  - **R2-F1** [MAJOR]: Formatted zero limits/values as `"0.00"` instead of plano `"PL"` in `packages/configurator/src/steps/04-lens/format-reason.ts` without touching `rx-core`'s `formatDiopter`. Replaced `formatReasonDiopter(0) === 'PL'` assertion in `lens.test.tsx` with zero-limit reason text assertions and added a rendered component test for zero-limit reason text.
+  - **R2-F2** [MINOR]: Deleted `TestGroup` test copy in `packages/configurator/src/steps/04-lens/lens.test.tsx` that duplicated arrow-key loops outside production code; the real `LensStep` wrap-around test covers skipping unavailable lenses.
+  - **R2-F3** [MINOR]: Corrected/struck stale claims in the initial landed Log lines (`store.ts` struck as deleted in R1, removed native `disabled` reference in `LensStep.tsx`, and updated "Change prescription" action to `stepId: "prescription"`). Status line left untouched (lead-owned).
+  - **R2-F4** [MINOR]: The `requestAnimationFrame`/`cancelAnimationFrame` polyfill was not needed (all tests pass without it) and was removed. The real gap: Preact's hooks schedule effects with rAF plus a 100 ms `setTimeout` fallback; when that timer fires after vitest tears down jsdom it calls the removed `cancelAnimationFrame`, giving 3 unhandled ReferenceErrors from `shell.test.tsx` that failed the `test` gate. `src/test/setup.ts` now drains timers in an `afterAll` (150 ms) before teardown; 3 consecutive configurator runs: 228/228, 0 errors (lead, 2026-11-08).
+- **2026-11-08** — Evidence (orchestro spec verify, tree 99602622): install pass · typecheck pass · lint pass · build pass · test pass 1026/0/0

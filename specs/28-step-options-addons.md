@@ -1,6 +1,6 @@
 # Spec 28 — Configurator steps 5–6: options, add-ons and price summary
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 13, Spec 16
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —

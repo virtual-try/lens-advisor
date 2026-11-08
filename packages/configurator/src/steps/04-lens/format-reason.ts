@@ -5,9 +5,13 @@ import { lensStrings } from "./strings.js";
 
 /**
  * Formats integer hundredths of a diopter through rx-core's formatDiopter (INV-5),
- * normalizing ASCII hyphen to typographic minus (U+2212).
+ * normalizing ASCII hyphen to typographic minus (U+2212). Zero limit/value formats
+ * as numeric "0.00" rather than plano "PL" (R2-F1).
  */
 export function formatReasonDiopter(hundredths: Diopter): string {
+  if (hundredths === 0) {
+    return "0.00";
+  }
   return formatDiopter(hundredths).replace(/-/g, "−");
 }
 
