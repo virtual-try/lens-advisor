@@ -1,6 +1,6 @@
 # Spec 21 — App proxy: storefront catalog endpoint
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 09, Spec 14, Spec 15
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —
@@ -100,4 +100,4 @@ Stubbed: none. Consumer: configurator API client (16) at runtime; e2e flow (33).
 - **2026-11-08** — Fix round R1 by agy-2 addressing rev-codex review findings:
   - R1-F1: Updated Examples Row 3 test in `app/routes/proxy.catalog.test.ts` to test literally: arranged a verified app-proxy request whose query URL carries `shop=B` (`shop-b-catalog.myshopify.com`) while `authenticate.public.appProxy` returns session A (`shop-a-catalog.myshopify.com`); asserted 200 OK returning Shop A's catalog, asserted `catalogService.getStorefrontCatalog` was called with `shopA.shopId` only (0 calls with `shopB.shopId`), and asserted `prisma.shop.findUnique` was called for domain A only.
   - R1-F2: Added spies on shop repository read (`prisma.shop.findUnique`) alongside `catalogService.getStorefrontCatalog`, `settingsService.getSettings`, and `getPlanStatus` for both unsigned and forged requests in Row 2 and Self-check 1 (INV-6); asserted zero calls (`toHaveBeenCalledTimes(0)`) on each. Fixed Self-check 1 documentation in the Log so it states exactly what is asserted.
-- **2026-11-08** — Evidence (orchestro spec verify, tree 028bd019): install pass · typecheck pass · lint pass · build pass · test pass 522/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree fb9deae2): install pass · typecheck pass · lint pass · build pass · test pass 575/0/0
