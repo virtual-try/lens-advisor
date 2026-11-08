@@ -1,6 +1,6 @@
 # Spec 19 — Admin: lens options and add-ons
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 09, Spec 13, Spec 14, Spec 17
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —
@@ -59,11 +59,84 @@ Real, used now: 14, 17, 09. Tests: `testConfig()` loader/action calls, fake admi
 
 ## Done when
 
-- [ ] `pnpm vitest run app/features/catalog/admin-options.test.tsx` passes: every Examples row is a case; empty and populated states render. [unit]
-- [ ] INV-1: posting another shop's option value id returns 404, nothing changes. [unit]
-- [ ] INV-4: money input converts "35.5" → 3550 and "0.1" → 10 exactly (table test). [unit]
-- [ ] INV-7: `rg 'style=|className=|<style' app/routes/app.options* app/routes/app.add-ons* app/features/catalog/components/option-value-form.tsx` finds nothing. [static]
-- [ ] `pnpm test` passes with 0 failures. [unit]
-- [ ] `specs/inventory/19-admin-options-addons.md` lists routes and `OptionValueForm`. [static]
-- [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
-- [ ] `pnpm build` passes. [static]
+- [x] `pnpm vitest run app/features/catalog/admin-options.test.tsx` passes: every Examples row is a case; empty and populated states render. [unit]
+- [x] INV-1: posting another shop's option value id returns 404, nothing changes. [unit]
+- [x] INV-4: money input converts "35.5" → 3550 and "0.1" → 10 exactly (table test). [unit]
+- [x] INV-7: `rg 'style=|className=|<style' app/routes/app.options* app/routes/app.add-ons* app/features/catalog/components/option-value-form.tsx` finds nothing. [static]
+- [x] `pnpm test` passes with 0 failures. [unit]
+- [x] `specs/inventory/19-admin-options-addons.md` lists routes and `OptionValueForm`. [static]
+- [x] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
+- [x] `pnpm build` passes. [static]
+
+## Log
+
+- **2026-11-08** — Implemented Spec 19 (Admin: lens options and add-ons) by agy-1:
+  - Created `app/features/catalog-options/nav.ts` exporting `{ label: "Options & add-ons", href: "/app/options", order: 20 }` in isolated feature folder for auto-discovery by nav glob.
+  - Implemented `app/features/catalog/components/option-value-form.tsx` using Polaris web components (`s-stack`, `s-text-field`, `s-choice-list`, `s-choice`, `s-banner`, `s-button`) without any CSS classes or inline styles (INV-7). Provides label, price delta, code source choice (lab token `key=VALUE` vs override `overrideCode`), swatch colour for `COLOR` group kind, and inline validation errors.
+  - Implemented `app/routes/app.options._index.tsx` presenting 3 sections ("Material & index", "Tint & colour", "Add-ons") with empty and populated states, group modal, deletion, and reordering.
+  - Implemented `app/routes/app.options.$id.tsx` for creating/updating option values scoped to `session.shop`. Uses `parseMoneyText` without floating-point math (INV-4), validates code source exclusivity (`ONE_CODE_SOURCE`), syncs to Shopify via `syncItem` on positive delta, and calls `archiveItem` + clears `shopifyVariantId` on delta reduction to 0. Enforces tenant isolation (INV-1) by returning 404 for missing or cross-shop IDs.
+  - Implemented `app/routes/app.add-ons.$id.tsx` for add-ons CRUD scoped to `session.shop`. Parses price with `parseMoneyText`, triggers `syncItem`, and archives Shopify variant and DB row on archive action.
+  - Created inventory file `specs/inventory/19-admin-options-addons.md`.
+  - Created `app/features/catalog/admin-options.test.tsx` containing 24 tests covering all 5 Examples rows, INV-1 cross-tenant 404, INV-4 money conversion table test, nav discovery, empty/populated section renders, and add-on CRUD.
+  - Sabotages executed and verified:
+    1. Sabotage 1 (code exclusivity): Removed check for both token and override in `app/routes/app.options.$id.tsx` -> `AssertionError: expected 200 to be 400` in `admin-options.test.tsx`; restored, green.
+    2. Sabotage 2 (variant clearing): Bypassed clearing `shopifyVariantId` on delta 1500 -> 0 in `app/routes/app.options.$id.tsx` -> `AssertionError: expected 'gid://shopify/ProductVariant/555' to be null` in `admin-options.test.tsx`; restored, green.
+    3. Sabotage 3 (tenant isolation): Replaced `NotFoundError` 404 response with 200 on cross-shop option value update in `app/routes/app.options.$id.tsx` -> `AssertionError: expected 200 to be 404` in `admin-options.test.tsx`; restored, green.
+  - Gates:
+    - `pnpm vitest run app/features/catalog/admin-options.test.tsx` -> 24 passed (24)
+    - `pnpm test` -> 43 files passed (43), 686 tests passed (686)
+    - `rg 'style=|className=|<style' app/routes/app.options* app/routes/app.add-ons* app/features/catalog/components/option-value-form.tsx` -> 0 matches (exit 1)
+    - `pnpm typecheck` -> exit 0 (0 errors)
+    - `pnpm lint` -> exit 0 (0 errors, 0 warnings)
+    - `pnpm build` -> exit 0
+    - `git diff --check` -> exit 0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 75e42fad): install pass · typecheck pass · lint pass · build pass · test pass 1094/0/0
+- **2026-11-08** — Addressed Review R5 findings:
+  - R5-F1: Upon successful save without syncFailed, navigate back to `/app/options` and display 'Saved' toast via App Bridge; when syncFailed is true, remain on the form and display the sync failed badge (both `app.options.$id.tsx` and `app.add-ons.$id.tsx`).
+  - R5-F3: Reworded swatch help example in `OptionValueForm` to colour name 'black', removing the raw hex literal `#1a1a1a` to satisfy INV-7.
+  - R5-F4: For new options and add-ons (`id === "new"`), ignored any posted currency field and used shop currency from `getShopCurrency(admin)`.
+  - R5-F5: Added hidden `optionGroupId` input in `OptionValueForm` sourced from `initialData.optionGroupId`, ensuring `/app/options/new` without `?groupId` saves under the group shown.
+  - Added tests in `app/features/catalog/admin-options.test.tsx` for R5-F1, R5-F3, R5-F4, and R5-F5.
+  - Gates:
+    - `pnpm vitest run app/features/catalog/admin-options.test.tsx` -> 61 passed (61)
+    - `pnpm test` -> 43 files passed (43), 723 tests passed (723)
+    - `rg '#[0-9a-fA-F]{3,8}\b' app/routes/app.options* app/routes/app.add-ons* app/features/catalog-options/ app/features/catalog/components/option-value-form.tsx` -> 0 matches (exit 1)
+    - `rg 'style=|className=|<style' app/routes/app.options* app/routes/app.add-ons* app/features/catalog/components/option-value-form.tsx` -> 0 matches (exit 1)
+    - `pnpm typecheck` -> exit 0 (0 errors)
+    - `pnpm lint` -> exit 0 (0 errors, 0 warnings)
+    - `pnpm build` -> exit 0
+    - `git diff --check` -> exit 0
+- **2026-11-08** — Addressed Review R4 findings:
+  - R4-F1: Retain `shopifyVariantId` on price update `syncItem` failures, return `syncFailed: true`, and show badge with Retry; updated R3-F1 test to assert ID retention and that Retry calls update rather than create (both routes).
+  - R4-F2: Removed `requestSubmit` `onClick` handlers from submit buttons, using native submit alone; tested that one click triggers exactly one action call.
+  - R4-F3: Query shop currency via `ShopCurrency` in loaders and use for new options/add-ons; throws 500 `CURRENCY_UNAVAILABLE` if unavailable. Tested with JPY shop.
+  - R4-F5: Recorded intentional cross-owner edits in `app/features/catalog/schema.ts` and `packages/rx-core/src/pricing/index.ts` in spec Log.
+  - R4-F6: Triggered archive when `priceDeltaMinor === 0 && hadVariant` to cleanly clear leftover variant IDs from earlier failed archives.
+  - R4-F7: Eliminated test scaffolding `try/catch` around `useNavigation` in production route components and wrapped test renders in data routers.
+  - R4-F8: Removed duplicate `name="codeType"` from choice list so `codeType` is posted once via the hidden input.
+  - R4-F9: Added test asserting index page disables all interactive buttons during submission, and INV-1 test for cross-tenant option value creation returning 404.
+  - Gates:
+    - `pnpm vitest run app/features/catalog/admin-options.test.tsx` -> 53 passed (53)
+    - `pnpm test` -> 43 files passed (43), 715 tests passed (715)
+    - `rg 'style=|className=|<style' app/routes/app.options* app/routes/app.add-ons* app/features/catalog/components/option-value-form.tsx` -> 0 matches (exit 1)
+    - `pnpm typecheck` -> exit 0 (0 errors)
+    - `pnpm lint` -> exit 0 (0 errors, 0 warnings)
+    - `pnpm build` -> exit 0
+    - `git diff --check` -> exit 0
+- **2026-11-08** — Addressed Review R3 and R4 findings (Spec 18 R6-F1/F2 Ruling):
+  - R3-F1: Surfaced and persisted positive-price sync failures on options and add-ons with Retry button on both detail and list views.
+  - R3-F2: Maintained mapping when token/override is omitted on partial updates, and cleared only on explicit selection ("none" or mode switch).
+  - R3-F3: Enforced prevention of deleting populated option groups with 409 `GROUP_NOT_EMPTY`.
+  - R3-F4: Required positive price (`> 0`) on add-on creation/updates with structured 400 error.
+  - R3-F5: Clarified help text to reference shop normal currency units rather than minor units.
+  - R4-F1: Migrated forms to React Router `<Form>` to ensure submissions dispatch through the router and display inline error banners.
+  - R4-F2: Conditioned `disabled` and `loading` attributes so web-component boolean attributes are completely omitted when false.
+  - Added 10 verification test cases in `app/features/catalog/admin-options.test.tsx` (total 47 tests passed).
+  - Gates:
+    - `pnpm vitest run app/features/catalog/admin-options.test.tsx` -> 47 passed (47)
+    - `pnpm test` -> 43 files passed (43), 709 tests passed (709)
+    - `rg 'style=|className=|<style' app/routes/app.options* app/routes/app.add-ons* app/features/catalog/components/option-value-form.tsx` -> 0 matches (exit 1)
+    - `pnpm typecheck` -> exit 0 (0 errors)
+    - `pnpm lint` -> exit 0 (0 errors, 0 warnings)
+    - `pnpm build` -> exit 0
+    - `git diff --check` -> exit 0
