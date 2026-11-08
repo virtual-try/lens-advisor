@@ -1,11 +1,10 @@
 import { checkLens } from "../../../../rx-core/src/limits/check-lens.js";
 import type { ConfiguratorState, StepModule } from "../../shell/types.js";
-import { getSelectedLensGroupId } from "../03-lens-group/store.js";
 import { LensStep } from "./LensStep.js";
 
 export function isComplete(state: ConfiguratorState): boolean {
   if (!state.selection.lensId || !state.catalog) return false;
-  const chosenGroupId = getSelectedLensGroupId(state);
+  const chosenGroupId = state.lensGroupId;
   if (!chosenGroupId) return false;
   const group = state.catalog.lensGroups.find((g) => g.id === chosenGroupId);
   if (!group) return false;

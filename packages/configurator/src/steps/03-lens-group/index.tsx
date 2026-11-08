@@ -1,9 +1,8 @@
 import type { ConfiguratorState, StepModule } from "../../shell/types.js";
 import { LensGroupStep } from "./LensGroupStep.js";
-import { getSelectedLensGroupId } from "./store.js";
 
 export function isComplete(state: ConfiguratorState): boolean {
-  const groupId = getSelectedLensGroupId(state);
+  const groupId = state.lensGroupId;
   if (!groupId || !state.catalog) return false;
   const group = state.catalog.lensGroups.find((g) => g.id === groupId);
   if (!group) return false;

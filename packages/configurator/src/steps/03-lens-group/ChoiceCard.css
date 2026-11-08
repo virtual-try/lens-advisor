@@ -19,6 +19,12 @@
     background-color var(--la-transition-duration) var(--la-ease);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .la-choice {
+    transition: none;
+  }
+}
+
 .la-choice:hover:not(.la-choice--disabled) {
   border-color: var(--la-hairline-2);
 }
@@ -43,12 +49,14 @@
   outline-offset: var(--la-focus-offset);
 }
 
+.la-choice:has(input[aria-disabled="true"]),
 .la-choice:has(input:disabled),
 .la-choice--disabled {
   cursor: not-allowed;
   background: var(--la-bg);
 }
 
+.la-choice:has(input[aria-disabled="true"]):hover,
 .la-choice:has(input:disabled):hover,
 .la-choice--disabled:hover {
   border-color: var(--la-hairline);
@@ -81,6 +89,8 @@
   font-variant-numeric: var(--la-font-numeric);
 }
 
+.la-choice:has(input[aria-disabled="true"]) .la-choice__title,
+.la-choice:has(input[aria-disabled="true"]) .la-choice__price,
 .la-choice:has(input:disabled) .la-choice__title,
 .la-choice:has(input:disabled) .la-choice__price,
 .la-choice--disabled .la-choice__title,
@@ -119,6 +129,7 @@
   opacity: 1;
 }
 
+.la-choice:has(input[aria-disabled="true"]) .la-mark,
 .la-choice:has(input:disabled) .la-mark,
 .la-choice--disabled .la-mark {
   border-color: var(--la-hairline);

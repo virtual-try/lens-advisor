@@ -35,19 +35,33 @@ export function OptionCard({
 }: OptionCardProps): JSX.Element {
   const cardClassName = `la-choice${checked ? " la-choice--selected" : ""}${disabled ? " la-choice--disabled" : ""}`;
 
+  const handleClick = (e: MouseEvent) => {
+    if (disabled) {
+      e.preventDefault();
+    }
+  };
+
+  const handleInputKeyDown = (e: KeyboardEvent) => {
+    if (disabled && (e.key === " " || e.key === "Enter")) {
+      e.preventDefault();
+      return;
+    }
+    onKeyDown?.(e);
+  };
+
   return (
-    <label class={cardClassName} htmlFor={id}>
+    <label class={cardClassName} htmlFor={id} onClick={handleClick}>
       <input
         type="radio"
         id={id}
         name={name}
         value={value}
         checked={checked}
-        disabled={disabled}
         aria-disabled={disabled ? "true" : undefined}
         aria-describedby={disabled && reasonId ? reasonId : undefined}
-        onChange={onChange}
-        onKeyDown={onKeyDown}
+        onChange={disabled ? undefined : onChange}
+        onClick={handleClick}
+        onKeyDown={handleInputKeyDown}
         ref={inputRef}
       />
       <span class="la-mark" aria-hidden="true" />
@@ -58,7 +72,7 @@ export function OptionCard({
         </span>
         {description ? <span class="la-choice__desc">{description}</span> : null}
         {disabled && reasonText && reasonId ? (
-          <span class="la-choice__reason" id={reasonId}>
+          <span class="la-choice__reason" id={reasonId} aria-hidden="true">
             <svg
               class="la-choice__reason-icon"
               viewBox="0 0 16 16"

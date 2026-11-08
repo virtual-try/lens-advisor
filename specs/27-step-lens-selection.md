@@ -77,7 +77,7 @@ Fixture lens L: SPH −800..+600, CYL −400..0, SV + PROGRESSIVE.
 - **2026-11-08** — Landed `packages/configurator/src/steps/03-lens-group/`:
   - `store.ts`: In-memory chosen lens group ID accessor (`getSelectedLensGroupId`, `setSelectedLensGroupId`, `clearSelectedLensGroupId`), deriving from `state.selection.lensId` when set.
   - `strings.ts`: User-visible strings for Step 3 (INV-9).
-  - `OptionCard.css`: Accessible choice card styling adhering strictly to `tokens.css` with zero raw values (INV-7).
+  - `ChoiceCard.css`: Accessible choice card styling adhering strictly to `tokens.css` with zero raw values (INV-7).
   - `OptionCard.tsx`: Accessible choice card component with radio input, touch target (min 44 px), badge, description, price label, and screen reader announcements (`aria-describedby` linked to `.la-choice__reason`).
   - `LensGroupStep.tsx`: Step 3 Preact view rendering lens groups as cards with "from" prices, filtering out groups with zero lenses for active `rxType`, handling radio selection and resetting lens when group changes, and supporting arrow-key keyboard navigation.
   - `index.tsx`: StepModule contract implementation (`id: "lens-group"`, `titleKey: "lens_group"`, `isComplete`, `isApplicable`, `Component`).
@@ -91,14 +91,32 @@ Fixture lens L: SPH −800..+600, CYL −400..0, SV + PROGRESSIVE.
   - `lens.test.tsx`: Comprehensive unit tests covering all Examples rows: Row 1 (SV, OD −2.25 enabled and selectable), Row 2 (SV, OD −8.25 disabled with reason mentioning "−8.25" and "−8.00"), Row 3 (SV, OD +5.00/+1.50x90 disabled after transposition to +6.50), Row 5 (all lenses unavailable renders explanation and "Change prescription" returning to Step 2), Row 6 (arrow keys skip disabled lenses), and static invariants (INV-5, INV-7, INV-9).
 - **2026-11-08** — Created inventory fragment `specs/inventory/27-step-lens-selection.md` documenting step modules, shared store, `OptionCard`, and reason formatter.
 - **2026-11-08** — Self-checks verified:
-  1. Disabled lenses are announced with their reason to screen readers via `aria-disabled="true"`, `disabled`, and `aria-describedby` linked to `la-reason-<lensId>` element.
+  1. Unavailable lenses are announced with their reason to screen readers via `aria-disabled="true"` and `aria-describedby` (no native `disabled` attribute, reason omitted from label via `aria-hidden="true"`).
   2. Reason text uses the formatter (`formatReasonDiopter` calling `formatDiopter`, producing "−8.25" and "−8.00", not raw integers or extra decimals).
-  3. UI checklist (`spec-quality.md` §8) holds: touch targets ≥ 44 px, focus outlines with token offsets, accessible color contrasts, empty/dead-end states handled.
-- **2026-11-08** — Gates verified:
-  - `pnpm vitest run packages/configurator/src/steps/03-lens-group packages/configurator/src/steps/04-lens`: 2 test files passed, 23 tests passed, 0 failures.
-  - `pnpm test`: 60 test files passed, 1010 tests passed, 0 failures.
-  - `pnpm typecheck`: exit 0.
-  - `pnpm lint` (`eslint . --max-warnings 0`): exit 0.
-  - `pnpm build`: exit 0 (`loader.js` 1314 B <= 10 KB limit, `configurator.js` 112393 B, `loader.css` 3319 B).
-  - `git diff --check`: clean (exit 0).
-- **2026-11-08** — Evidence (orchestro spec verify, tree cfffffc6): install pass · typecheck pass · lint pass · build pass · test pass 1010/0/0
+  3. UI checklist (`spec-quality.md` §8) holds: touch targets ≥ 44 px, focus outlines with token offsets, reduced-motion overrides, empty/dead-end states handled.
+- **2026-11-08** — Review 1 fixes landed by coder agy-5:
+  - **R1-F1** [BLOCKER] & **R1-F2** [MAJOR]: Intentional cross-owner edit to spec 16's shell reducer (`packages/configurator/src/shell/`):
+    - Added `lensGroupId: string | null` to `ConfiguratorState` (`createInitialState` defaults to `null`).
+    - Added `SET_LENS_GROUP` action: `{ type: "SET_LENS_GROUP", lensGroupId: string }`.
+    - Reducer table row: `SET_LENS_GROUP` across all statuses sets `state.lensGroupId` and clears `selection.lensId` when changing group.
+    - Reducer table row: `CLOSE` and `RESET` clear `lensGroupId` back to `null`.
+    - Reducer matrix in `reducer.test.ts` expanded with `SET_LENS_GROUP` on all 5 statuses (`idle`, `loading`, `ready`, `error`, `empty`).
+    - Derived `isComplete` in `packages/configurator/src/steps/03-lens-group/index.tsx` directly from `state.lensGroupId`.
+    - Added shell-level tests in `shell.test.tsx` verifying picking a group enables Continue (`Footer.tsx`), and reopening for a second frame resets group selection.
+    - Deleted module-global `store.ts` (`getSelectedLensGroupId`, `setSelectedLensGroupId`, `clearSelectedLensGroupId`).
+  - **R1-F3** [MAJOR]: Removed native `disabled` attribute from `OptionCard.tsx`, keeping `aria-disabled="true"` and `aria-describedby`. Marked `.la-choice__reason` with `aria-hidden="true"` so the reason is omitted from browse mode label calculation and read only via `aria-describedby` in focus mode. Clicks and `onChange` on unavailable lenses are ignored. Updated `ChoiceCard.css` with `[aria-disabled="true"]` rules.
+  - **R1-F4** [MAJOR]: Added focus management to arrow-key navigation in `LensGroupStep.tsx` and `LensStep.tsx` using `inputRefs`. Selection and keyboard focus ring (`document.activeElement`) now move together.
+  - **R1-F5** [MAJOR]: Added `@media (prefers-reduced-motion: reduce) { transition: none; }` in `ChoiceCard.css` (for `.la-choice`) and `lens.css` (for `.la-notice__btn`).
+  - **R1-F6** [MAJOR]: Rewrote INV-7 and INV-9 static checks in `lens-group.test.tsx` and `lens.test.tsx` to read files via `node:fs` and inspect TypeScript AST via `ts.createSourceFile` + `ts.isJsxText`, eliminating fragile shell-outs and catching multi-line JSX text.
+  - **R1-F7** [MINOR]: Updated `LensStep.tsx` "Change prescription" handler to dispatch `{ type: "GO_TO_STEP", stepId: "prescription" }`. Supported `stepId` resolution in shell reducer.
+  - **R1-F8** [MINOR]: Replaced silent fallback to `lensGroups[0]` with `noGroupSelected` rendering when `lensGroupId` is null.
+  - **R1-F10** [MINOR]: Added mixed-group test for Row 4 (matching lenses only), real keyboard event with unavailable lens in the middle, and render tests for no-group and null-catalog states.
+  - **R1-F11** [MINOR]: Corrected Log file name (`ChoiceCard.css`), removed unsupported contrast claim, and re-verified Self-check 1 after R1-F3.
+  - Gates verified:
+    - `pnpm vitest run packages/configurator/src/steps/03-lens-group packages/configurator/src/steps/04-lens`: 2 test files passed, 28 tests passed, 0 failures.
+    - `pnpm test`: 60 test files passed, 1026 tests passed, 0 failures.
+    - `pnpm typecheck`: exit 0.
+    - `pnpm lint` (`eslint . --max-warnings 0`): exit 0.
+    - `pnpm build`: exit 0 (`loader.js` 1314 B <= 10 KB limit, `configurator.js` 113683 B, `loader.css` 3319 B).
+    - `git diff --check`: clean (exit 0).
+- **2026-11-08** — Evidence (orchestro spec verify, tree c6c47cca): install pass · typecheck pass · lint pass · build pass · test pass 1026/0/0

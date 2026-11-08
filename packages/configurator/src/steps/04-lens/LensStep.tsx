@@ -1,12 +1,11 @@
 import type { JSX } from "preact";
-import { useCallback, useMemo } from "preact/hooks";
+import { useCallback, useMemo, useRef } from "preact/hooks";
 import { filterLenses } from "../../../../rx-core/src/limits/filter-lenses.js";
 import type { FilteredLens } from "../../../../rx-core/src/limits/types.js";
 import { formatMoney } from "../../shared/format.js";
 import type { StepProps } from "../../shell/types.js";
 import choiceCardCss from "../03-lens-group/ChoiceCard.css?inline";
 import { OptionCard } from "../03-lens-group/OptionCard.js";
-import { getSelectedLensGroupId } from "../03-lens-group/store.js";
 import { formatLensReason } from "./format-reason.js";
 import lensCss from "./lens.css?inline";
 import { lensStrings } from "./strings.js";
@@ -15,16 +14,14 @@ export function LensStep({ state, dispatch }: StepProps): JSX.Element {
   const rxType = state.rxType ?? state.selection.rxType;
   const catalog = state.catalog;
 
-  const chosenGroupId = getSelectedLensGroupId(state);
+  const chosenGroupId = state.lensGroupId;
+  const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const chosenGroup = useMemo(() => {
-    if (!catalog?.lensGroups || catalog.lensGroups.length === 0) return null;
-    if (chosenGroupId) {
-      const found = catalog.lensGroups.find((g) => g.id === chosenGroupId);
-      if (found) return found;
+    if (!catalog?.lensGroups || catalog.lensGroups.length === 0 || !chosenGroupId) {
+      return null;
     }
-    // Fallback: pick first group with lenses
-    return catalog.lensGroups[0] ?? null;
+    return catalog.lensGroups.find((g) => g.id === chosenGroupId) ?? null;
   }, [catalog, chosenGroupId]);
 
   // Run limits engine filterLenses on the chosen group's lenses
@@ -64,37 +61,63 @@ export function LensStep({ state, dispatch }: StepProps): JSX.Element {
   );
 
   const handleChangePrescription = useCallback(() => {
-    dispatch({ type: "GO_TO_STEP", stepIndex: 1 });
+    dispatch({ type: "GO_TO_STEP", stepId: "prescription" });
   }, [dispatch]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      if (availableLenses.length === 0) return;
+      if (orderedLenses.length === 0 || availableLenses.length === 0) return;
       if (e.key === "ArrowDown" || e.key === "ArrowRight") {
         e.preventDefault();
-        const currentIndex = availableLenses.findIndex(
-          (item: FilteredLens) => item.lens.id === state.selection.lensId,
+        const currentId =
+          (document.activeElement as HTMLInputElement)?.value ||
+          state.selection.lensId;
+        const currentIndex = orderedLenses.findIndex(
+          (item) => item.lens.id === currentId,
         );
-        const nextIndex =
-          currentIndex < 0 ? 0 : (currentIndex + 1) % availableLenses.length;
-        const nextItem = availableLenses[nextIndex];
-        if (nextItem) {
+        let nextIndex = currentIndex;
+        for (let i = 1; i <= orderedLenses.length; i++) {
+          const candidateIdx =
+            currentIndex < 0 ? 0 : (currentIndex + i) % orderedLenses.length;
+          const candidate = orderedLenses[candidateIdx];
+          if (candidate?.available) {
+            nextIndex = candidateIdx;
+            break;
+          }
+        }
+        const nextItem = orderedLenses[nextIndex];
+        if (nextItem && nextItem.available) {
           handleSelectLens(nextItem.lens.id);
+          inputRefs.current[nextItem.lens.id]?.focus();
         }
       } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
         e.preventDefault();
-        const currentIndex = availableLenses.findIndex(
-          (item: FilteredLens) => item.lens.id === state.selection.lensId,
+        const currentId =
+          (document.activeElement as HTMLInputElement)?.value ||
+          state.selection.lensId;
+        const currentIndex = orderedLenses.findIndex(
+          (item) => item.lens.id === currentId,
         );
-        const prevIndex =
-          currentIndex <= 0 ? availableLenses.length - 1 : currentIndex - 1;
-        const prevItem = availableLenses[prevIndex];
-        if (prevItem) {
+        let prevIndex = currentIndex;
+        for (let i = 1; i <= orderedLenses.length; i++) {
+          const candidateIdx =
+            currentIndex <= 0
+              ? (orderedLenses.length - i + orderedLenses.length) % orderedLenses.length
+              : (currentIndex - i + orderedLenses.length) % orderedLenses.length;
+          const candidate = orderedLenses[candidateIdx];
+          if (candidate?.available) {
+            prevIndex = candidateIdx;
+            break;
+          }
+        }
+        const prevItem = orderedLenses[prevIndex];
+        if (prevItem && prevItem.available) {
           handleSelectLens(prevItem.lens.id);
+          inputRefs.current[prevItem.lens.id]?.focus();
         }
       }
     },
-    [availableLenses, handleSelectLens, state.selection.lensId],
+    [availableLenses.length, handleSelectLens, orderedLenses, state.selection.lensId],
   );
 
   return (
@@ -162,6 +185,9 @@ export function LensStep({ state, dispatch }: StepProps): JSX.Element {
                     if (item.available) {
                       handleSelectLens(item.lens.id);
                     }
+                  }}
+                  inputRef={(el) => {
+                    inputRefs.current[item.lens.id] = el;
                   }}
                 />
               );

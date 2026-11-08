@@ -1,12 +1,14 @@
+import fs from "node:fs";
+import path from "node:path";
 import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import ts from "typescript";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CatalogResponse, Lens } from "../../../../rx-core/src/index.js";
 import type { ApiClient } from "../../shared/api.js";
 import { createInitialState } from "../../shell/reducer.js";
 import type { ConfiguratorState } from "../../shell/types.js";
 import { isApplicable, isComplete, step } from "./index.js";
 import { LensGroupStep } from "./LensGroupStep.js";
-import { clearSelectedLensGroupId, getSelectedLensGroupId, setSelectedLensGroupId } from "./store.js";
 import { lensGroupStrings } from "./strings.js";
 
 const mockApi: ApiClient = {
@@ -115,10 +117,6 @@ function createTestState(overrides?: Partial<ConfiguratorState>): ConfiguratorSt
 }
 
 describe("Step 3: Lens Group Selection", () => {
-  beforeEach(() => {
-    clearSelectedLensGroupId();
-  });
-
   afterEach(() => {
     cleanup();
   });
@@ -208,19 +206,18 @@ describe("Step 3: Lens Group Selection", () => {
     expect(clearRadio).not.toBeNull();
     fireEvent.click(clearRadio!);
 
-    expect(getSelectedLensGroupId(state)).toBe("group-clear");
-    expect(isComplete(state)).toBe(true);
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "SET_LENS_GROUP",
+      lensGroupId: "group-clear",
+    });
+
+    const completedState = { ...state, lensGroupId: "group-clear" };
+    expect(isComplete(completedState)).toBe(true);
   });
 
-  it("selecting a new group clears selection.lensId if it belonged to the old group", () => {
+  it("selecting a group dispatches SET_LENS_GROUP", () => {
     const state = createTestState({
-      selection: {
-        frameVariantId: "frame-1",
-        rxType: "SINGLE_VISION",
-        lensId: "lens-l", // belongs to group-clear
-        optionValueIds: [],
-        addOnIds: [],
-      },
+      lensGroupId: "group-clear",
     });
     const dispatch = vi.fn();
 
@@ -234,36 +231,144 @@ describe("Step 3: Lens Group Selection", () => {
     expect(sunRadio).not.toBeNull();
     fireEvent.click(sunRadio!);
 
-    // Should dispatch SET_LENS with empty string to clear previous lens
-    expect(dispatch).toHaveBeenCalledWith({ type: "SET_LENS", lensId: "" });
-    expect(getSelectedLensGroupId()).toBe("group-sun");
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "SET_LENS_GROUP",
+      lensGroupId: "group-sun",
+    });
   });
 
-  it("keyboard: arrow keys navigate between visible groups", () => {
-    const state = createTestState();
+  it("keyboard: arrow keys navigate between visible groups and move focus (R1-F4)", () => {
+    const state = createTestState({
+      lensGroupId: "group-clear",
+    });
     const dispatch = vi.fn();
-
-    // Select first group before render
-    setSelectedLensGroupId("group-clear");
 
     const { container } = render(
       <LensGroupStep state={state} dispatch={dispatch} api={mockApi} />,
     );
 
-    const radiogroup = container.querySelector('[role="radiogroup"]');
-    expect(radiogroup).not.toBeNull();
+    const clearRadio = container.querySelector<HTMLInputElement>(
+      'input[value="group-clear"]',
+    );
+    const sunRadio = container.querySelector<HTMLInputElement>(
+      'input[value="group-sun"]',
+    );
+    expect(clearRadio).not.toBeNull();
+    expect(sunRadio).not.toBeNull();
 
-    // ArrowDown advances to next group
-    fireEvent.keyDown(radiogroup!, { key: "ArrowDown" });
-    expect(getSelectedLensGroupId()).toBe("group-sun");
+    clearRadio!.focus();
+    expect(document.activeElement).toBe(clearRadio);
 
-    // ArrowDown wraps back to first group
-    fireEvent.keyDown(radiogroup!, { key: "ArrowDown" });
-    expect(getSelectedLensGroupId()).toBe("group-clear");
+    // ArrowDown advances to next group and focuses it
+    fireEvent.keyDown(clearRadio!, { key: "ArrowDown" });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "SET_LENS_GROUP",
+      lensGroupId: "group-sun",
+    });
+    expect(document.activeElement).toBe(sunRadio);
 
-    // ArrowUp goes to previous group (wraps to last)
-    fireEvent.keyDown(radiogroup!, { key: "ArrowUp" });
-    expect(getSelectedLensGroupId()).toBe("group-sun");
+    // ArrowUp goes back to previous group and focuses it
+    dispatch.mockClear();
+    fireEvent.keyDown(sunRadio!, { key: "ArrowUp" });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "SET_LENS_GROUP",
+      lensGroupId: "group-clear",
+    });
+    expect(document.activeElement).toBe(clearRadio);
+  });
+
+  it("Examples row 4: mixed group derives 'from' price and visibility only from lenses matching rxType (R1-F10)", () => {
+    const mixedCatalog: CatalogResponse = {
+      lensGroups: [
+        {
+          id: "group-mixed",
+          name: "Mixed Group",
+          description: "Mixed lenses.",
+          position: 0,
+          lenses: [
+            {
+              id: "lens-reading-cheap",
+              groupId: "group-mixed",
+              name: "Reading Only",
+              description: "Cheap reading.",
+              price: { amountMinor: 2500, currency: "USD" }, // $25.00
+              limits: {
+                sphMin: -400,
+                sphMax: 400,
+                cylMin: -200,
+                cylMax: 0,
+                rxTypes: ["READING"], // NOT single vision
+              },
+              labCodeTemplate: "RD",
+              shopifyVariantId: "v-rd",
+              position: 0,
+            },
+            {
+              id: "lens-sv-normal",
+              groupId: "group-mixed",
+              name: "SV Normal",
+              description: "Normal SV.",
+              price: { amountMinor: 7500, currency: "USD" }, // $75.00
+              limits: {
+                sphMin: -600,
+                sphMax: 400,
+                cylMin: -200,
+                cylMax: 0,
+                rxTypes: ["SINGLE_VISION"],
+              },
+              labCodeTemplate: "SV",
+              shopifyVariantId: "v-sv",
+              position: 1,
+            },
+            {
+              id: "lens-sv-premium",
+              groupId: "group-mixed",
+              name: "SV Premium",
+              description: "Premium SV.",
+              price: { amountMinor: 11000, currency: "USD" }, // $110.00
+              limits: {
+                sphMin: -800,
+                sphMax: 600,
+                cylMin: -400,
+                cylMax: 0,
+                rxTypes: ["SINGLE_VISION"],
+              },
+              labCodeTemplate: "SVP",
+              shopifyVariantId: "v-svp",
+              position: 2,
+            },
+          ],
+        },
+      ],
+      optionGroups: [],
+      addOns: [],
+      settings: { manualRxEnabled: true, rxUploadEnabled: true, storeRxInOrder: false },
+    };
+
+    const state = createTestState({
+      catalog: mixedCatalog,
+      rxType: "SINGLE_VISION",
+      selection: {
+        frameVariantId: "frame-1",
+        rxType: "SINGLE_VISION",
+        optionValueIds: [],
+        addOnIds: [],
+      },
+    });
+
+    render(<LensGroupStep state={state} dispatch={vi.fn()} api={mockApi} />);
+
+    // Group is visible because it has lenses matching SINGLE_VISION
+    expect(screen.getByText("Mixed Group")).toBeTruthy();
+    // 'from' price MUST be $75.00 (from SV Normal), NOT $25.00 (which is READING only)
+    expect(screen.getByText(lensGroupStrings.fromPrice("$75.00"))).toBeTruthy();
+    expect(screen.queryByText(lensGroupStrings.fromPrice("$25.00"))).toBeNull();
+  });
+
+  it("renders empty state gracefully when catalog is null (R1-F10)", () => {
+    const state = createTestState({ catalog: null });
+    render(<LensGroupStep state={state} dispatch={vi.fn()} api={mockApi} />);
+    expect(screen.getByText(lensGroupStrings.noGroupsAvailable)).toBeTruthy();
   });
 
   it("isApplicable returns false when catalog has no groups or empty lenses", () => {
@@ -280,30 +385,60 @@ describe("Step 3: Lens Group Selection", () => {
   });
 
   describe("Invariants: Step 3", () => {
-    it("INV-7: contains no raw hex, rgb, px, or ms outside tokens.css", async () => {
-      const { execSync } = await import("node:child_process");
-      const cmd =
-        "rg -n '#[0-9a-fA-F]{3,8}\\b|rgb\\(|[0-9]+px|[0-9]+ms' packages/configurator/src/steps/03-lens-group --glob '!tokens.css'";
-      let out = "";
-      try {
-        out = execSync(cmd, { encoding: "utf8" });
-      } catch {
-        out = "";
+    it("INV-7: contains no raw hex, rgb, px, or ms outside tokens.css", () => {
+      const dir = path.resolve(__dirname);
+      const rawValueRegex = /#[0-9a-fA-F]{3,8}\b|rgb\(|[0-9]+px|[0-9]+ms/;
+      const offenders: string[] = [];
+
+      for (const file of fs.readdirSync(dir)) {
+        if (file.endsWith(".test.tsx") || file.endsWith(".test.ts") || file === "tokens.css") {
+          continue;
+        }
+        const filePath = path.join(dir, file);
+        if (fs.statSync(filePath).isFile()) {
+          const content = fs.readFileSync(filePath, "utf8");
+          const lines = content.split(/\r?\n/);
+          lines.forEach((line: string, idx: number) => {
+            if (rawValueRegex.test(line)) {
+              offenders.push(`${file}:${idx + 1}: ${line.trim()}`);
+            }
+          });
+        }
       }
-      expect(out.trim()).toBe("");
+      expect(offenders).toEqual([]);
     });
 
-    it("INV-9: contains no inline JSX text literals outside strings files", async () => {
-      const { execSync } = await import("node:child_process");
-      const cmd =
-        "rg '>[A-Za-z]' packages/configurator/src/steps/03-lens-group --glob '*.tsx'";
-      let out = "";
-      try {
-        out = execSync(cmd, { encoding: "utf8" });
-      } catch {
-        out = "";
+    it("INV-9: contains no inline JSX text literals outside strings files", () => {
+      const dir = path.resolve(__dirname);
+      const offenders: Array<{ file: string; line: number; text: string }> = [];
+
+      for (const file of fs.readdirSync(dir)) {
+        if (!file.endsWith(".tsx") || file.endsWith(".test.tsx")) {
+          continue;
+        }
+        const filePath = path.join(dir, file);
+        const content = fs.readFileSync(filePath, "utf8");
+        const sourceFile = ts.createSourceFile(
+          file,
+          content,
+          ts.ScriptTarget.Latest,
+          true,
+          ts.ScriptKind.TSX,
+        );
+
+        const visit = (node: ts.Node) => {
+          if (ts.isJsxText(node)) {
+            const text = node.getText(sourceFile).trim();
+            if (text.length > 0) {
+              const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+              offenders.push({ file, line: line + 1, text });
+            }
+          }
+          ts.forEachChild(node, visit);
+        };
+        visit(sourceFile);
       }
-      expect(out.trim()).toBe("");
+      expect(offenders).toEqual([]);
     });
   });
 });

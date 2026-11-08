@@ -37,6 +37,12 @@
     color var(--la-transition-duration) var(--la-ease);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .la-notice__btn {
+    transition: none;
+  }
+}
+
 .la-notice__btn:hover {
   background: var(--la-ink);
   color: var(--la-on-ink);

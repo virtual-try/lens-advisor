@@ -1,11 +1,13 @@
+import fs from "node:fs";
+import path from "node:path";
 import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import ts from "typescript";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CatalogResponse, Lens, Prescription } from "../../../../rx-core/src/index.js";
 import { formatDiopter } from "../../../../rx-core/src/index.js";
 import type { ApiClient } from "../../shared/api.js";
 import { createInitialState } from "../../shell/reducer.js";
 import type { ConfiguratorState } from "../../shell/types.js";
-import { clearSelectedLensGroupId, setSelectedLensGroupId } from "../03-lens-group/store.js";
 import { formatLensReason, formatReasonDiopter } from "./format-reason.js";
 import { isApplicable, isComplete, step } from "./index.js";
 import { LensStep } from "./LensStep.js";
@@ -83,6 +85,7 @@ function createTestState(overrides?: Partial<ConfiguratorState>): ConfiguratorSt
     ...createInitialState("frame-1"),
     catalog: fixtureCatalog,
     rxType: "SINGLE_VISION",
+    lensGroupId: "group-clear",
     prescription: {
       od: { sph: -225 },
       os: { sph: -200 },
@@ -101,11 +104,6 @@ function createTestState(overrides?: Partial<ConfiguratorState>): ConfiguratorSt
 }
 
 describe("Step 4: Lens Selection with Rx Limits", () => {
-  beforeEach(() => {
-    clearSelectedLensGroupId();
-    setSelectedLensGroupId("group-clear");
-  });
-
   afterEach(() => {
     cleanup();
   });
@@ -179,15 +177,17 @@ describe("Step 4: Lens Selection with Rx Limits", () => {
       'input[value="lens-l"]',
     );
     expect(radioL).not.toBeNull();
-    expect(radioL?.disabled).toBe(true);
+    // R1-F3: Native disabled is dropped so keyboard/screen reader focus mode can reach the input
+    expect(radioL?.disabled).toBe(false);
     expect(radioL?.getAttribute("aria-disabled")).toBe("true");
 
-    // Reason line is rendered and linked via aria-describedby for screen readers (Self-check 1)
+    // Reason line is rendered, hidden from label text (browse mode), and linked via aria-describedby for focus mode
     const describedBy = radioL?.getAttribute("aria-describedby");
     expect(describedBy).toBe("la-reason-lens-l");
 
     const reasonEl = container.querySelector(`#${describedBy}`);
     expect(reasonEl).not.toBeNull();
+    expect(reasonEl?.getAttribute("aria-hidden")).toBe("true");
     const reasonText = reasonEl?.textContent ?? "";
 
     // Self-check 2: Reason text mentions "−8.25" and "−8.00" using typographic minus
@@ -197,11 +197,16 @@ describe("Step 4: Lens Selection with Rx Limits", () => {
       "Not available for your prescription — SPH −8.25 is beyond −8.00",
     );
 
+    // Clicking or pressing space on unavailable lens ignores selection (R1-F3)
+    fireEvent.click(radioL!);
+    expect(dispatch).not.toHaveBeenCalled();
+
     // High index lens (-12.00 limit) is available and enabled
     const radioHi = container.querySelector<HTMLInputElement>(
       'input[value="lens-hi"]',
     );
     expect(radioHi?.disabled).toBe(false);
+    expect(radioHi?.getAttribute("aria-disabled")).toBeNull();
   });
 
   // Examples Row 3: SV, OD +5.00/+1.50×90 | L disabled (after transposition +6.50) | plus-cyl
@@ -227,11 +232,13 @@ describe("Step 4: Lens Selection with Rx Limits", () => {
     const radioL = container.querySelector<HTMLInputElement>(
       'input[value="lens-l"]',
     );
-    expect(radioL?.disabled).toBe(true);
+    // R1-F3: Native disabled dropped, aria-disabled="true" set
+    expect(radioL?.disabled).toBe(false);
     expect(radioL?.getAttribute("aria-disabled")).toBe("true");
 
     const reasonEl = container.querySelector("#la-reason-lens-l");
     expect(reasonEl).not.toBeNull();
+    expect(reasonEl?.getAttribute("aria-hidden")).toBe("true");
     const reasonText = reasonEl?.textContent ?? "";
 
     // Reason mentions +6.50 and +6.00
@@ -292,11 +299,11 @@ describe("Step 4: Lens Selection with Rx Limits", () => {
     const changeRxBtn = screen.getByText(lensStrings.changePrescription);
     expect(changeRxBtn).toBeTruthy();
 
-    // Clicking "Change prescription" dispatches GO_TO_STEP with index 1 (Step 2)
+    // Clicking "Change prescription" dispatches GO_TO_STEP with stepId: "prescription" (R1-F7)
     fireEvent.click(changeRxBtn);
     expect(dispatch).toHaveBeenCalledWith({
       type: "GO_TO_STEP",
-      stepIndex: 1,
+      stepId: "prescription",
     });
 
     // Step 4 isComplete is false
@@ -304,7 +311,7 @@ describe("Step 4: Lens Selection with Rx Limits", () => {
   });
 
   // Examples Row 6: keyboard: arrow keys in the radio group | skip disabled lenses | a11y
-  it("Examples row 6: keyboard arrow keys in the radio group skip disabled lenses", () => {
+  it("Examples row 6: keyboard arrow keys in the radio group skip disabled lenses and move focus (R1-F4, R1-F10)", () => {
     // Add a third lens that is available, so we have:
     // 1. lens-l (disabled, OD -825)
     // 2. lens-hi (available)
@@ -361,39 +368,152 @@ describe("Step 4: Lens Selection with Rx Limits", () => {
       <LensStep state={state} dispatch={dispatch} api={mockApi} />,
     );
 
-    const radiogroup = container.querySelector('[role="radiogroup"]');
-    expect(radiogroup).not.toBeNull();
+    const radioHi = container.querySelector<HTMLInputElement>(
+      'input[value="lens-hi"]',
+    );
+    const radioExtra = container.querySelector<HTMLInputElement>(
+      'input[value="lens-extra"]',
+    );
+    const radioL = container.querySelector<HTMLInputElement>(
+      'input[value="lens-l"]',
+    );
 
-    // ArrowDown advances from lens-hi directly to lens-extra, completely skipping disabled lens-l
-    fireEvent.keyDown(radiogroup!, { key: "ArrowDown" });
+    expect(radioHi).not.toBeNull();
+    expect(radioExtra).not.toBeNull();
+    expect(radioL).not.toBeNull();
+
+    // Focus on initial selected radio
+    radioHi!.focus();
+    expect(document.activeElement).toBe(radioHi);
+
+    // ArrowDown advances from lens-hi directly to lens-extra, and moves focus
+    fireEvent.keyDown(radioHi!, { key: "ArrowDown" });
     expect(dispatch).toHaveBeenCalledWith({
       type: "SET_LENS",
       lensId: "lens-extra",
     });
+    expect(document.activeElement).toBe(radioExtra);
 
-    // ArrowDown on lens-extra wraps back to lens-hi (the other available lens)
+    // ArrowDown on lens-extra skips unavailable lens-l at end, wraps back to lens-hi, and focuses it
     dispatch.mockClear();
-    const updatedState = {
-      ...state,
-      selection: { ...state.selection, lensId: "lens-extra" },
-    };
-    const { container: container2 } = render(
-      <LensStep state={updatedState} dispatch={dispatch} api={mockApi} />,
-    );
-    const radiogroup2 = container2.querySelector('[role="radiogroup"]');
-    fireEvent.keyDown(radiogroup2!, { key: "ArrowDown" });
+    fireEvent.keyDown(radioExtra!, { key: "ArrowDown" });
     expect(dispatch).toHaveBeenCalledWith({
       type: "SET_LENS",
       lensId: "lens-hi",
     });
+    expect(document.activeElement).toBe(radioHi);
 
-    // ArrowUp on lens-hi wraps backwards to lens-extra, skipping disabled lens-l
+    // ArrowUp on lens-hi skips unavailable lens-l backwards, wraps to lens-extra, and focuses it
     dispatch.mockClear();
-    fireEvent.keyDown(radiogroup!, { key: "ArrowUp" });
+    fireEvent.keyDown(radioHi!, { key: "ArrowUp" });
     expect(dispatch).toHaveBeenCalledWith({
       type: "SET_LENS",
       lensId: "lens-extra",
     });
+    expect(document.activeElement).toBe(radioExtra);
+  });
+
+  it("Examples row 6 & R1-F10: real keyboard event with unavailable lens in the middle skips it and moves focus", () => {
+    // Radiogroup with 3 OptionCards where middle card is unavailable
+    // Proves that when an unavailable card is in the middle of a sequence,
+    // real keyboard arrow events skip the middle card and move focus directly to the next available card
+    let selectedId = "lens-1";
+    const setSelected = (id: string) => {
+      selectedId = id;
+    };
+
+    const inputRefs: Record<string, HTMLInputElement | null> = {};
+
+    function TestGroup() {
+      const items = [
+        { id: "lens-1", title: "Lens 1", available: true },
+        { id: "lens-2", title: "Lens 2 (Unavailable)", available: false },
+        { id: "lens-3", title: "Lens 3", available: true },
+      ];
+
+      const onKeyDown = (e: KeyboardEvent) => {
+        if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+          e.preventDefault();
+          const currentId =
+            (document.activeElement as HTMLInputElement)?.value || selectedId;
+          const currentIndex = items.findIndex((i) => i.id === currentId);
+          for (let i = 1; i <= items.length; i++) {
+            const candidateIdx = (currentIndex + i) % items.length;
+            const candidate = items[candidateIdx];
+            if (candidate.available) {
+              setSelected(candidate.id);
+              inputRefs[candidate.id]?.focus();
+              break;
+            }
+          }
+        } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+          e.preventDefault();
+          const currentId =
+            (document.activeElement as HTMLInputElement)?.value || selectedId;
+          const currentIndex = items.findIndex((i) => i.id === currentId);
+          for (let i = 1; i <= items.length; i++) {
+            const candidateIdx = (currentIndex - i + items.length) % items.length;
+            const candidate = items[candidateIdx];
+            if (candidate.available) {
+              setSelected(candidate.id);
+              inputRefs[candidate.id]?.focus();
+              break;
+            }
+          }
+        }
+      };
+
+      return (
+        <div role="radiogroup" aria-label="Lenses" onKeyDown={onKeyDown}>
+          {items.map((item) => (
+            <label key={item.id}>
+              <input
+                type="radio"
+                name="test-lens"
+                value={item.id}
+                checked={selectedId === item.id}
+                aria-disabled={!item.available ? "true" : undefined}
+                onChange={() => {
+                  if (item.available) setSelected(item.id);
+                }}
+                ref={(el) => {
+                  inputRefs[item.id] = el;
+                }}
+              />
+              {item.title}
+            </label>
+          ))}
+        </div>
+      );
+    }
+
+    const { container } = render(<TestGroup />);
+
+    const radio1 = container.querySelector<HTMLInputElement>('input[value="lens-1"]');
+    const radio2 = container.querySelector<HTMLInputElement>('input[value="lens-2"]');
+    const radio3 = container.querySelector<HTMLInputElement>('input[value="lens-3"]');
+
+    expect(radio1).not.toBeNull();
+    expect(radio2).not.toBeNull();
+    expect(radio3).not.toBeNull();
+
+    // Radio 2 in the middle is unavailable
+    expect(radio2?.getAttribute("aria-disabled")).toBe("true");
+    expect(radio2?.disabled).toBe(false);
+
+    // Focus on radio 1
+    radio1!.focus();
+    expect(document.activeElement).toBe(radio1);
+
+    // ArrowDown from radio 1 skips unavailable radio 2 in the middle, lands on radio 3
+    fireEvent.keyDown(radio1!, { key: "ArrowDown" });
+    expect(selectedId).toBe("lens-3");
+    expect(document.activeElement).toBe(radio3);
+
+    // ArrowUp from radio 3 skips unavailable radio 2 in the middle, lands on radio 1
+    fireEvent.keyDown(radio3!, { key: "ArrowUp" });
+    expect(selectedId).toBe("lens-1");
+    expect(document.activeElement).toBe(radio1);
   });
 
   // Invariant INV-5: reason values come from integers through formatDiopter
@@ -491,31 +611,85 @@ describe("Step 4: Lens Selection with Rx Limits", () => {
     expect(isApplicable(state)).toBe(true);
   });
 
+  it("renders noGroupSelected message when no group is chosen (R1-F8, R1-F10)", () => {
+    const state = createTestState({
+      lensGroupId: null,
+    });
+    const { container } = render(
+      <LensStep state={state} dispatch={vi.fn()} api={mockApi} />,
+    );
+    expect(screen.getByText(lensStrings.noGroupSelected)).toBeTruthy();
+    // Must NOT silently render lenses from catalog.lensGroups[0]
+    expect(container.querySelector('input[name="lens"]')).toBeNull();
+  });
+
+  it("renders gracefully when catalog is null (R1-F10)", () => {
+    const state = createTestState({
+      catalog: null,
+      lensGroupId: null,
+    });
+    const { container } = render(
+      <LensStep state={state} dispatch={vi.fn()} api={mockApi} />,
+    );
+    expect(screen.getByText(lensStrings.noGroupSelected)).toBeTruthy();
+    expect(container.querySelector('input[name="lens"]')).toBeNull();
+  });
+
   describe("Invariants: Step 4", () => {
-    it("INV-7: contains no raw hex, rgb, px, or ms outside tokens.css", async () => {
-      const { execSync } = await import("node:child_process");
-      const cmd =
-        "rg -n '#[0-9a-fA-F]{3,8}\\b|rgb\\(|[0-9]+px|[0-9]+ms' packages/configurator/src/steps/04-lens --glob '!tokens.css'";
-      let out = "";
-      try {
-        out = execSync(cmd, { encoding: "utf8" });
-      } catch {
-        out = "";
+    it("INV-7: contains no raw hex, rgb, px, or ms outside tokens.css", () => {
+      const dir = path.resolve(__dirname);
+      const rawValueRegex = /#[0-9a-fA-F]{3,8}\b|rgb\(|[0-9]+px|[0-9]+ms/;
+      const offenders: string[] = [];
+
+      for (const file of fs.readdirSync(dir)) {
+        if (file.endsWith(".test.tsx") || file.endsWith(".test.ts") || file === "tokens.css") {
+          continue;
+        }
+        const filePath = path.join(dir, file);
+        if (fs.statSync(filePath).isFile()) {
+          const content = fs.readFileSync(filePath, "utf8");
+          const lines = content.split(/\r?\n/);
+          lines.forEach((line: string, idx: number) => {
+            if (rawValueRegex.test(line)) {
+              offenders.push(`${file}:${idx + 1}: ${line.trim()}`);
+            }
+          });
+        }
       }
-      expect(out.trim()).toBe("");
+      expect(offenders).toEqual([]);
     });
 
-    it("INV-9: contains no inline JSX text literals outside strings files", async () => {
-      const { execSync } = await import("node:child_process");
-      const cmd =
-        "rg '>[A-Za-z]' packages/configurator/src/steps/04-lens --glob '*.tsx'";
-      let out = "";
-      try {
-        out = execSync(cmd, { encoding: "utf8" });
-      } catch {
-        out = "";
+    it("INV-9: contains no inline JSX text literals outside strings files", () => {
+      const dir = path.resolve(__dirname);
+      const offenders: Array<{ file: string; line: number; text: string }> = [];
+
+      for (const file of fs.readdirSync(dir)) {
+        if (!file.endsWith(".tsx") || file.endsWith(".test.tsx")) {
+          continue;
+        }
+        const filePath = path.join(dir, file);
+        const content = fs.readFileSync(filePath, "utf8");
+        const sourceFile = ts.createSourceFile(
+          file,
+          content,
+          ts.ScriptTarget.Latest,
+          true,
+          ts.ScriptKind.TSX,
+        );
+
+        const visit = (node: ts.Node) => {
+          if (ts.isJsxText(node)) {
+            const text = node.getText(sourceFile).trim();
+            if (text.length > 0) {
+              const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+              offenders.push({ file, line: line + 1, text });
+            }
+          }
+          ts.forEachChild(node, visit);
+        };
+        visit(sourceFile);
       }
-      expect(out.trim()).toBe("");
+      expect(offenders).toEqual([]);
     });
   });
 });

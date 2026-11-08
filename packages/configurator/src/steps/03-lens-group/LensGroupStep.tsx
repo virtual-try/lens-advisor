@@ -1,21 +1,17 @@
 import type { JSX } from "preact";
-import { useCallback, useMemo, useState } from "preact/hooks";
+import { useCallback, useMemo, useRef } from "preact/hooks";
 import { formatMoney } from "../../shared/format.js";
 import type { StepProps } from "../../shell/types.js";
 import choiceCardCss from "./ChoiceCard.css?inline";
 import { OptionCard } from "./OptionCard.js";
-import {
-  getSelectedLensGroupId,
-  setSelectedLensGroupId,
-} from "./store.js";
 import { lensGroupStrings } from "./strings.js";
 
 export function LensGroupStep({ state, dispatch }: StepProps): JSX.Element {
   const rxType = state.rxType ?? state.selection.rxType;
   const catalog = state.catalog;
 
-  const currentSelectedId = getSelectedLensGroupId(state);
-  const [, setTick] = useState(0);
+  const currentSelectedId = state.lensGroupId;
+  const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   // Filter groups: groups with zero lenses for this Rx type are hidden
   const visibleGroups = useMemo(() => {
@@ -30,25 +26,16 @@ export function LensGroupStep({ state, dispatch }: StepProps): JSX.Element {
 
   const handleSelectGroup = useCallback(
     (groupId: string) => {
-      setSelectedLensGroupId(groupId);
-      // If current lens belongs to another group, clear it
-      if (state.selection.lensId && catalog) {
-        const belongsToNewGroup = catalog.lensGroups
-          .find((g) => g.id === groupId)
-          ?.lenses.some((l) => l.id === state.selection.lensId);
-        if (!belongsToNewGroup) {
-          dispatch({ type: "SET_LENS", lensId: "" });
-        }
-      }
-      setTick((t) => t + 1);
+      dispatch({ type: "SET_LENS_GROUP", lensGroupId: groupId });
     },
-    [catalog, dispatch, state.selection.lensId],
+    [dispatch],
   );
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (visibleGroups.length === 0) return;
-      const activeId = getSelectedLensGroupId(state);
+      const activeId =
+        (document.activeElement as HTMLInputElement)?.value || state.lensGroupId;
       if (e.key === "ArrowDown" || e.key === "ArrowRight") {
         e.preventDefault();
         const currentIndex = visibleGroups.findIndex((g) => g.id === activeId);
@@ -57,6 +44,7 @@ export function LensGroupStep({ state, dispatch }: StepProps): JSX.Element {
         const nextGroup = visibleGroups[nextIndex];
         if (nextGroup) {
           handleSelectGroup(nextGroup.id);
+          inputRefs.current[nextGroup.id]?.focus();
         }
       } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
         e.preventDefault();
@@ -66,10 +54,11 @@ export function LensGroupStep({ state, dispatch }: StepProps): JSX.Element {
         const prevGroup = visibleGroups[prevIndex];
         if (prevGroup) {
           handleSelectGroup(prevGroup.id);
+          inputRefs.current[prevGroup.id]?.focus();
         }
       }
     },
-    [handleSelectGroup, state, visibleGroups],
+    [handleSelectGroup, state.lensGroupId, visibleGroups],
   );
 
   return (
@@ -125,6 +114,9 @@ export function LensGroupStep({ state, dispatch }: StepProps): JSX.Element {
                 priceLabel={priceLabel}
                 checked={isChecked}
                 onChange={() => handleSelectGroup(group.id)}
+                inputRef={(el) => {
+                  inputRefs.current[group.id] = el;
+                }}
               />
             );
           })}

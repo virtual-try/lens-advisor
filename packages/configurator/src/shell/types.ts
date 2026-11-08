@@ -14,6 +14,7 @@ export interface ConfiguratorState {
   rxType: RxType | null;
   prescription: Prescription | null;
   prescriptionRef: string | null;
+  lensGroupId: string | null;
   catalog: CatalogResponse | null;
   selection: Selection;
   status: ConfiguratorStatus;
@@ -49,6 +50,7 @@ export type ConfiguratorAction =
   | { type: "SET_RX_TYPE"; rxType: RxType }
   | { type: "SET_PRESCRIPTION"; prescription: Prescription }
   | { type: "SET_PRESCRIPTION_REF"; prescriptionRef: string }
+  | { type: "SET_LENS_GROUP"; lensGroupId: string }
   | { type: "SET_LENS"; lensId: string }
   | { type: "SET_OPTIONS"; optionValueIds: string[] }
   | { type: "TOGGLE_OPTION"; optionValueId: string }
@@ -56,5 +58,5 @@ export type ConfiguratorAction =
   | { type: "TOGGLE_ADDON"; addOnId: string }
   | { type: "CONTINUE"; steps?: StepDefinition[] }
   | { type: "BACK"; steps?: StepDefinition[] }
-  | { type: "GO_TO_STEP"; stepIndex: number; steps?: StepDefinition[] }
+  | { type: "GO_TO_STEP"; stepIndex?: number; stepId?: string; steps?: StepDefinition[] }
   | { type: "RESET"; frameVariantId?: string };
