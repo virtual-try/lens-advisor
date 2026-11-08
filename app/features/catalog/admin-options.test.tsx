@@ -1,0 +1,3825 @@
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import React from "react";
+import { render, screen, cleanup, within, fireEvent, waitFor } from "@testing-library/react";
+import * as ReactRouter from "react-router";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { testConfig } from "@shopify/shopify-app-react-router/test-helpers";
+
+import { createTestDb, type TestDb } from "../../../test/db";
+import { discoverNavItems } from "../../shared/nav";
+import { parseMoneyText } from "../../../packages/rx-core/src/pricing/index.js";
+import {
+  createCatalogService,
+  type CatalogService,
+} from "./catalog.service.server";
+import { OptionValueForm } from "./components/option-value-form";
+import AdminOptionsIndexRoute, {
+  action as indexAction,
+  formatMoneyDisplay,
+  loader as indexLoader,
+  ErrorBoundary as IndexErrorBoundary,
+} from "../../routes/app.options._index";
+import OptionValueRoute, {
+  action as optionValueAction,
+  loader as optionValueLoader,
+  ErrorBoundary as OptionValueErrorBoundary,
+} from "../../routes/app.options.$id";
+import AddOnRoute, {
+  action as addOnAction,
+  loader as addOnLoader,
+  ErrorBoundary as AddOnErrorBoundary,
+} from "../../routes/app.add-ons.$id";
+import { toShopifyDecimal } from "../../../packages/rx-core/src/pricing/index.js";
+
+const DB_TIMEOUT_MS = 120_000;
+
+const mocks = vi.hoisted(() => ({
+  currentShop: "test-shop.myshopify.com",
+  toastShow: vi.fn(),
+  redirect: vi.fn(),
+  adminGraphql: vi.fn(),
+}));
+
+vi.mock("../../shopify.server", () => ({
+  authenticate: {
+    admin: vi.fn(async () => ({
+      session: { shop: mocks.currentShop },
+      admin: {
+        graphql: mocks.adminGraphql,
+      },
+      redirect: mocks.redirect,
+    })),
+  },
+}));
+
+vi.mock("@shopify/app-bridge-react", () => ({
+  useAppBridge: () => ({
+    toast: { show: mocks.toastShow },
+  }),
+}));
+
+let db: TestDb | undefined;
+let catalogService: CatalogService;
+
+function getTestPrisma() {
+  if (!db) throw new Error("Test database not initialized");
+  return db.prisma;
+}
+
+const origCreateElement = document.createElement.bind(document);
+const origReactRouterForm = ReactRouter.Form;
+
+const mockRouterForm = React.forwardRef(
+  (
+    { children, ...props }: React.PropsWithChildren<React.FormHTMLAttributes<HTMLFormElement>>,
+    ref: React.ForwardedRef<HTMLFormElement>,
+  ) => (
+    <form {...props} ref={ref}>
+      {children}
+    </form>
+  ),
+);
+
+type IndexLoaderResult = {
+  groups: Array<{
+    id: string;
+    name: string;
+    kind: "MATERIAL" | "TINT_TYPE" | "COLOR";
+    position: number;
+    values: Array<{
+      id: string;
+      label: string;
+      priceDelta: { amountMinor: number; currency: string };
+      shopifyVariantId: string | null;
+      tokenKey?: string;
+      tokenValue?: string;
+      overrideCode?: string;
+      swatch?: string;
+    }>;
+  }>;
+  addOns: Array<{
+    id: string;
+    name: string;
+    price: { amountMinor: number; currency: string };
+    shopifyVariantId: string | null;
+  }>;
+  syncFailedId?: string | null;
+  plan: { active: boolean };
+  shopDomain: string;
+};
+
+function DataRouterWrapper({ children }: { children: React.ReactNode }) {
+  const router = ReactRouter.createMemoryRouter(
+    [{ path: "*", Component: () => <>{children}</> }],
+    { initialEntries: ["/"] },
+  );
+  return <ReactRouter.RouterProvider router={router} />;
+}
+
+beforeAll(async () => {
+  document.createElement = function (tagName: string, options?: ElementCreationOptions) {
+    const el = origCreateElement(tagName, options);
+    if (tagName.toLowerCase() === "s-button") {
+      el.setAttribute("role", "button");
+      el.addEventListener("click", () => {
+        if (el.getAttribute("type") === "submit" && !el.hasAttribute("disabled")) {
+          (el.closest("form") as HTMLFormElement | null)?.requestSubmit?.();
+        }
+      });
+    }
+    return el;
+  };
+
+  db = await createTestDb();
+  (globalThis as Record<string, unknown>).__prismaClient = db.prisma;
+  catalogService = createCatalogService({ prisma: db.prisma });
+}, DB_TIMEOUT_MS);
+
+afterAll(async () => {
+  document.createElement = origCreateElement;
+  (ReactRouter as Record<string, unknown>).Form = origReactRouterForm;
+  (globalThis as Record<string, unknown>).__prismaClient = undefined;
+  await db?.drop();
+}, DB_TIMEOUT_MS);
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+
+let createdProductCount = 1;
+let createdVariantCount = 100;
+const recordedCalls: Array<{ query: string; variables?: Record<string, unknown> }> = [];
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  testConfig();
+  recordedCalls.length = 0;
+
+  // Mock ReactRouter Form by default for component tests in MemoryRouter
+  (ReactRouter as Record<string, unknown>).Form = mockRouterForm;
+
+  // Mock Partner API billing fetch
+  vi.spyOn(globalThis, "fetch").mockImplementation(
+    async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            activeSubscription: {
+              items: [{ handle: "pro-plan", description: "Pro Plan" }],
+            },
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+  );
+
+  // Mock Admin GraphQL for Shopify sync and billing fallback
+  mocks.adminGraphql.mockImplementation(
+    async (query: string, init?: { variables?: Record<string, unknown> }) => {
+      recordedCalls.push({ query, variables: init?.variables });
+
+      if (query.includes("AppPlanShopId")) {
+        return new Response(
+          JSON.stringify({ data: { shop: { id: "gid://shopify/Shop/1001" } } }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (query.includes("AppPlanStatus")) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              currentAppInstallation: {
+                activeSubscriptions: [
+                  {
+                    id: "gid://shopify/AppSubscription/1",
+                    name: "Pro Plan",
+                    status: "ACTIVE",
+                    test: false,
+                  },
+                ],
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (query.includes("ShopCurrency")) {
+        return new Response(
+          JSON.stringify({ data: { shop: { currencyCode: "USD" } } }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (query.includes("GetPublications")) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              publications: {
+                nodes: [{ id: "gid://shopify/Publication/1", name: "Online Store" }],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (query.includes("GetVariantProduct")) {
+        const variantId = (init?.variables?.id as string) ?? "gid://shopify/ProductVariant/unknown";
+        return new Response(
+          JSON.stringify({
+            data: {
+              productVariant: {
+                id: variantId,
+                product: { id: "gid://shopify/Product/existing-product" },
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (query.includes("ProductCreate")) {
+        const pId = `gid://shopify/Product/${createdProductCount++}`;
+        const vId = `gid://shopify/ProductVariant/${createdVariantCount++}`;
+        return new Response(
+          JSON.stringify({
+            data: {
+              productCreate: {
+                product: {
+                  id: pId,
+                  variants: {
+                    nodes: [{ id: vId, price: "35.00" }],
+                  },
+                },
+                userErrors: [],
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (query.includes("ProductVariantsBulkUpdate")) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              productVariantsBulkUpdate: {
+                productVariants: [{ id: "gid://shopify/ProductVariant/100", price: "35.00" }],
+                userErrors: [],
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (query.includes("PublishablePublish")) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              publishablePublish: {
+                userErrors: [],
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (query.includes("ProductUpdate")) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              productUpdate: {
+                product: { id: "gid://shopify/Product/1", status: "DRAFT" },
+                userErrors: [],
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ data: {} }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    },
+  );
+});
+
+async function createShop(domain: string): Promise<string> {
+  const shop = await getTestPrisma().shop.create({
+    data: { domain },
+  });
+  return shop.id;
+}
+
+function createActionArgs(
+  request: Request,
+  params: Record<string, string> = {},
+): ActionFunctionArgs {
+  const url = new URL(request.url);
+  return {
+    request,
+    params,
+    context: {},
+    url,
+    pattern: { path: url.pathname },
+  } as unknown as ActionFunctionArgs;
+}
+
+function createLoaderArgs(
+  request: Request,
+  params: Record<string, string> = {},
+): LoaderFunctionArgs {
+  const url = new URL(request.url);
+  return {
+    request,
+    params,
+    context: {},
+    url,
+    pattern: { path: url.pathname },
+  } as unknown as LoaderFunctionArgs;
+}
+
+async function unwrapResponse<T = Record<string, unknown>>(
+  result: unknown,
+): Promise<{ status: number; data: T }> {
+  if (result instanceof Response) {
+    const data = (await result.clone().json()) as T;
+    return { status: result.status, data };
+  }
+  if (
+    result &&
+    typeof result === "object" &&
+    "data" in result &&
+    "init" in result
+  ) {
+    const res = result as { data: T; init?: { status?: number } };
+    return {
+      status: res.init?.status ?? 200,
+      data: res.data,
+    };
+  }
+  return {
+    status: 200,
+    data: result as T,
+  };
+}
+
+describe("Spec 19 — Admin: lens options and add-ons", () => {
+  describe("Self-check 2: Nav discovery", () => {
+    it("discovers catalog-options/nav.ts via the real nav glob", () => {
+      const items = discoverNavItems();
+      const optionNav = items.find((item) => item.href === "/app/options");
+      expect(optionNav).toBeDefined();
+      expect(optionNav?.label).toBe("Options & add-ons");
+      expect(optionNav?.order).toBe(20);
+    });
+  });
+
+  describe("INV-4: Money input converts without floats (table test)", () => {
+    const cases = [
+      { input: "35.5", currency: "USD", expectedMinor: 3550 },
+      { input: "0.1", currency: "USD", expectedMinor: 10 },
+      { input: "+35.00", currency: "USD", expectedMinor: 3500 },
+      { input: "0", currency: "USD", expectedMinor: 0 },
+      { input: "1500", currency: "JPY", expectedMinor: 1500 },
+      { input: "1.500", currency: "KWD", expectedMinor: 1500 },
+      { input: "100.99", currency: "EUR", expectedMinor: 10099 },
+    ];
+
+    cases.forEach(({ input, currency, expectedMinor }) => {
+      it(`parses "${input}" in ${currency} → exact integer ${expectedMinor}`, () => {
+        const result = parseMoneyText(input, currency);
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          expect(result.amountMinor).toBe(expectedMinor);
+          expect(Number.isInteger(result.amountMinor)).toBe(true);
+        }
+      });
+    });
+  });
+
+  describe("Examples Table", () => {
+    it('Row 1: "1.67 High Index", +35.00, token lens_material=PO-67 -> saved delta 3500; synced (normal)', async () => {
+      const shopId = await createShop("shop-ex1.myshopify.com");
+      mocks.currentShop = "shop-ex1.myshopify.com";
+
+      const group = await catalogService.createOptionGroup(shopId, {
+        name: "Material / Index",
+        kind: "MATERIAL",
+      });
+
+      const request = new Request("https://test-shop.myshopify.com/app/options/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          optionGroupId: group.id,
+          label: "1.67 High Index",
+          priceDelta: "+35.00",
+          token: "lens_material=PO-67",
+        }),
+      });
+
+      const res = await optionValueAction(
+        createActionArgs(request, { id: "new" }),
+      );
+      const unwrapped = await unwrapResponse<{
+        ok: boolean;
+        optionValue: {
+          id: string;
+          label: string;
+          priceDelta: { amountMinor: number };
+          tokenKey: string;
+          tokenValue: string;
+        };
+      }>(res);
+
+      expect(unwrapped.status).toBe(200);
+      expect(unwrapped.data.ok).toBe(true);
+      expect(unwrapped.data.optionValue.label).toBe("1.67 High Index");
+      expect(unwrapped.data.optionValue.priceDelta.amountMinor).toBe(3500);
+      expect(unwrapped.data.optionValue.tokenKey).toBe("lens_material");
+      expect(unwrapped.data.optionValue.tokenValue).toBe("PO-67");
+
+      // Verify product-sync was called
+      const productCreateCall = recordedCalls.find((c) =>
+        c.query.includes("ProductCreate"),
+      );
+      expect(productCreateCall).toBeDefined();
+
+      // Verify DB row
+      const saved = await catalogService.getOptionValue(
+        shopId,
+        unwrapped.data.optionValue.id,
+      );
+      expect(saved?.priceDelta.amountMinor).toBe(3500);
+      expect(saved?.shopifyVariantId).toBeTruthy();
+    });
+
+    it('Row 2: delta "35.555" -> inline error (max 2 decimals for USD) (money precision)', async () => {
+      const shopId = await createShop("shop-ex2.myshopify.com");
+      mocks.currentShop = "shop-ex2.myshopify.com";
+
+      const group = await catalogService.createOptionGroup(shopId, {
+        name: "Material",
+        kind: "MATERIAL",
+      });
+
+      const request = new Request("https://test-shop.myshopify.com/app/options/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          optionGroupId: group.id,
+          label: "1.67 High Index",
+          priceDelta: "35.555",
+        }),
+      });
+
+      const res = await optionValueAction(
+        createActionArgs(request, { id: "new" }),
+      );
+      const unwrapped = await unwrapResponse<{
+        error: { code: string; message: string; fields?: Array<{ path: string; code: string }> };
+      }>(res);
+
+      expect(unwrapped.status).toBe(400);
+      expect(unwrapped.data.error.code).toBe("MONEY_PRECISION");
+      expect(unwrapped.data.error.message).toContain("Maximum 2 decimal places");
+
+      // Assert no option value row was created
+      const values = await catalogService.listOptionValues(shopId, {
+        optionGroupId: group.id,
+      });
+      expect(values.length).toBe(0);
+
+      // Verify route-to-form error wiring renders the inline error on the field
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        optionValue: null,
+        group,
+        allGroups: [group],
+        plan: { active: true },
+        shopDomain: mocks.currentShop,
+      });
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(unwrapped.data);
+
+      const { container } = render(
+        <DataRouterWrapper>
+          <OptionValueRoute />
+        </DataRouterWrapper>,
+      );
+
+      const priceField = container.querySelector('s-text-field[name="priceDelta"]');
+      expect(priceField).not.toBeNull();
+      expect(priceField?.getAttribute("error")).toBe("Maximum 2 decimal places allowed for USD");
+      expect(screen.getByText(/Maximum 2 decimal places allowed for USD/)).toBeTruthy();
+    });
+
+    it('Row 3: delta "-5" -> inline NEGATIVE_PRICE (invalid)', async () => {
+      const shopId = await createShop("shop-ex3.myshopify.com");
+      mocks.currentShop = "shop-ex3.myshopify.com";
+
+      const group = await catalogService.createOptionGroup(shopId, {
+        name: "Material",
+        kind: "MATERIAL",
+      });
+
+      const request = new Request("https://test-shop.myshopify.com/app/options/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          optionGroupId: group.id,
+          label: "Discount Option",
+          priceDelta: "-5",
+        }),
+      });
+
+      const res = await optionValueAction(
+        createActionArgs(request, { id: "new" }),
+      );
+      const unwrapped = await unwrapResponse<{
+        error: { code: string; message: string };
+      }>(res);
+
+      expect(unwrapped.status).toBe(400);
+      expect(unwrapped.data.error.code).toBe("NEGATIVE_PRICE");
+
+      // Assert no option value was created
+      const values = await catalogService.listOptionValues(shopId, {
+        optionGroupId: group.id,
+      });
+      expect(values.length).toBe(0);
+
+      // Verify route-to-form error wiring renders the inline error on the field
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        optionValue: null,
+        group,
+        allGroups: [group],
+        plan: { active: true },
+        shopDomain: mocks.currentShop,
+      });
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(unwrapped.data);
+
+      const { container } = render(
+        <DataRouterWrapper>
+          <OptionValueRoute />
+        </DataRouterWrapper>,
+      );
+
+      const priceField = container.querySelector('s-text-field[name="priceDelta"]');
+      expect(priceField).not.toBeNull();
+      expect(priceField?.getAttribute("error")).toBe("Price delta must be at least 0");
+      expect(screen.getByText(/Price delta must be at least 0/)).toBeTruthy();
+    });
+
+    it("Row 4: both token and override filled -> inline ONE_CODE_SOURCE (invalid)", async () => {
+      const shopId = await createShop("shop-ex4.myshopify.com");
+      mocks.currentShop = "shop-ex4.myshopify.com";
+
+      const group = await catalogService.createOptionGroup(shopId, {
+        name: "Material",
+        kind: "MATERIAL",
+      });
+
+      const request = new Request("https://test-shop.myshopify.com/app/options/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          optionGroupId: group.id,
+          label: "1.67 High Index",
+          priceDelta: "35.00",
+          token: "lens_material=PO-67",
+          overrideCode: "OVERRIDE-67",
+        }),
+      });
+
+      const res = await optionValueAction(
+        createActionArgs(request, { id: "new" }),
+      );
+      const unwrapped = await unwrapResponse<{
+        error: { code: string; message: string; fields?: Array<{ path: string; code: string }> };
+      }>(res);
+
+      expect(unwrapped.status).toBe(400);
+      expect(unwrapped.data.error.code).toBe("ONE_CODE_SOURCE");
+      expect(unwrapped.data.error.fields).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: "ONE_CODE_SOURCE" }),
+        ]),
+      );
+
+      // Assert no option value row was created
+      const values = await catalogService.listOptionValues(shopId, {
+        optionGroupId: group.id,
+      });
+      expect(values.length).toBe(0);
+
+      // Verify route-to-form error wiring renders the inline error on the field
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        optionValue: null,
+        group,
+        allGroups: [group],
+        plan: { active: true },
+        shopDomain: mocks.currentShop,
+      });
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(unwrapped.data);
+
+      const { container } = render(
+        <DataRouterWrapper>
+          <OptionValueRoute />
+        </DataRouterWrapper>,
+      );
+
+      const overrideField = container.querySelector('s-text-field[name="overrideCode"]');
+      expect(overrideField).not.toBeNull();
+      expect(overrideField?.getAttribute("error")).toBe(
+        "Choose either a lab-code token or an override code, not both",
+      );
+      expect(
+        screen.getByText(/Choose either a lab-code token or an override code, not both/),
+      ).toBeTruthy();
+    });
+
+    it("Row 5: delta 1500 → 0 -> Shopify product drafted, variant id cleared (price removed)", async () => {
+      const shopId = await createShop("shop-ex5.myshopify.com");
+      mocks.currentShop = "shop-ex5.myshopify.com";
+
+      const group = await catalogService.createOptionGroup(shopId, {
+        name: "Material",
+        kind: "MATERIAL",
+      });
+
+      // Create an option value with delta 1500 and variant ID
+      const initial = await catalogService.createOptionValue(shopId, {
+        optionGroupId: group.id,
+        label: "Anti-reflective",
+        priceDeltaMinor: 1500,
+        shopifyVariantId: "gid://shopify/ProductVariant/555",
+      });
+      expect(initial.shopifyVariantId).toBe("gid://shopify/ProductVariant/555");
+      expect(initial.priceDelta.amountMinor).toBe(1500);
+
+      // Now update delta to 0
+      const request = new Request(
+        `https://test-shop.myshopify.com/app/options/${initial.id}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            label: "Anti-reflective",
+            priceDelta: "0",
+          }),
+        },
+      );
+
+      const res = await optionValueAction(
+        createActionArgs(request, { id: initial.id }),
+      );
+      const unwrapped = await unwrapResponse<{
+        ok: boolean;
+        optionValue: { priceDelta: { amountMinor: number }; shopifyVariantId: string | null };
+      }>(res);
+
+      expect(unwrapped.status).toBe(200);
+      expect(unwrapped.data.ok).toBe(true);
+      expect(unwrapped.data.optionValue.priceDelta.amountMinor).toBe(0);
+      expect(unwrapped.data.optionValue.shopifyVariantId).toBeNull();
+
+      // Verify Shopify product was drafted
+      const productUpdateCall = recordedCalls.find((c) =>
+        c.query.includes("ProductUpdate"),
+      );
+      expect(productUpdateCall).toBeDefined();
+
+      // Verify in DB directly: variant ID is cleared
+      const inDb = await catalogService.getOptionValue(shopId, initial.id);
+      expect(inDb?.priceDelta.amountMinor).toBe(0);
+      expect(inDb?.shopifyVariantId).toBeNull();
+    });
+  });
+
+  describe("Invariants", () => {
+    it("INV-1: posting another shop's option value id returns 404, nothing changes", async () => {
+      const _shopA = await createShop("shop-a.myshopify.com");
+      const shopB = await createShop("shop-b.myshopify.com");
+
+      // Shop B creates an option group and option value
+      const groupB = await catalogService.createOptionGroup(shopB, {
+        name: "Group B",
+        kind: "MATERIAL",
+      });
+      const optValB = await catalogService.createOptionValue(shopB, {
+        optionGroupId: groupB.id,
+        label: "Option Value B",
+        priceDeltaMinor: 2000,
+      });
+
+      // Shop A authenticated
+      mocks.currentShop = "shop-a.myshopify.com";
+
+      // Shop A tries to post an update targeting Shop B's option value
+      const request = new Request(
+        `https://shop-a.myshopify.com/app/options/${optValB.id}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            label: "Hacked by Shop A",
+            priceDelta: "50.00",
+          }),
+        },
+      );
+
+      const res = await optionValueAction(
+        createActionArgs(request, { id: optValB.id }),
+      );
+      const unwrapped = await unwrapResponse<{ error: { code: string } }>(res);
+
+      expect(unwrapped.status).toBe(404);
+      expect(unwrapped.data.error.code).toBe("NOT_FOUND");
+
+      // Verify Shop B's row is completely untouched
+      const checkB = await catalogService.getOptionValue(shopB, optValB.id);
+      expect(checkB?.label).toBe("Option Value B");
+      expect(checkB?.priceDelta.amountMinor).toBe(2000);
+    });
+
+    it("INV-1: posting another shop's add-on id returns 404, nothing changes", async () => {
+      const _shopA = await createShop("shop-a2.myshopify.com");
+      const shopB = await createShop("shop-b2.myshopify.com");
+
+      const addOnB = await catalogService.createAddOn(shopB, {
+        name: "AddOn B",
+        priceMinor: 1500,
+      });
+
+      mocks.currentShop = "shop-a2.myshopify.com";
+
+      const request = new Request(
+        `https://shop-a2.myshopify.com/app/add-ons/${addOnB.id}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Hacked Addon",
+            price: "99.00",
+          }),
+        },
+      );
+
+      const res = await addOnAction(
+        createActionArgs(request, { id: addOnB.id }),
+      );
+      const unwrapped = await unwrapResponse<{ error: { code: string } }>(res);
+
+      expect(unwrapped.status).toBe(404);
+      expect(unwrapped.data.error.code).toBe("NOT_FOUND");
+
+      const checkB = await catalogService.getAddOn(shopB, addOnB.id);
+      expect(checkB?.name).toBe("AddOn B");
+      expect(checkB?.price.amountMinor).toBe(1500);
+    });
+  });
+
+  describe("UI Rendering: Empty and Populated States", () => {
+    it("renders empty state across all three sections when catalog has no options or add-ons", async () => {
+      await createShop("shop-empty.myshopify.com");
+      mocks.currentShop = "shop-empty.myshopify.com";
+
+      const emptyData = {
+        groups: [],
+        addOns: [],
+        plan: { active: true, planName: "Pro Plan", test: false },
+        shopDomain: "shop-empty.myshopify.com",
+      };
+
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue(emptyData);
+
+      const { container } = render(
+        <DataRouterWrapper>
+          <AdminOptionsIndexRoute />
+        </DataRouterWrapper>,
+      );
+
+      expect(container.querySelector("s-page")).not.toBeNull();
+      expect(container.querySelector("#empty-materials")).not.toBeNull();
+      expect(container.querySelector("#empty-tints")).not.toBeNull();
+      expect(container.querySelector("#empty-add-ons")).not.toBeNull();
+      expect(
+        screen.getByText("No material options yet. Add your first material option."),
+      ).toBeTruthy();
+      expect(
+        screen.getByText("No tint or colour options yet. Add your first tint or colour option."),
+      ).toBeTruthy();
+      expect(screen.getByText("No add-ons yet. Add your first add-on.")).toBeTruthy();
+    });
+
+    it("renders populated state across all three sections with ordered values, badges, and swatches", async () => {
+      const shopId = await createShop("shop-populated.myshopify.com");
+      mocks.currentShop = "shop-populated.myshopify.com";
+
+      // 1. Material group with values
+      const matGroup = await catalogService.createOptionGroup(shopId, {
+        name: "Standard Materials",
+        kind: "MATERIAL",
+      });
+      await catalogService.createOptionValue(shopId, {
+        optionGroupId: matGroup.id,
+        label: "1.50 Standard",
+        priceDeltaMinor: 0,
+      });
+      await catalogService.createOptionValue(shopId, {
+        optionGroupId: matGroup.id,
+        label: "1.67 High Index",
+        priceDeltaMinor: 3500,
+        tokenKey: "lens_material",
+        tokenValue: "PO-67",
+        shopifyVariantId: "gid://shopify/ProductVariant/67",
+      });
+
+      // 2. Tint / Colour group with values and swatch
+      const colorGroup = await catalogService.createOptionGroup(shopId, {
+        name: "Tint Colours",
+        kind: "COLOR",
+      });
+      await catalogService.createOptionValue(shopId, {
+        optionGroupId: colorGroup.id,
+        label: "Gradient Grey",
+        priceDeltaMinor: 4000,
+        swatch: "#555555",
+        overrideCode: "TINT_GREY",
+        shopifyVariantId: "gid://shopify/ProductVariant/grey",
+      });
+
+      // 3. Add-on
+      await catalogService.createAddOn(shopId, {
+        name: "Premium Hard Case",
+        priceMinor: 2500,
+        shopifyVariantId: "gid://shopify/ProductVariant/case",
+      });
+
+      const request = new Request("https://shop-populated.myshopify.com/app/options");
+      const loaderRes = await indexLoader(createLoaderArgs(request));
+      const { data: loaderData } = await unwrapResponse<{
+        groups: Array<{ name: string; values: Array<{ label: string }> }>;
+        addOns: Array<{ name: string }>;
+        plan: { active: boolean };
+        shopDomain: string;
+      }>(loaderRes);
+
+      expect(loaderData.groups.length).toBe(2);
+      expect(loaderData.addOns.length).toBe(1);
+
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue(loaderData);
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(undefined);
+
+      const { container } = render(
+        <DataRouterWrapper>
+          <AdminOptionsIndexRoute />
+        </DataRouterWrapper>,
+      );
+
+      // Verify sections and items
+      expect(container.querySelector('s-section[heading="Material & index"]')).not.toBeNull();
+      expect(container.querySelector('s-section[heading="Tint & colour"]')).not.toBeNull();
+      expect(container.querySelector('s-section[heading="Add-ons"]')).not.toBeNull();
+
+      expect(screen.getByText("Standard Materials")).toBeTruthy();
+      expect(screen.getByText("1.50 Standard")).toBeTruthy();
+      expect(screen.getAllByText("Included").length).toBeGreaterThanOrEqual(1);
+
+      expect(screen.getByText("1.67 High Index")).toBeTruthy();
+      expect(screen.getByText("+$35.00")).toBeTruthy();
+      expect(screen.getByText("Token: lens_material=PO-67")).toBeTruthy();
+
+      expect(screen.getByText("Tint Colours (Colour)")).toBeTruthy();
+      expect(screen.getByText("Gradient Grey")).toBeTruthy();
+      expect(screen.getByText("+$40.00")).toBeTruthy();
+      expect(screen.getByText("Override: TINT_GREY")).toBeTruthy();
+      expect(screen.getByText("Swatch: #555555")).toBeTruthy();
+
+      expect(screen.getByText("Premium Hard Case")).toBeTruthy();
+      expect(screen.getByText("$25.00")).toBeTruthy();
+    });
+  });
+
+  describe("UI Component: OptionValueForm", () => {
+    it("renders label, price delta, code choices, and hides swatch for MATERIAL group", () => {
+      const { container } = render(
+        <OptionValueForm
+          initialData={{ label: "Polycarbonate", priceDelta: "20.00" }}
+          groupKind="MATERIAL"
+        />,
+      );
+
+      expect(container.querySelector('s-text-field[name="label"]')).not.toBeNull();
+      expect(container.querySelector('s-text-field[name="priceDelta"]')).not.toBeNull();
+      expect(container.querySelector("s-choice-list")).not.toBeNull();
+      expect(container.querySelector('input[name="codeType"]')).not.toBeNull();
+      expect(screen.getByText("Save option value")).toBeTruthy();
+      expect(container.querySelector('s-text-field[name="swatch"]')).toBeNull();
+    });
+
+    it("renders swatch colour field when groupKind is COLOR", () => {
+      const { container } = render(
+        <OptionValueForm
+          initialData={{ label: "Emerald Green", swatch: "#006400" }}
+          groupKind="COLOR"
+        />,
+      );
+
+      expect(container.querySelector('s-text-field[name="swatch"]')).not.toBeNull();
+    });
+
+    it("displays inline banners for ONE_CODE_SOURCE, MONEY_PRECISION, and NEGATIVE_PRICE errors", () => {
+      const { container } = render(
+        <OptionValueForm
+          errors={{
+            ONE_CODE_SOURCE: "Choose either a lab-code token or an override code, not both.",
+            MONEY_PRECISION: "Maximum 2 decimal places allowed for USD.",
+            NEGATIVE_PRICE: "Price delta must be at least 0.",
+          }}
+          groupKind="MATERIAL"
+        />,
+      );
+
+      expect(
+        container.querySelector('s-banner[heading="Code source conflict"]'),
+      ).not.toBeNull();
+      expect(
+        container.querySelector('s-banner[heading="Invalid price precision"]'),
+      ).not.toBeNull();
+      expect(
+        container.querySelector('s-banner[heading="Invalid price delta"]'),
+      ).not.toBeNull();
+    });
+  });
+
+  describe("Add-ons Route (`app.add-ons.$id.tsx`)", () => {
+    it("creates, syncs, updates, and archives an add-on", async () => {
+      const shopId = await createShop("shop-addon.myshopify.com");
+      mocks.currentShop = "shop-addon.myshopify.com";
+
+      // 1. Create
+      const createReq = new Request("https://test-shop.myshopify.com/app/add-ons/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Blue Light Filter",
+          price: "15.00",
+        }),
+      });
+
+      const createRes = await addOnAction(
+        createActionArgs(createReq, { id: "new" }),
+      );
+      const created = await unwrapResponse<{
+        ok: boolean;
+        addOn: { id: string; name: string; price: { amountMinor: number } };
+      }>(createRes);
+
+      expect(created.status).toBe(200);
+      expect(created.data.ok).toBe(true);
+      expect(created.data.addOn.name).toBe("Blue Light Filter");
+      expect(created.data.addOn.price.amountMinor).toBe(1500);
+
+      // Verify syncItem was triggered
+      expect(
+        recordedCalls.some((c) => c.query.includes("ProductCreate")),
+      ).toBe(true);
+
+      // 2. Update
+      const updateReq = new Request(
+        `https://test-shop.myshopify.com/app/add-ons/${created.data.addOn.id}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Blue Light Filter Pro",
+            price: "25.00",
+          }),
+        },
+      );
+
+      const updateRes = await addOnAction(
+        createActionArgs(updateReq, { id: created.data.addOn.id }),
+      );
+      const updated = await unwrapResponse<{
+        ok: boolean;
+        addOn: { name: string; price: { amountMinor: number } };
+      }>(updateRes);
+
+      expect(updated.status).toBe(200);
+      expect(updated.data.addOn.name).toBe("Blue Light Filter Pro");
+      expect(updated.data.addOn.price.amountMinor).toBe(2500);
+
+      // 3. Archive
+      const archiveReq = new Request(
+        `https://test-shop.myshopify.com/app/add-ons/${created.data.addOn.id}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            intent: "archive",
+          }),
+        },
+      );
+
+      const archiveRes = await addOnAction(
+        createActionArgs(archiveReq, { id: created.data.addOn.id }),
+      );
+      const archived = await unwrapResponse<{ ok: boolean; archived: boolean }>(
+        archiveRes,
+      );
+      expect(archived.status).toBe(200);
+      expect(archived.data.archived).toBe(true);
+
+      // Verify soft delete: getAddOn still has archivedAt set, listAddOns excludes it
+      const inDb = await catalogService.getAddOn(
+        shopId,
+        created.data.addOn.id,
+      );
+      expect(inDb.archivedAt).not.toBeNull();
+
+      const activeList = await catalogService.listAddOns(shopId);
+      expect(activeList.find((a) => a.id === created.data.addOn.id)).toBeUndefined();
+    });
+  });
+
+  describe("Main Index Actions", () => {
+    it("creates an option group via indexAction intent: create_group", async () => {
+      const _shopId = await createShop("shop-index-actions.myshopify.com");
+      mocks.currentShop = "shop-index-actions.myshopify.com";
+
+      const req = new Request("https://test-shop.myshopify.com/app/options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent: "create_group",
+          name: "Transition Types",
+          kind: "TINT_TYPE",
+        }),
+      });
+
+      const res = await indexAction(createActionArgs(req));
+      const unwrapped = await unwrapResponse<{
+        ok: boolean;
+        group: { id: string; name: string; kind: string };
+      }>(res);
+
+      expect(unwrapped.status).toBe(200);
+      expect(unwrapped.data.ok).toBe(true);
+      expect(unwrapped.data.group.name).toBe("Transition Types");
+      expect(unwrapped.data.group.kind).toBe("TINT_TYPE");
+    });
+  });
+
+  describe("Option Value & Add-on Routes Component and Loader", () => {
+    it("loads and renders OptionValueRoute for editing", async () => {
+      const shopId = await createShop("shop-optval-ui.myshopify.com");
+      mocks.currentShop = "shop-optval-ui.myshopify.com";
+
+      const group = await catalogService.createOptionGroup(shopId, {
+        name: "Index Options",
+        kind: "MATERIAL",
+      });
+      const optVal = await catalogService.createOptionValue(shopId, {
+        optionGroupId: group.id,
+        label: "1.74 Ultra Thin",
+        priceDeltaMinor: 6000,
+      });
+
+      const req = new Request(`https://test-shop.myshopify.com/app/options/${optVal.id}`);
+      const loaderRes = await optionValueLoader(createLoaderArgs(req, { id: optVal.id }));
+      const { data: loaderData } = await unwrapResponse<{
+        optionValue: { label: string };
+        group: { kind: string };
+      }>(loaderRes);
+
+      expect(loaderData.optionValue.label).toBe("1.74 Ultra Thin");
+
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue(loaderData);
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(undefined);
+
+      const { container } = render(
+        <DataRouterWrapper>
+          <OptionValueRoute />
+        </DataRouterWrapper>,
+      );
+
+      expect(container.querySelector('s-page[heading="Edit: 1.74 Ultra Thin"]')).not.toBeNull();
+    });
+
+    it("loads and renders AddOnRoute for editing", async () => {
+      const shopId = await createShop("shop-addon-ui.myshopify.com");
+      mocks.currentShop = "shop-addon-ui.myshopify.com";
+
+      const addOn = await catalogService.createAddOn(shopId, {
+        name: "Lens Cleaner Kit",
+        priceMinor: 999,
+      });
+
+      const req = new Request(`https://test-shop.myshopify.com/app/add-ons/${addOn.id}`);
+      const loaderRes = await addOnLoader(createLoaderArgs(req, { id: addOn.id }));
+      const { data: loaderData } = await unwrapResponse<{
+        addOn: { name: string; price: { amountMinor: number } };
+      }>(loaderRes);
+
+      expect(loaderData.addOn.name).toBe("Lens Cleaner Kit");
+
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue(loaderData);
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(undefined);
+
+      const { container } = render(
+        <DataRouterWrapper>
+          <AddOnRoute />
+        </DataRouterWrapper>,
+      );
+
+      expect(container.querySelector('s-page[heading="Edit: Lens Cleaner Kit"]')).not.toBeNull();
+    });
+  });
+
+  describe("Accepted Findings Verification Tests (R1)", () => {
+    it("R1-F1: opens Add option group modal overlay via showOverlay() on click", () => {
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        groups: [],
+        addOns: [],
+        plan: { active: true },
+        shopDomain: "test.myshopify.com",
+      });
+
+      const { container } = render(
+        <DataRouterWrapper>
+          <AdminOptionsIndexRoute />
+        </DataRouterWrapper>,
+      );
+
+      const modal = container.querySelector("#add-option-group-modal") as HTMLElement & {
+        showOverlay?: ReturnType<typeof vi.fn>;
+        hideOverlay?: ReturnType<typeof vi.fn>;
+      };
+      expect(modal).not.toBeNull();
+      const showSpy = vi.fn();
+      const hideSpy = vi.fn();
+      modal.showOverlay = showSpy;
+      modal.hideOverlay = hideSpy;
+
+      const addBtn = screen.getByRole("button", { name: "Add option group" });
+      fireEvent.click(addBtn);
+
+      expect(showSpy).toHaveBeenCalledTimes(1);
+
+      const cancelBtn = within(modal).getByRole("button", { name: "Cancel" });
+      fireEvent.click(cancelBtn);
+      expect(hideSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("R1-F2: round-trips JPY (0) and KWD (3) through toShopifyDecimal and parseMoneyText without dividing by 100", () => {
+      // JPY: 1500 minor units
+      const jpyDecimal = toShopifyDecimal(1500, "JPY");
+      expect(jpyDecimal).toBe("1500");
+      const jpyParsed = parseMoneyText(jpyDecimal, "JPY");
+      expect(jpyParsed.ok).toBe(true);
+      if (jpyParsed.ok) {
+        expect(jpyParsed.amountMinor).toBe(1500);
+      }
+
+      // KWD: 1500 minor units
+      const kwdDecimal = toShopifyDecimal(1500, "KWD");
+      expect(kwdDecimal).toBe("1.500");
+      const kwdParsed = parseMoneyText(kwdDecimal, "KWD");
+      expect(kwdParsed.ok).toBe(true);
+      if (kwdParsed.ok) {
+        expect(kwdParsed.amountMinor).toBe(1500);
+      }
+
+      // formatMoneyDisplay formatting
+      expect(formatMoneyDisplay(1500, "JPY")).toContain("1,500");
+      expect(formatMoneyDisplay(1500, "KWD")).toContain("1.500");
+    });
+
+    it("R1-F2: renders JPY and KWD initial values in OptionValueRoute and AddOnRoute without dividing by 100", () => {
+      // OptionValueRoute with JPY
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        optionValue: {
+          id: "val-jpy",
+          optionGroupId: "grp-1",
+          label: "JPY Option",
+          priceDelta: { amountMinor: 1500, currency: "JPY" },
+        },
+        group: { id: "grp-1", kind: "MATERIAL" },
+        allGroups: [],
+        plan: { active: true },
+        shopDomain: "test.myshopify.com",
+      });
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(undefined);
+
+      const { container: optContainer } = render(
+        <DataRouterWrapper>
+          <OptionValueRoute />
+        </DataRouterWrapper>,
+      );
+      const priceField = optContainer.querySelector('s-text-field[name="priceDelta"]');
+      expect(priceField?.getAttribute("value")).toBe("1500");
+
+      cleanup();
+
+      // AddOnRoute with KWD
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        addOn: {
+          id: "addon-kwd",
+          name: "KWD AddOn",
+          price: { amountMinor: 1500, currency: "KWD" },
+        },
+        plan: { active: true },
+        shopDomain: "test.myshopify.com",
+      });
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(undefined);
+
+      const { container: addOnContainer } = render(
+        <DataRouterWrapper>
+          <AddOnRoute />
+        </DataRouterWrapper>,
+      );
+      const addOnPrice = addOnContainer.querySelector('s-text-field[name="price"]');
+      expect(addOnPrice?.getAttribute("value")).toBe("1.500");
+    });
+
+    it("R1-F3: retains variant ID on archiveItem failure during price removal (save stays)", async () => {
+      const shopId = await createShop("shop-archive-fail.myshopify.com");
+      mocks.currentShop = "shop-archive-fail.myshopify.com";
+
+      const group = await catalogService.createOptionGroup(shopId, {
+        name: "Material",
+        kind: "MATERIAL",
+      });
+
+      const initial = await catalogService.createOptionValue(shopId, {
+        optionGroupId: group.id,
+        label: "Anti-reflective",
+        priceDeltaMinor: 1500,
+        shopifyVariantId: "gid://shopify/ProductVariant/777",
+      });
+
+      // Mock ProductUpdate to fail and GetVariantProduct to return product ID
+      mocks.adminGraphql.mockImplementation(async (query: string, init?: { variables?: Record<string, unknown> }) => {
+        if (query.includes("ProductUpdate")) {
+          return new Response(
+            JSON.stringify({
+              data: {
+                productUpdate: {
+                  product: null,
+                  userErrors: [{ message: "Shopify API network timeout" }],
+                },
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (query.includes("GetVariantProduct")) {
+          return new Response(
+            JSON.stringify({
+              data: {
+                productVariant: {
+                  id: (init?.variables?.id as string) ?? "gid://shopify/ProductVariant/777",
+                  product: { id: "gid://shopify/Product/existing-product" },
+                },
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(JSON.stringify({ data: {} }), { status: 200, headers: { "Content-Type": "application/json" } });
+      });
+
+      const req = new Request(`https://test-shop.myshopify.com/app/options/${initial.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: "Anti-reflective",
+          priceDelta: "0",
+        }),
+      });
+
+      const res = await optionValueAction(createActionArgs(req, { id: initial.id }));
+      const unwrapped = await unwrapResponse<{
+        ok: boolean;
+        syncFailed: boolean;
+        optionValue: { priceDelta: { amountMinor: number }; shopifyVariantId: string | null };
+      }>(res);
+
+      expect(unwrapped.status).toBe(200);
+      expect(unwrapped.data.ok).toBe(true);
+      expect(unwrapped.data.syncFailed).toBe(true);
+      // The variant id must NOT be cleared when archive fails
+      expect(unwrapped.data.optionValue.shopifyVariantId).toBe("gid://shopify/ProductVariant/777");
+
+      // Verify DB row still retains the variant ID and updated price
+      const saved = await catalogService.getOptionValue(shopId, initial.id);
+      expect(saved?.shopifyVariantId).toBe("gid://shopify/ProductVariant/777");
+      expect(saved?.priceDelta.amountMinor).toBe(0);
+    });
+
+    it("R1-F3: returns 400 SHOPIFY_ARCHIVE_FAILED and does not delete add-on when Shopify archive fails", async () => {
+      const shopId = await createShop("shop-addon-del-fail.myshopify.com");
+      mocks.currentShop = "shop-addon-del-fail.myshopify.com";
+
+      const addOn = await catalogService.createAddOn(shopId, {
+        name: "Test AddOn",
+        priceMinor: 1000,
+      });
+      await catalogService.updateAddOn(shopId, addOn.id, {
+        shopifyVariantId: "gid://shopify/ProductVariant/999",
+      });
+
+      // Fail Shopify ProductUpdate
+      mocks.adminGraphql.mockImplementation(async (query: string, init?: { variables?: Record<string, unknown> }) => {
+        if (query.includes("ProductUpdate")) {
+          return new Response(
+            JSON.stringify({
+              data: {
+                productUpdate: {
+                  product: null,
+                  userErrors: [{ message: "Archive failed" }],
+                },
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (query.includes("GetVariantProduct")) {
+          return new Response(
+            JSON.stringify({
+              data: {
+                productVariant: {
+                  id: (init?.variables?.id as string) ?? "gid://shopify/ProductVariant/999",
+                  product: { id: "gid://shopify/Product/existing-product" },
+                },
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(JSON.stringify({ data: {} }), { status: 200, headers: { "Content-Type": "application/json" } });
+      });
+
+      const req = new Request(`https://test-shop.myshopify.com/app/add-ons/${addOn.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: "delete" }),
+      });
+
+      const res = await addOnAction(createActionArgs(req, { id: addOn.id }));
+      const unwrapped = await unwrapResponse<{ error: { code: string } }>(res);
+
+      expect(unwrapped.status).toBe(400);
+      expect(unwrapped.data.error.code).toBe("SHOPIFY_ARCHIVE_FAILED");
+
+      // Verify add-on still active in DB
+      const inDb = await catalogService.getAddOn(shopId, addOn.id);
+      expect(inDb.archivedAt).toBeNull();
+    });
+
+    it("R1-F4: boundary validation returns 400 for null, malformed payload, and hostile types", async () => {
+      const _shopId = await createShop("shop-boundary-val.myshopify.com");
+      mocks.currentShop = "shop-boundary-val.myshopify.com";
+
+      // 1. JSON null payload to index action
+      const nullReq = new Request("https://test-shop.myshopify.com/app/options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "null",
+      });
+      const nullRes = await indexAction(createActionArgs(nullReq));
+      const nullUnwrapped = await unwrapResponse<{ error: { code: string } }>(nullRes);
+      expect(nullUnwrapped.status).toBe(400);
+      expect(nullUnwrapped.data.error.code).toBe("INVALID_INPUT");
+
+      // 2. Malformed create_group (missing name)
+      const badCreateGroup = new Request("https://test-shop.myshopify.com/app/options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: "create_group", name: "   ", kind: "MATERIAL" }),
+      });
+      const badCreateRes = await indexAction(createActionArgs(badCreateGroup));
+      const badCreateUnwrapped = await unwrapResponse<{ error: { code: string } }>(badCreateRes);
+      expect(badCreateUnwrapped.status).toBe(400);
+      expect(badCreateUnwrapped.data.error.code).toBe("REQUIRED");
+
+      // 3. Malformed delete_group (missing groupId)
+      const badDelGroup = new Request("https://test-shop.myshopify.com/app/options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: "delete_group" }),
+      });
+      const badDelRes = await indexAction(createActionArgs(badDelGroup));
+      const badDelUnwrapped = await unwrapResponse<{ error: { code: string } }>(badDelRes);
+      expect(badDelUnwrapped.status).toBe(400);
+
+      // 4. Malformed reorder_groups (invalid JSON / non-array)
+      const badReorder = new Request("https://test-shop.myshopify.com/app/options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: "reorder_groups", ids: "invalid json string" }),
+      });
+      const badReorderRes = await indexAction(createActionArgs(badReorder));
+      const badReorderUnwrapped = await unwrapResponse<{ error: { code: string } }>(badReorderRes);
+      expect(badReorderUnwrapped.status).toBe(400);
+
+      // 5. Hostile type in option value: priceDeltaMinor: true (boolean coerced check)
+      const hostileOpt = new Request("https://test-shop.myshopify.com/app/options/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          optionGroupId: "some-group",
+          label: "Test Label",
+          priceDeltaMinor: true,
+        }),
+      });
+      const hostileOptRes = await optionValueAction(createActionArgs(hostileOpt, { id: "new" }));
+      const hostileOptUnwrapped = await unwrapResponse<{ error: { code: string } }>(hostileOptRes);
+      expect(hostileOptUnwrapped.status).toBe(400);
+      expect(hostileOptUnwrapped.data.error.code).toBe("NOT_INTEGER");
+
+      // 6. Hostile type in add-on: priceMinor: true
+      const hostileAddOn = new Request("https://test-shop.myshopify.com/app/add-ons/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Test Addon",
+          priceMinor: true,
+        }),
+      });
+      const hostileAddOnRes = await addOnAction(createActionArgs(hostileAddOn, { id: "new" }));
+      const hostileAddOnUnwrapped = await unwrapResponse<{ error: { code: string } }>(hostileAddOnRes);
+      expect(hostileAddOnUnwrapped.status).toBe(400);
+      expect(hostileAddOnUnwrapped.data.error.code).toBe("NOT_INTEGER");
+
+      // 7. Unknown intent in index action
+      const unknownIntent = new Request("https://test-shop.myshopify.com/app/options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: "unknown_intent" }),
+      });
+      const unknownRes = await indexAction(createActionArgs(unknownIntent));
+      const unknownUnwrapped = await unwrapResponse<{ error: { code: string } }>(unknownRes);
+      expect(unknownUnwrapped.status).toBe(400);
+    });
+
+    it("R1-F6: disables Save and shows loading during submission across option and add-on forms", () => {
+      // Mock navigation state as submitting
+      vi.spyOn(ReactRouter, "useNavigation").mockReturnValue({
+        state: "submitting",
+        location: { pathname: "/app/options/new", search: "", hash: "", state: null, key: "1" },
+        formMethod: "POST",
+        formAction: "/app/options/new",
+        formEncType: "application/x-www-form-urlencoded",
+        formData: new FormData(),
+        json: undefined,
+        text: undefined,
+      });
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        optionValue: null,
+        group: { id: "g1", kind: "MATERIAL" },
+        allGroups: [],
+        plan: { active: true },
+        shopDomain: "test.myshopify.com",
+      });
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(undefined);
+
+      const { container } = render(
+        <DataRouterWrapper>
+          <OptionValueRoute />
+        </DataRouterWrapper>,
+      );
+
+      const saveBtn = container.querySelector('s-button[type="submit"]');
+      expect(saveBtn).not.toBeNull();
+      expect(saveBtn?.getAttribute("disabled")).toBeTruthy();
+      expect(saveBtn?.getAttribute("loading")).toBeTruthy();
+
+      cleanup();
+
+      // AddOnRoute loading check
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        addOn: null,
+        plan: { active: true },
+        shopDomain: "test.myshopify.com",
+      });
+      const { container: addOnContainer } = render(
+        <DataRouterWrapper>
+          <AddOnRoute />
+        </DataRouterWrapper>,
+      );
+      const addOnSave = addOnContainer.querySelector('s-button[type="submit"]');
+      expect(addOnSave).not.toBeNull();
+      expect(addOnSave?.getAttribute("disabled")).toBeTruthy();
+      expect(addOnSave?.getAttribute("loading")).toBeTruthy();
+    });
+
+    it("R1-F7: error boundaries pass thrown route error via useRouteError()", () => {
+      // 1. ErrorResponse renders HTML in boundary
+      const errorResponse = {
+        constructor: { name: "ErrorResponseImpl" },
+        status: 500,
+        data: "Loader execution failed",
+      };
+      vi.spyOn(ReactRouter, "useRouteError").mockReturnValue(errorResponse);
+
+      const { container: indexErrContainer } = render(
+        <IndexErrorBoundary />,
+      );
+      expect(indexErrContainer.innerHTML).toContain("Loader execution failed");
+
+      cleanup();
+
+      const { container: optErrContainer } = render(
+        <OptionValueErrorBoundary />,
+      );
+      expect(optErrContainer.innerHTML).toContain("Loader execution failed");
+
+      cleanup();
+
+      const { container: addOnErrContainer } = render(
+        <AddOnErrorBoundary />,
+      );
+      expect(addOnErrContainer.innerHTML).toContain("Loader execution failed");
+
+      cleanup();
+
+      // 2. Standard Error rethrows through boundary.error
+      const standardError = new Error("Action DB crash");
+      vi.spyOn(ReactRouter, "useRouteError").mockReturnValue(standardError);
+      expect(() => render(<IndexErrorBoundary />)).toThrow("Action DB crash");
+      expect(() => render(<OptionValueErrorBoundary />)).toThrow("Action DB crash");
+      expect(() => render(<AddOnErrorBoundary />)).toThrow("Action DB crash");
+    });
+
+    it("R1-F8: exposes controls for move up/down, delete with confirm modal, and Retry on Sync failed badge", () => {
+      const mockGroups = [
+        {
+          id: "g1",
+          name: "Material 1",
+          kind: "MATERIAL" as const,
+          position: 0,
+          values: [
+            {
+              id: "v1",
+              optionGroupId: "g1",
+              label: "1.50 Standard",
+              priceDelta: { amountMinor: 0, currency: "USD" },
+              shopifyVariantId: "gid://shopify/ProductVariant/failed-archive",
+              position: 0,
+            },
+            {
+              id: "v2",
+              optionGroupId: "g1",
+              label: "1.67 High Index",
+              priceDelta: { amountMinor: 3500, currency: "USD" },
+              shopifyVariantId: null, // failed sync
+              position: 1,
+            },
+          ],
+        },
+        {
+          id: "g2",
+          name: "Material 2",
+          kind: "MATERIAL" as const,
+          position: 1,
+          values: [],
+        },
+      ];
+
+      const mockAddOns = [
+        {
+          id: "a1",
+          name: "AddOn 1",
+          price: { amountMinor: 1000, currency: "USD" },
+          shopifyVariantId: null, // sync failed
+          position: 0,
+        },
+        {
+          id: "a2",
+          name: "AddOn 2",
+          price: { amountMinor: 2000, currency: "USD" },
+          shopifyVariantId: "gid://shopify/ProductVariant/synced",
+          position: 1,
+        },
+      ];
+
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        groups: mockGroups,
+        addOns: mockAddOns,
+        plan: { active: true },
+        shopDomain: "test.myshopify.com",
+      });
+
+      const { container } = render(
+        <DataRouterWrapper>
+          <AdminOptionsIndexRoute />
+        </DataRouterWrapper>,
+      );
+
+      // 1. Move up / Move down buttons exist for groups, values, and add-ons
+      const moveUpButtons = screen.getAllByRole("button", { name: "Move up" });
+      const moveDownButtons = screen.getAllByRole("button", { name: "Move down" });
+      expect(moveUpButtons.length).toBeGreaterThanOrEqual(3);
+      expect(moveDownButtons.length).toBeGreaterThanOrEqual(3);
+
+      // First group Move up should be disabled
+      const groupForms = Array.from(container.querySelectorAll("form")).filter((f) =>
+        f.querySelector('input[name="intent"][value="reorder_groups"]'),
+      );
+      const groupMoveUpButtons = groupForms
+        .flatMap((f) => Array.from(f.querySelectorAll("s-button")))
+        .filter((b) => b.textContent?.trim() === "Move up");
+      const groupMoveDownButtons = groupForms
+        .flatMap((f) => Array.from(f.querySelectorAll("s-button")))
+        .filter((b) => b.textContent?.trim() === "Move down");
+      expect(groupMoveUpButtons[0].getAttribute("disabled")).toBeTruthy();
+      // Second group Move down should be disabled
+      expect(groupMoveDownButtons[1].getAttribute("disabled")).toBeTruthy();
+
+      // 2. Retry button exists next to Sync failed badges
+      const retryButtons = screen.getAllByRole("button", { name: "Retry" });
+      expect(retryButtons.length).toBe(3); // v1 (archive failed), v2 (sync failed), a1 (sync failed)
+
+      // 3. Delete group button opens delete confirm modal
+      const deleteModal = container.querySelector("#delete-confirm-modal") as HTMLElement & {
+        showOverlay?: ReturnType<typeof vi.fn>;
+        hideOverlay?: ReturnType<typeof vi.fn>;
+      };
+      expect(deleteModal).not.toBeNull();
+      const showDeleteSpy = vi.fn();
+      const hideDeleteSpy = vi.fn();
+      deleteModal.showOverlay = showDeleteSpy;
+      deleteModal.hideOverlay = hideDeleteSpy;
+
+      const deleteGroupButtons = screen.getAllByRole("button", { name: "Delete group" });
+      expect(deleteGroupButtons.length).toBe(2);
+      fireEvent.click(deleteGroupButtons[0]);
+      expect(showDeleteSpy).toHaveBeenCalledTimes(1);
+
+      // Confirm delete button inside the modal
+      const confirmDeleteBtn = screen.getByRole("button", { name: "Confirm delete" });
+      expect(confirmDeleteBtn).not.toBeNull();
+
+      // Cancel delete
+      const cancelDeleteBtn = within(deleteModal).getByRole("button", { name: "Cancel" });
+      fireEvent.click(cancelDeleteBtn);
+      expect(hideDeleteSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("Accepted Findings Verification Tests (R2)", () => {
+    it("R2-F1: option-value and add-on routes reject unknown intents with 400 UNKNOWN_INTENT and leave data unchanged", async () => {
+      const shopId = await createShop("shop-r2f1.myshopify.com");
+      mocks.currentShop = "shop-r2f1.myshopify.com";
+
+      const group = await catalogService.createOptionGroup(shopId, {
+        name: "Material",
+        kind: "MATERIAL",
+      });
+
+      const createdOpt = await catalogService.createOptionValue(shopId, {
+        optionGroupId: group.id,
+        label: "Polycarbonate",
+        priceDeltaMinor: 2500,
+        currency: "USD",
+        tokenKey: "material",
+        tokenValue: "POLY",
+        swatch: "#ffffff",
+      });
+
+      const createdAddOn = await catalogService.createAddOn(shopId, {
+        name: "Anti-reflective",
+        priceMinor: 1500,
+        currency: "USD",
+      });
+
+      // 1. Post unknown intent to option value route
+      const hostileOptReq = new Request(
+        `https://test-shop.myshopify.com/app/options/${createdOpt.id}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            intent: "unknown_intent",
+            label: "MUTATED_LABEL",
+            priceDelta: "99.99",
+          }),
+        },
+      );
+      const hostileOptRes = await optionValueAction(
+        createActionArgs(hostileOptReq, { id: createdOpt.id }),
+      );
+      const hostileOptUnwrapped = await unwrapResponse<{
+        error: { code: string; message: string };
+      }>(hostileOptRes);
+
+      expect(hostileOptUnwrapped.status).toBe(400);
+      expect(hostileOptUnwrapped.data.error.code).toBe("UNKNOWN_INTENT");
+
+      // Verify existing option value in DB is completely unchanged
+      const currentOpt = await catalogService.getOptionValue(shopId, createdOpt.id);
+      expect(currentOpt).not.toBeNull();
+      expect(currentOpt!.label).toBe("Polycarbonate");
+      expect(currentOpt!.priceDelta.amountMinor).toBe(2500);
+      expect(currentOpt!.tokenKey).toBe("material");
+      expect(currentOpt!.tokenValue).toBe("POLY");
+      expect(currentOpt!.swatch).toBe("#ffffff");
+
+      // 2. Post unknown intent to add-on route
+      const hostileAddOnReq = new Request(
+        `https://test-shop.myshopify.com/app/add-ons/${createdAddOn.id}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            intent: "unknown_intent",
+            name: "MUTATED_ADDON",
+            price: "99.99",
+          }),
+        },
+      );
+      const hostileAddOnRes = await addOnAction(
+        createActionArgs(hostileAddOnReq, { id: createdAddOn.id }),
+      );
+      const hostileAddOnUnwrapped = await unwrapResponse<{
+        error: { code: string; message: string };
+      }>(hostileAddOnRes);
+
+      expect(hostileAddOnUnwrapped.status).toBe(400);
+      expect(hostileAddOnUnwrapped.data.error.code).toBe("UNKNOWN_INTENT");
+
+      // Verify existing add-on in DB is completely unchanged
+      const currentAddOn = await catalogService.getAddOn(shopId, createdAddOn.id);
+      expect(currentAddOn).not.toBeNull();
+      expect(currentAddOn!.name).toBe("Anti-reflective");
+      expect(currentAddOn!.price.amountMinor).toBe(1500);
+
+      // 3. Normal save without intent succeeds
+      const validOptReq = new Request(
+        `https://test-shop.myshopify.com/app/options/${createdOpt.id}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            label: "Polycarbonate High Grade",
+          }),
+        },
+      );
+      const validOptRes = await optionValueAction(
+        createActionArgs(validOptReq, { id: createdOpt.id }),
+      );
+      const validOptUnwrapped = await unwrapResponse<{ ok: boolean }>(validOptRes);
+      expect(validOptUnwrapped.status).toBe(200);
+      expect(validOptUnwrapped.data.ok).toBe(true);
+
+      const updatedOpt = await catalogService.getOptionValue(shopId, createdOpt.id);
+      expect(updatedOpt!.label).toBe("Polycarbonate High Grade");
+    });
+
+    it("R2-F2: lab-code tokens must be key=VALUE with both parts non-empty; rejects malformed with inline error", async () => {
+      const shopId = await createShop("shop-r2f2.myshopify.com");
+      mocks.currentShop = "shop-r2f2.myshopify.com";
+
+      const group = await catalogService.createOptionGroup(shopId, {
+        name: "Material",
+        kind: "MATERIAL",
+      });
+
+      // 1. Missing '=': 'foo'
+      const reqMissingEq = new Request("https://test-shop.myshopify.com/app/options/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          optionGroupId: group.id,
+          label: "Test 1",
+          token: "foo",
+        }),
+      });
+      const resMissingEq = await optionValueAction(createActionArgs(reqMissingEq, { id: "new" }));
+      const unwrappedMissingEq = await unwrapResponse<{
+        error: { code: string; message: string; fields?: Array<{ path: string; code: string }> };
+      }>(resMissingEq);
+      expect(unwrappedMissingEq.status).toBe(400);
+      expect(unwrappedMissingEq.data.error.code).toBe("MALFORMED_TOKEN");
+      expect(unwrappedMissingEq.data.error.fields).toEqual([
+        { path: "token", code: "MALFORMED_TOKEN" },
+      ]);
+
+      // 2. Missing key: '=BAR'
+      const reqMissingKey = new Request("https://test-shop.myshopify.com/app/options/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          optionGroupId: group.id,
+          label: "Test 2",
+          token: "=BAR",
+        }),
+      });
+      const resMissingKey = await optionValueAction(createActionArgs(reqMissingKey, { id: "new" }));
+      const unwrappedMissingKey = await unwrapResponse<{
+        error: { code: string; message: string };
+      }>(resMissingKey);
+      expect(unwrappedMissingKey.status).toBe(400);
+      expect(unwrappedMissingKey.data.error.code).toBe("MALFORMED_TOKEN");
+
+      // 3. Missing value: 'foo='
+      const reqMissingVal = new Request("https://test-shop.myshopify.com/app/options/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          optionGroupId: group.id,
+          label: "Test 3",
+          token: "foo=",
+        }),
+      });
+      const resMissingVal = await optionValueAction(createActionArgs(reqMissingVal, { id: "new" }));
+      const unwrappedMissingVal = await unwrapResponse<{
+        error: { code: string; message: string };
+      }>(resMissingVal);
+      expect(unwrappedMissingVal.status).toBe(400);
+      expect(unwrappedMissingVal.data.error.code).toBe("MALFORMED_TOKEN");
+
+      // 4. Empty key and value: ' = '
+      const reqEmptyBoth = new Request("https://test-shop.myshopify.com/app/options/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          optionGroupId: group.id,
+          label: "Test 4",
+          token: " = ",
+        }),
+      });
+      const resEmptyBoth = await optionValueAction(createActionArgs(reqEmptyBoth, { id: "new" }));
+      const unwrappedEmptyBoth = await unwrapResponse<{
+        error: { code: string; message: string };
+      }>(resEmptyBoth);
+      expect(unwrappedEmptyBoth.status).toBe(400);
+      expect(unwrappedEmptyBoth.data.error.code).toBe("MALFORMED_TOKEN");
+
+      // 5. Render form with MALFORMED_TOKEN error: verifies inline field error
+      const { container } = render(
+        <OptionValueForm
+          groupKind="MATERIAL"
+          initialData={{
+            label: "Test 1",
+            token: "foo",
+            codeType: "token",
+          }}
+          errors={{
+            MALFORMED_TOKEN: "Lab-code token must be in key=VALUE format",
+            token: "Lab-code token must be in key=VALUE format",
+          }}
+        />,
+      );
+      const tokenField = container.querySelector('s-text-field[name="token"]');
+      expect(tokenField).not.toBeNull();
+      expect(tokenField?.getAttribute("error")).toBe("Lab-code token must be in key=VALUE format");
+
+      // 6. ONE_CODE_SOURCE is preserved when both token and overrideCode are passed
+      const reqBoth = new Request("https://test-shop.myshopify.com/app/options/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          optionGroupId: group.id,
+          label: "Test 5",
+          token: "lens_material=PO-67",
+          overrideCode: "OVERRIDE-1",
+        }),
+      });
+      const resBoth = await optionValueAction(createActionArgs(reqBoth, { id: "new" }));
+      const unwrappedBoth = await unwrapResponse<{
+        error: { code: string; message: string };
+      }>(resBoth);
+      expect(unwrappedBoth.status).toBe(400);
+      expect(unwrappedBoth.data.error.code).toBe("ONE_CODE_SOURCE");
+    });
+
+    it("R2-F3: index action failures (delete, retry, reorder) render error banner to merchant", () => {
+      // 1. Shopify archive failure on delete renders error banner
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        groups: [],
+        addOns: [],
+        plan: { active: true },
+        shopDomain: "test.myshopify.com",
+      });
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue({
+        error: {
+          code: "SHOPIFY_ARCHIVE_FAILED",
+          message: "Failed to archive item in Shopify. Please retry.",
+        },
+      });
+
+      const { rerender } = render(
+        <DataRouterWrapper>
+          <AdminOptionsIndexRoute />
+        </DataRouterWrapper>,
+      );
+
+      expect(screen.getByText("Failed to archive item in Shopify. Please retry.")).toBeTruthy();
+
+      // 2. Sync failure on retry renders error banner
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue({
+        error: {
+          code: "SYNC_FAILED",
+          message: "Shopify archive failed on retry",
+        },
+      });
+      rerender(
+        <DataRouterWrapper>
+          <AdminOptionsIndexRoute />
+        </DataRouterWrapper>,
+      );
+      expect(screen.getByText("Shopify archive failed on retry")).toBeTruthy();
+
+      // 3. Generic action failure (e.g. duplicate group name)
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue({
+        error: {
+          code: "NAME_NOT_UNIQUE",
+          message: "An option group with this name already exists",
+        },
+      });
+      rerender(
+        <DataRouterWrapper>
+          <AdminOptionsIndexRoute />
+        </DataRouterWrapper>,
+      );
+      expect(screen.getByText("An option group with this name already exists")).toBeTruthy();
+    });
+
+    it("R2-F4: unlisted service errors (e.g. NAME_NOT_UNIQUE) render fallback form-level error banner in detail forms", async () => {
+      const shopId = await createShop("shop-r2f4.myshopify.com");
+      mocks.currentShop = "shop-r2f4.myshopify.com";
+
+      const group = await catalogService.createOptionGroup(shopId, {
+        name: "Material",
+        kind: "MATERIAL",
+      });
+      await catalogService.createOptionValue(shopId, {
+        optionGroupId: group.id,
+        label: "Existing Option Value",
+        priceDeltaMinor: 0,
+      });
+
+      // 1. Duplicate Option Value submission returns NAME_NOT_UNIQUE
+      const dupOptReq = new Request("https://test-shop.myshopify.com/app/options/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          optionGroupId: group.id,
+          label: "Existing Option Value",
+          priceDelta: "0",
+        }),
+      });
+      const dupOptRes = await optionValueAction(createActionArgs(dupOptReq, { id: "new" }));
+      const dupOptUnwrapped = await unwrapResponse<{
+        error: { code: string; message: string };
+      }>(dupOptRes);
+      expect(dupOptUnwrapped.status).toBe(400);
+      expect(dupOptUnwrapped.data.error.code).toBe("NAME_NOT_UNIQUE");
+
+      // Render OptionValueRoute with this actionData error
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(dupOptUnwrapped.data);
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        group,
+        allGroups: [group],
+        optionValue: null,
+        currency: "USD",
+        plan: { active: true },
+        shopDomain: "test.myshopify.com",
+      });
+
+      const { rerender } = render(
+        <DataRouterWrapper>
+          <OptionValueRoute />
+        </DataRouterWrapper>,
+      );
+
+      // Fallback banner displays duplicate label message
+      expect(
+        screen.getByText("An option value with this label already exists in this group"),
+      ).toBeTruthy();
+
+      // 2. Duplicate Add-on submission returns NAME_NOT_UNIQUE
+      await catalogService.createAddOn(shopId, {
+        name: "Existing Add-on",
+        priceMinor: 1000,
+        currency: "USD",
+      });
+
+      const dupAddOnReq = new Request("https://test-shop.myshopify.com/app/add-ons/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Existing Add-on",
+          price: "10.00",
+        }),
+      });
+      const dupAddOnRes = await addOnAction(createActionArgs(dupAddOnReq, { id: "new" }));
+      const dupAddOnUnwrapped = await unwrapResponse<{
+        error: { code: string; message: string };
+      }>(dupAddOnRes);
+      expect(dupAddOnUnwrapped.status).toBe(400);
+      expect(dupAddOnUnwrapped.data.error.code).toBe("NAME_NOT_UNIQUE");
+
+      // Render AddOnRoute with this actionData error
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(dupAddOnUnwrapped.data);
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        addOn: null,
+        currency: "USD",
+        plan: { active: true },
+        shopDomain: "test.myshopify.com",
+      });
+
+      rerender(
+        <DataRouterWrapper>
+          <AddOnRoute />
+        </DataRouterWrapper>,
+      );
+
+      expect(screen.getByText("An add-on with this name already exists")).toBeTruthy();
+    });
+
+    it("R2-F5: money precision error messages are derived from currency minor-unit digits (JPY: 0, KWD: 3)", async () => {
+      const shopId = await createShop("shop-r2f5.myshopify.com");
+      mocks.currentShop = "shop-r2f5.myshopify.com";
+
+      let mockShopCurrency = "USD";
+      const defaultGraphql = mocks.adminGraphql.getMockImplementation()!;
+      mocks.adminGraphql.mockImplementation(async (query: string, init?: { variables?: Record<string, unknown> }) => {
+        if (query.includes("ShopCurrency")) {
+          return new Response(
+            JSON.stringify({ data: { shop: { currencyCode: mockShopCurrency } } }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return defaultGraphql(query, init);
+      });
+
+      const group = await catalogService.createOptionGroup(shopId, {
+        name: "Material JPY",
+        kind: "MATERIAL",
+      });
+
+      // 1. Option Value with JPY (digits = 0)
+      mockShopCurrency = "JPY";
+      const jpyOptReq = new Request("https://test-shop.myshopify.com/app/options/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          optionGroupId: group.id,
+          label: "JPY Option",
+          priceDelta: "1.1",
+          currency: "JPY",
+        }),
+      });
+      const jpyOptRes = await optionValueAction(createActionArgs(jpyOptReq, { id: "new" }));
+      const jpyOptUnwrapped = await unwrapResponse<{
+        error: { code: string; message: string };
+      }>(jpyOptRes);
+      expect(jpyOptUnwrapped.status).toBe(400);
+      expect(jpyOptUnwrapped.data.error.code).toBe("MONEY_PRECISION");
+      expect(jpyOptUnwrapped.data.error.message).toBe("Maximum 0 decimal places allowed for JPY");
+
+      // 2. Option Value with KWD (digits = 3)
+      mockShopCurrency = "KWD";
+      const kwdOptReq = new Request("https://test-shop.myshopify.com/app/options/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          optionGroupId: group.id,
+          label: "KWD Option",
+          priceDelta: "1.1234",
+          currency: "KWD",
+        }),
+      });
+      const kwdOptRes = await optionValueAction(createActionArgs(kwdOptReq, { id: "new" }));
+      const kwdOptUnwrapped = await unwrapResponse<{
+        error: { code: string; message: string };
+      }>(kwdOptRes);
+      expect(kwdOptUnwrapped.status).toBe(400);
+      expect(kwdOptUnwrapped.data.error.code).toBe("MONEY_PRECISION");
+      expect(kwdOptUnwrapped.data.error.message).toBe("Maximum 3 decimal places allowed for KWD");
+
+      // 3. Add-on with JPY (digits = 0)
+      mockShopCurrency = "JPY";
+      const jpyAddOnReq = new Request("https://test-shop.myshopify.com/app/add-ons/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "JPY Add-on",
+          price: "1.1",
+          currency: "JPY",
+        }),
+      });
+      const jpyAddOnRes = await addOnAction(createActionArgs(jpyAddOnReq, { id: "new" }));
+      const jpyAddOnUnwrapped = await unwrapResponse<{
+        error: { code: string; message: string };
+      }>(jpyAddOnRes);
+      expect(jpyAddOnUnwrapped.status).toBe(400);
+      expect(jpyAddOnUnwrapped.data.error.code).toBe("MONEY_PRECISION");
+      expect(jpyAddOnUnwrapped.data.error.message).toBe("Maximum 0 decimal places allowed for JPY");
+
+      // 4. Add-on with KWD (digits = 3)
+      mockShopCurrency = "KWD";
+      const kwdAddOnReq = new Request("https://test-shop.myshopify.com/app/add-ons/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "KWD Add-on",
+          price: "1.1234",
+          currency: "KWD",
+        }),
+      });
+      const kwdAddOnRes = await addOnAction(createActionArgs(kwdAddOnReq, { id: "new" }));
+      const kwdAddOnUnwrapped = await unwrapResponse<{
+        error: { code: string; message: string };
+      }>(kwdAddOnRes);
+      expect(kwdAddOnUnwrapped.status).toBe(400);
+      expect(kwdAddOnUnwrapped.data.error.code).toBe("MONEY_PRECISION");
+      expect(kwdAddOnUnwrapped.data.error.message).toBe("Maximum 3 decimal places allowed for KWD");
+
+      // 5. Test OptionValueForm renders currency-derived guidance in banner
+      const { rerender } = render(
+        <OptionValueForm
+          groupKind="MATERIAL"
+          currency="JPY"
+          errors={{ MONEY_PRECISION: "MONEY_PRECISION" }}
+        />,
+      );
+      expect(screen.getByText("Maximum 0 decimal places allowed for JPY.")).toBeTruthy();
+
+      rerender(
+        <OptionValueForm
+          groupKind="MATERIAL"
+          currency="KWD"
+          errors={{ MONEY_PRECISION: "MONEY_PRECISION" }}
+        />,
+      );
+      expect(screen.getByText("Maximum 3 decimal places allowed for KWD.")).toBeTruthy();
+    });
+
+    it("R2-F6: functionally clicks move up/down, retry, and confirmed delete controls by role and verifies payload and UI", async () => {
+      const shopId = await createShop("shop-r2f6.myshopify.com");
+      mocks.currentShop = "shop-r2f6.myshopify.com";
+
+      // Setup 2 groups with option values and 1 add-on
+      const g1 = await catalogService.createOptionGroup(shopId, {
+        name: "Material Group A",
+        kind: "MATERIAL",
+        position: 0,
+      });
+      const g2 = await catalogService.createOptionGroup(shopId, {
+        name: "Material Group B",
+        kind: "MATERIAL",
+        position: 1,
+      });
+
+      const v1 = await catalogService.createOptionValue(shopId, {
+        optionGroupId: g1.id,
+        label: "Option Value 1",
+        priceDeltaMinor: 1000,
+        position: 0,
+      });
+      const _v2 = await catalogService.createOptionValue(shopId, {
+        optionGroupId: g1.id,
+        label: "Option Value 2",
+        priceDeltaMinor: 2000,
+        position: 1,
+      });
+
+      // Set v1 variant to null so it shows "Sync failed" and has Retry button
+      await getTestPrisma().optionValue.update({
+        where: { id: v1.id },
+        data: { shopifyVariantId: null },
+      });
+
+      await catalogService.createAddOn(shopId, {
+        name: "Anti-Scratch Coating",
+        priceMinor: 500,
+        currency: "USD",
+      });
+
+      // Load data from loader
+      const initialLoaderRes = await indexLoader(
+        createLoaderArgs(new Request("https://test-shop.myshopify.com/app/options")),
+      );
+      let loaderData = (await unwrapResponse<IndexLoaderResult>(initialLoaderRes)).data;
+
+      vi.spyOn(ReactRouter, "useLoaderData").mockImplementation(() => loaderData);
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(undefined);
+
+      const { container, rerender } = render(
+        <DataRouterWrapper>
+          <AdminOptionsIndexRoute />
+        </DataRouterWrapper>,
+      );
+
+      // A. MOVE DOWN ON GROUP: click Move down on Group A by role
+      const moveDownButtons = screen.getAllByRole("button", { name: "Move down" });
+      const groupMoveDownBtn = moveDownButtons[0];
+      const groupMoveDownForm = groupMoveDownBtn.closest("form") as HTMLFormElement;
+      expect(groupMoveDownForm).not.toBeNull();
+
+      let submittedData: FormData | null = null;
+      groupMoveDownForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        submittedData = new FormData(groupMoveDownForm);
+      });
+
+      fireEvent.click(groupMoveDownBtn);
+      expect(submittedData).not.toBeNull();
+      expect(submittedData!.get("intent")).toBe("reorder_groups");
+      expect(JSON.parse(submittedData!.get("ids") as string)).toEqual([g2.id, g1.id]);
+
+      // Submit to action and verify reorder in action
+      const groupReorderReq = new Request("https://test-shop.myshopify.com/app/options", {
+        method: "POST",
+        body: submittedData!,
+      });
+      const groupReorderRes = await indexAction(createActionArgs(groupReorderReq));
+      const groupReorderUnwrapped = await unwrapResponse<{ ok: boolean }>(groupReorderRes);
+      expect(groupReorderUnwrapped.status).toBe(200);
+      expect(groupReorderUnwrapped.data.ok).toBe(true);
+
+      // Reload data and re-render UI to verify Group B is now first
+      const reorderedLoaderRes = await indexLoader(
+        createLoaderArgs(new Request("https://test-shop.myshopify.com/app/options")),
+      );
+      loaderData = (await unwrapResponse<IndexLoaderResult>(reorderedLoaderRes)).data;
+      rerender(
+        <DataRouterWrapper>
+          <AdminOptionsIndexRoute />
+        </DataRouterWrapper>,
+      );
+
+      const renderedHeadings = Array.from(container.querySelectorAll("s-heading")).map(
+        (el) => el.textContent,
+      );
+      expect(renderedHeadings[0]).toBe("Material Group B");
+      expect(renderedHeadings[1]).toBe("Material Group A");
+
+      // B. RETRY SYNC: click Retry on Option Value 1
+      const retryButtons = screen.getAllByRole("button", { name: "Retry" });
+      expect(retryButtons.length).toBeGreaterThanOrEqual(1);
+      const optRetryBtn = retryButtons[0];
+      const optRetryForm = optRetryBtn.closest("form") as HTMLFormElement;
+      expect(optRetryForm).not.toBeNull();
+
+      let retrySubmittedData: FormData | null = null;
+      optRetryForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        retrySubmittedData = new FormData(optRetryForm);
+      });
+
+      fireEvent.click(optRetryBtn);
+      expect(retrySubmittedData).not.toBeNull();
+      expect(retrySubmittedData!.get("intent")).toBe("retry_sync");
+      expect(retrySubmittedData!.get("entity")).toBe("optionValue");
+      expect(retrySubmittedData!.get("id")).toBe(v1.id);
+
+      // Execute action with retry payload
+      const retryReq = new Request("https://test-shop.myshopify.com/app/options", {
+        method: "POST",
+        body: retrySubmittedData!,
+      });
+      const retryRes = await indexAction(createActionArgs(retryReq));
+      const retryUnwrapped = await unwrapResponse<{ ok: boolean; synced: boolean }>(retryRes);
+      expect(retryUnwrapped.status).toBe(200);
+      expect(retryUnwrapped.data.synced).toBe(true);
+
+      // Reload and re-render: badge is now "Synced"
+      const postRetryLoaderRes = await indexLoader(
+        createLoaderArgs(new Request("https://test-shop.myshopify.com/app/options")),
+      );
+      loaderData = (await unwrapResponse<IndexLoaderResult>(postRetryLoaderRes)).data;
+      rerender(
+        <DataRouterWrapper>
+          <AdminOptionsIndexRoute />
+        </DataRouterWrapper>,
+      );
+      expect(screen.getByText("Synced")).toBeTruthy();
+
+      // C. CONFIRMED DELETE: click Delete group for Group B, then click Confirm delete in modal
+      const deleteGroupButtons = screen.getAllByRole("button", { name: "Delete group" });
+      // Click delete on Group B (first group)
+      fireEvent.click(deleteGroupButtons[0]);
+
+      // Modal should display prompt
+      expect(screen.getByText(/Are you sure you want to delete Material Group B\?/)).toBeTruthy();
+
+      const deleteModal = container.querySelector("#delete-confirm-modal") as HTMLElement;
+      const confirmDeleteBtn = within(deleteModal).getByRole("button", { name: "Confirm delete" });
+      const deleteForm = confirmDeleteBtn.closest("form") as HTMLFormElement;
+      expect(deleteForm).not.toBeNull();
+
+      let deleteSubmittedData: FormData | null = null;
+      deleteForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        deleteSubmittedData = new FormData(deleteForm);
+      });
+
+      fireEvent.click(confirmDeleteBtn);
+      expect(deleteSubmittedData).not.toBeNull();
+      expect(deleteSubmittedData!.get("intent")).toBe("delete_group");
+      expect(deleteSubmittedData!.get("groupId")).toBe(g2.id);
+
+      // Execute delete action
+      const deleteReq = new Request("https://test-shop.myshopify.com/app/options", {
+        method: "POST",
+        body: deleteSubmittedData!,
+      });
+      const deleteRes = await indexAction(createActionArgs(deleteReq));
+      const deleteUnwrapped = await unwrapResponse<{ ok: boolean }>(deleteRes);
+      expect(deleteUnwrapped.status).toBe(200);
+      expect(deleteUnwrapped.data.ok).toBe(true);
+
+      // Reload and re-render: Group B is deleted and no longer in UI
+      const postDeleteLoaderRes = await indexLoader(
+        createLoaderArgs(new Request("https://test-shop.myshopify.com/app/options")),
+      );
+      loaderData = (await unwrapResponse<IndexLoaderResult>(postDeleteLoaderRes)).data;
+      rerender(
+        <DataRouterWrapper>
+          <AdminOptionsIndexRoute />
+        </DataRouterWrapper>,
+      );
+      expect(screen.queryByText("Material Group B")).toBeNull();
+      expect(screen.getByText("Material Group A")).toBeTruthy();
+    });
+  });
+
+  describe("Review R3 Fixes", () => {
+    it("R3-F1: surfaces and persists positive-price sync failures on options and add-ons with Retry on detail page and list", async () => {
+      const shopId = await createShop("shop-r3f1.myshopify.com");
+      mocks.currentShop = "shop-r3f1.myshopify.com";
+
+      // 1. Setup an already-synced option value
+      const group = await catalogService.createOptionGroup(shopId, {
+        name: "Index",
+        kind: "MATERIAL",
+      });
+      const initialOpt = await catalogService.createOptionValue(shopId, {
+        optionGroupId: group.id,
+        label: "1.67 High Index",
+        priceDeltaMinor: 3500,
+        shopifyVariantId: "gid://shopify/ProductVariant/opt-synced-1",
+      });
+
+      // 2. Setup an already-synced add-on
+      const initialAddOn = await catalogService.createAddOn(shopId, {
+        name: "Anti-reflective coating",
+        priceMinor: 1500,
+        shopifyVariantId: "gid://shopify/ProductVariant/addon-synced-1",
+      });
+
+      const defaultGraphql = mocks.adminGraphql.getMockImplementation()!;
+      let failBulkUpdate = true;
+      mocks.adminGraphql.mockImplementation(async (query: string, init?: { variables?: Record<string, unknown> }) => {
+        if (failBulkUpdate && query.includes("ProductVariantsBulkUpdate")) {
+          return new Response(
+            JSON.stringify({
+              data: {
+                productVariantsBulkUpdate: {
+                  productVariants: null,
+                  userErrors: [{ message: "Shopify API sync error" }],
+                },
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return defaultGraphql(query, init);
+      });
+
+      // A. Update option value price while Shopify sync fails
+      const optReq = new Request(`https://test-shop.myshopify.com/app/options/${initialOpt.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: "1.67 High Index",
+          priceDelta: "45.00",
+        }),
+      });
+      const optRes = await optionValueAction(createActionArgs(optReq, { id: initialOpt.id }));
+      const optUnwrapped = await unwrapResponse<{
+        ok: boolean;
+        syncFailed: boolean;
+        optionValue: { priceDelta: { amountMinor: number }; shopifyVariantId: string | null };
+      }>(optRes);
+
+      expect(optUnwrapped.status).toBe(200);
+      expect(optUnwrapped.data.ok).toBe(true);
+      expect(optUnwrapped.data.syncFailed).toBe(true);
+      // R4-F1: The variant id must NOT be cleared when syncItem fails on price update; it is retained in DB
+      expect(optUnwrapped.data.optionValue.shopifyVariantId).toBe("gid://shopify/ProductVariant/opt-synced-1");
+      const inDbOpt = await catalogService.getOptionValue(shopId, initialOpt.id);
+      expect(inDbOpt?.priceDelta.amountMinor).toBe(4500);
+      expect(inDbOpt?.shopifyVariantId).toBe("gid://shopify/ProductVariant/opt-synced-1");
+
+      // B. Render OptionValueRoute detail page: displays "Sync failed" badge and "Retry" button
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        optionValue: inDbOpt,
+        group,
+        allGroups: [group],
+        plan: { active: true },
+        shopDomain: "shop-r3f1.myshopify.com",
+        currency: "USD",
+      });
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(optUnwrapped.data);
+
+      const { container: optDetailContainer } = render(
+        <DataRouterWrapper>
+          <OptionValueRoute />
+        </DataRouterWrapper>,
+      );
+      expect(within(optDetailContainer).getByText("Sync failed")).toBeTruthy();
+      expect(within(optDetailContainer).getByText("Retry")).toBeTruthy();
+
+      // C. Update add-on price while Shopify sync fails
+      const addOnReq = new Request(`https://test-shop.myshopify.com/app/add-ons/${initialAddOn.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Anti-reflective coating",
+          price: "25.00",
+        }),
+      });
+      const addOnRes = await addOnAction(createActionArgs(addOnReq, { id: initialAddOn.id }));
+      const addOnUnwrapped = await unwrapResponse<{
+        ok: boolean;
+        syncFailed: boolean;
+        addOn: { price: { amountMinor: number }; shopifyVariantId: string | null };
+      }>(addOnRes);
+
+      expect(addOnUnwrapped.status).toBe(200);
+      expect(addOnUnwrapped.data.ok).toBe(true);
+      expect(addOnUnwrapped.data.syncFailed).toBe(true);
+      // R4-F1: Never clear shopifyVariantId when syncItem fails on add-on update
+      expect(addOnUnwrapped.data.addOn.shopifyVariantId).toBe("gid://shopify/ProductVariant/addon-synced-1");
+      const inDbAddOn = await catalogService.getAddOn(shopId, initialAddOn.id);
+      expect(inDbAddOn?.price.amountMinor).toBe(2500);
+      expect(inDbAddOn?.shopifyVariantId).toBe("gid://shopify/ProductVariant/addon-synced-1");
+
+      // D. Render AddOnRoute detail page: displays "Sync failed" badge and "Retry" button
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        addOn: inDbAddOn,
+        plan: { active: true },
+        shopDomain: "shop-r3f1.myshopify.com",
+        currency: "USD",
+      });
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(addOnUnwrapped.data);
+
+      const { container: addOnDetailContainer } = render(
+        <DataRouterWrapper>
+          <AddOnRoute />
+        </DataRouterWrapper>,
+      );
+      expect(within(addOnDetailContainer).getByText("Sync failed")).toBeTruthy();
+      expect(within(addOnDetailContainer).getByText("Retry")).toBeTruthy();
+
+      // E. Render AdminOptionsIndexRoute (list): items with syncFailed param display "Sync failed" badge with Retry
+      const indexLoaderRes = await indexLoader(
+        createLoaderArgs(new Request(`https://test-shop.myshopify.com/app/options?syncFailed=${inDbOpt.id}`)),
+      );
+      const indexLoaderData = (await unwrapResponse<IndexLoaderResult>(indexLoaderRes)).data;
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue(indexLoaderData);
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(undefined);
+
+      const { container: listContainer } = render(
+        <DataRouterWrapper>
+          <AdminOptionsIndexRoute />
+        </DataRouterWrapper>,
+      );
+      expect(within(listContainer).getByText("Sync failed")).toBeTruthy();
+      expect(within(listContainer).getByText("Retry")).toBeTruthy();
+
+      // F. Retry sync on OptionValue: Shopify API recovers
+      failBulkUpdate = false;
+      const retryQueries: string[] = [];
+      mocks.adminGraphql.mockImplementation(async (query: string, init?: { variables?: Record<string, unknown> }) => {
+        retryQueries.push(query);
+        return defaultGraphql(query, init);
+      });
+
+      const optRetryReq = new Request(`https://test-shop.myshopify.com/app/options/${initialOpt.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: "retry_sync" }),
+      });
+      const optRetryRes = await optionValueAction(createActionArgs(optRetryReq, { id: initialOpt.id }));
+      const optRetryUnwrapped = await unwrapResponse<{ ok: boolean; synced: boolean; syncFailed: boolean }>(optRetryRes);
+      expect(optRetryUnwrapped.status).toBe(200);
+      expect(optRetryUnwrapped.data.synced).toBe(true);
+      expect(optRetryUnwrapped.data.syncFailed).toBe(false);
+
+      // R4-F1: Verify Retry issues ProductVariantsBulkUpdate / ProductUpdate, NOT ProductCreate
+      expect(retryQueries.some((q) => q.includes("ProductVariantsBulkUpdate") || q.includes("ProductUpdate"))).toBe(true);
+      expect(retryQueries.some((q) => q.includes("ProductCreate"))).toBe(false);
+
+      const inDbOptAfterRetry = await catalogService.getOptionValue(shopId, initialOpt.id);
+      expect(inDbOptAfterRetry?.shopifyVariantId).toBe("gid://shopify/ProductVariant/opt-synced-1");
+
+      // G. Retry sync on AddOn: Shopify API succeeds
+      retryQueries.length = 0;
+      const addOnRetryReq = new Request(`https://test-shop.myshopify.com/app/add-ons/${initialAddOn.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: "retry_sync" }),
+      });
+      const addOnRetryRes = await addOnAction(createActionArgs(addOnRetryReq, { id: initialAddOn.id }));
+      const addOnRetryUnwrapped = await unwrapResponse<{ ok: boolean; synced: boolean; syncFailed: boolean }>(addOnRetryRes);
+      expect(addOnRetryUnwrapped.status).toBe(200);
+      expect(addOnRetryUnwrapped.data.synced).toBe(true);
+      expect(addOnRetryUnwrapped.data.syncFailed).toBe(false);
+
+      // R4-F1: Verify Retry issues ProductVariantsBulkUpdate / ProductUpdate, NOT ProductCreate
+      expect(retryQueries.some((q) => q.includes("ProductVariantsBulkUpdate") || q.includes("ProductUpdate"))).toBe(true);
+      expect(retryQueries.some((q) => q.includes("ProductCreate"))).toBe(false);
+
+      const inDbAddOnAfterRetry = await catalogService.getAddOn(shopId, initialAddOn.id);
+      expect(inDbAddOnAfterRetry?.shopifyVariantId).toBe("gid://shopify/ProductVariant/addon-synced-1");
+
+      // H. Re-render list: both items are now "Synced"
+      const postRetryLoaderRes = await indexLoader(
+        createLoaderArgs(new Request("https://test-shop.myshopify.com/app/options")),
+      );
+      const postRetryLoaderData = (await unwrapResponse<IndexLoaderResult>(postRetryLoaderRes)).data;
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue(postRetryLoaderData);
+
+      const { container: postRetryListContainer } = render(
+        <DataRouterWrapper>
+          <AdminOptionsIndexRoute />
+        </DataRouterWrapper>,
+      );
+      expect(within(postRetryListContainer).queryByText("Sync failed")).toBeNull();
+      const syncedBadges = within(postRetryListContainer).getAllByText("Synced");
+      expect(syncedBadges.length).toBe(2);
+    });
+
+    it("R3-F2: partial update omitting token/override leaves mapping unchanged, while explicit none or switch clears it", async () => {
+      const shopId = await createShop("shop-r3f2.myshopify.com");
+      mocks.currentShop = "shop-r3f2.myshopify.com";
+
+      const group = await catalogService.createOptionGroup(shopId, {
+        name: "Material",
+        kind: "MATERIAL",
+      });
+      const initial = await catalogService.createOptionValue(shopId, {
+        optionGroupId: group.id,
+        label: "Polycarbonate",
+        priceDeltaMinor: 1000,
+        tokenKey: "material",
+        tokenValue: "POLY",
+      });
+
+      // 1. Partial update posting only a new label (omits token and overrideCode)
+      const labelOnlyReq = new Request(`https://test-shop.myshopify.com/app/options/${initial.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: "Polycarbonate Thin",
+        }),
+      });
+      const labelOnlyRes = await optionValueAction(createActionArgs(labelOnlyReq, { id: initial.id }));
+      const labelOnlyUnwrapped = await unwrapResponse<{
+        ok: boolean;
+        optionValue: { label: string; tokenKey: string | null; tokenValue: string | null; overrideCode: string | null };
+      }>(labelOnlyRes);
+
+      expect(labelOnlyUnwrapped.status).toBe(200);
+      expect(labelOnlyUnwrapped.data.ok).toBe(true);
+      expect(labelOnlyUnwrapped.data.optionValue.label).toBe("Polycarbonate Thin");
+      // Retains existing token mapping!
+      expect(labelOnlyUnwrapped.data.optionValue.tokenKey).toBe("material");
+      expect(labelOnlyUnwrapped.data.optionValue.tokenValue).toBe("POLY");
+      expect(labelOnlyUnwrapped.data.optionValue.overrideCode).toBeFalsy();
+
+      const inDbAfterLabel = await catalogService.getOptionValue(shopId, initial.id);
+      expect(inDbAfterLabel?.tokenKey).toBe("material");
+      expect(inDbAfterLabel?.tokenValue).toBe("POLY");
+      expect(inDbAfterLabel?.overrideCode).toBeFalsy();
+
+      const dbRowAfterLabel = await getTestPrisma().optionValue.findUnique({ where: { id: initial.id } });
+      expect(dbRowAfterLabel?.tokenKey).toBe("material");
+      expect(dbRowAfterLabel?.tokenValue).toBe("POLY");
+      expect(dbRowAfterLabel?.overrideCode).toBeNull();
+
+      // 2. Explicit switch of code-source radio to "none" clears the mapping
+      const clearReq = new Request(`https://test-shop.myshopify.com/app/options/${initial.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          codeType: "none",
+        }),
+      });
+      const clearRes = await optionValueAction(createActionArgs(clearReq, { id: initial.id }));
+      const clearUnwrapped = await unwrapResponse<{
+        ok: boolean;
+        optionValue: { tokenKey?: string; tokenValue?: string };
+      }>(clearRes);
+
+      expect(clearUnwrapped.status).toBe(200);
+      expect(clearUnwrapped.data.optionValue.tokenKey).toBeFalsy();
+      expect(clearUnwrapped.data.optionValue.tokenValue).toBeFalsy();
+
+      const inDbAfterClear = await catalogService.getOptionValue(shopId, initial.id);
+      expect(inDbAfterClear?.tokenKey).toBeFalsy();
+      expect(inDbAfterClear?.tokenValue).toBeFalsy();
+
+      const dbRowAfterClear = await getTestPrisma().optionValue.findUnique({ where: { id: initial.id } });
+      expect(dbRowAfterClear?.tokenKey).toBeNull();
+      expect(dbRowAfterClear?.tokenValue).toBeNull();
+      expect(dbRowAfterClear?.overrideCode).toBeNull();
+    });
+
+    it("R3-F3: refuses to delete a populated option group with 409 GROUP_NOT_EMPTY and archives an empty group", async () => {
+      const shopId = await createShop("shop-r3f3.myshopify.com");
+      mocks.currentShop = "shop-r3f3.myshopify.com";
+
+      const group = await catalogService.createOptionGroup(shopId, {
+        name: "Populated Group",
+        kind: "MATERIAL",
+      });
+      const optVal = await catalogService.createOptionValue(shopId, {
+        optionGroupId: group.id,
+        label: "Standard CR39",
+        priceDeltaMinor: 0,
+      });
+
+      // 1. Attempt to delete populated option group -> 409 Conflict with GROUP_NOT_EMPTY
+      const deletePopulatedReq = new Request("https://test-shop.myshopify.com/app/options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent: "delete_group",
+          groupId: group.id,
+        }),
+      });
+      const deletePopulatedRes = await indexAction(createActionArgs(deletePopulatedReq));
+      const deletePopulatedUnwrapped = await unwrapResponse<{
+        error: { code: string; message: string };
+      }>(deletePopulatedRes);
+
+      expect(deletePopulatedUnwrapped.status).toBe(409);
+      expect(deletePopulatedUnwrapped.data.error.code).toBe("GROUP_NOT_EMPTY");
+      expect(deletePopulatedUnwrapped.data.error.message).toContain("active values");
+
+      // Group is NOT archived
+      const inDbGroup = await catalogService.getOptionGroup(shopId, group.id);
+      expect(inDbGroup).not.toBeNull();
+      expect(inDbGroup?.archivedAt).toBeNull();
+
+      // 2. Archive child option value first
+      await catalogService.archiveOptionValue(shopId, optVal.id);
+
+      // 3. Now delete the empty option group -> 200 ok, archived
+      const deleteEmptyReq = new Request("https://test-shop.myshopify.com/app/options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent: "delete_group",
+          groupId: group.id,
+        }),
+      });
+      const deleteEmptyRes = await indexAction(createActionArgs(deleteEmptyReq));
+      const deleteEmptyUnwrapped = await unwrapResponse<{ ok: boolean; archived: boolean }>(deleteEmptyRes);
+
+      expect(deleteEmptyUnwrapped.status).toBe(200);
+      expect(deleteEmptyUnwrapped.data.ok).toBe(true);
+      expect(deleteEmptyUnwrapped.data.archived).toBe(true);
+
+      const inDbArchivedGroup = await catalogService.getOptionGroup(shopId, group.id);
+      expect(inDbArchivedGroup?.archivedAt).not.toBeNull();
+    });
+
+    it("R3-F4: rejects missing or blank price on add-on creation with structured 400 error and no Shopify call", async () => {
+      const shopId = await createShop("shop-r3f4.myshopify.com");
+      mocks.currentShop = "shop-r3f4.myshopify.com";
+
+      const syncSpy = vi.fn();
+      mocks.adminGraphql.mockImplementation(syncSpy);
+
+      // 1. Missing price field entirely
+      const missingPriceReq = new Request("https://test-shop.myshopify.com/app/add-ons/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Protective Case",
+        }),
+      });
+      const missingPriceRes = await addOnAction(createActionArgs(missingPriceReq, { id: "new" }));
+      const missingPriceUnwrapped = await unwrapResponse<{
+        error: { code: string; message: string; fields?: Array<{ path: string; code: string }> };
+      }>(missingPriceRes);
+
+      expect(missingPriceUnwrapped.status).toBe(400);
+      expect(missingPriceUnwrapped.data.error.code).toBe("REQUIRED");
+      expect(missingPriceUnwrapped.data.error.fields).toEqual([{ path: "price", code: "REQUIRED" }]);
+      expect(syncSpy).not.toHaveBeenCalled();
+
+      // 2. Blank price string
+      const blankPriceReq = new Request("https://test-shop.myshopify.com/app/add-ons/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Protective Case",
+          price: "   ",
+        }),
+      });
+      const blankPriceRes = await addOnAction(createActionArgs(blankPriceReq, { id: "new" }));
+      const blankPriceUnwrapped = await unwrapResponse<{
+        error: { code: string; message: string; fields?: Array<{ path: string; code: string }> };
+      }>(blankPriceRes);
+
+      expect(blankPriceUnwrapped.status).toBe(400);
+      expect(blankPriceUnwrapped.data.error.code).toBe("REQUIRED");
+      expect(blankPriceUnwrapped.data.error.fields).toEqual([{ path: "price", code: "REQUIRED" }]);
+      expect(syncSpy).not.toHaveBeenCalled();
+
+      // 3. Zero price
+      const zeroPriceReq = new Request("https://test-shop.myshopify.com/app/add-ons/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Protective Case",
+          price: "0",
+        }),
+      });
+      const zeroPriceRes = await addOnAction(createActionArgs(zeroPriceReq, { id: "new" }));
+      const zeroPriceUnwrapped = await unwrapResponse<{
+        error: { code: string; message: string };
+      }>(zeroPriceRes);
+
+      expect(zeroPriceUnwrapped.status).toBe(400);
+      expect(zeroPriceUnwrapped.data.error.code).toBe("PRICE_NOT_POSITIVE");
+      expect(syncSpy).not.toHaveBeenCalled();
+
+      // Confirm no add-on was written to DB
+      const allAddOns = await catalogService.listAddOns(shopId);
+      expect(allAddOns.filter((a) => a.name === "Protective Case")).toHaveLength(0);
+    });
+
+    it("R3-F5: displays decimal currency amount in shop normal units in help text, not minor units", () => {
+      // 1. OptionValueForm
+      const { container: optFormContainer } = render(
+        <OptionValueForm
+          groupKind="MATERIAL"
+          currency="USD"
+        />,
+      );
+      const optPriceField = optFormContainer.querySelector('s-text-field[name="priceDelta"]');
+      expect(optPriceField).not.toBeNull();
+      const optDetails = optPriceField?.getAttribute("details") || "";
+      expect(optDetails).toContain("shop currency's normal units (e.g. 35.00");
+      expect(optDetails).not.toContain("minor units");
+
+      // 2. AddOnRoute
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        addOn: null,
+        plan: { active: true },
+        shopDomain: "test.myshopify.com",
+      });
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(undefined);
+
+      const { container: addOnContainer } = render(
+        <DataRouterWrapper>
+          <AddOnRoute />
+        </DataRouterWrapper>,
+      );
+      const addOnPriceField = addOnContainer.querySelector('s-text-field[name="price"]');
+      expect(addOnPriceField).not.toBeNull();
+      const addOnDetails = addOnPriceField?.getAttribute("details") || "";
+      expect(addOnDetails).toContain("shop currency's normal units (e.g. 15.00");
+      expect(addOnDetails).not.toContain("minor units");
+    });
+  });
+
+  describe("Review R4 Fixes (Spec 18 R6-F1/F2 Ruling)", () => {
+    it("R4-F1: form submits through the router (action called) and an action error renders inline", async () => {
+      // Restore real ReactRouter hooks and Form to verify submissions dispatch through the router
+      (ReactRouter as Record<string, unknown>).Form = origReactRouterForm;
+      vi.restoreAllMocks();
+
+      try {
+        const actionSpy = vi.fn(async ({ request }: ReactRouter.ActionFunctionArgs) => {
+          const formData = await request.formData();
+          const label = formData.get("label");
+          if (!label) {
+            return ReactRouter.data(
+              {
+                error: {
+                  code: "REQUIRED",
+                  message: "Please fill in all required fields.",
+                  fields: [{ path: "label", code: "REQUIRED" }],
+                },
+              },
+              { status: 400 },
+            );
+          }
+          return ReactRouter.data(
+            {
+              error: {
+                code: "ONE_CODE_SOURCE",
+                message: "Choose either a lab-code token or an override code, not both.",
+                fields: [{ path: "overrideCode", code: "ONE_CODE_SOURCE" }],
+              },
+            },
+            { status: 400 },
+          );
+        });
+
+        const router = ReactRouter.createMemoryRouter(
+          [
+            {
+              path: "/app/options/:id",
+              element: <OptionValueRoute />,
+              loader: () => ({
+                optionValue: null,
+                group: { id: "grp-1", name: "Material", kind: "MATERIAL" },
+                allGroups: [{ id: "grp-1", name: "Material", kind: "MATERIAL" }],
+                plan: { active: true },
+                shopDomain: "test-shop.myshopify.com",
+              }),
+              action: actionSpy,
+            },
+          ],
+          { initialEntries: ["/app/options/new"] },
+        );
+
+        const { container } = render(<ReactRouter.RouterProvider router={router} />);
+
+        await waitFor(() => {
+          expect(container.querySelector("form")).not.toBeNull();
+        });
+
+        const form = container.querySelector("form")!;
+
+        // Submit form through the router
+        fireEvent.submit(form);
+
+        // Router action is called and action error banner renders inline
+        await waitFor(
+          () => {
+            expect(actionSpy).toHaveBeenCalledTimes(1);
+            expect(container.querySelector('s-banner[heading="Missing required fields"]')).not.toBeNull();
+            expect(screen.getByText("Please fill in all required fields.")).toBeTruthy();
+          },
+          { timeout: 4000 },
+        );
+      } finally {
+        (ReactRouter as Record<string, unknown>).Form = mockRouterForm;
+      }
+    });
+
+    it("R4-F1: add-on form submits through the router (action called) and an action error renders inline", async () => {
+      (ReactRouter as Record<string, unknown>).Form = origReactRouterForm;
+      vi.restoreAllMocks();
+
+      try {
+        const actionSpy = vi.fn(async () => {
+          return ReactRouter.data(
+            {
+              error: {
+                code: "PRICE_NOT_POSITIVE",
+                message: "Price must be greater than 0.",
+                fields: [{ path: "price", code: "PRICE_NOT_POSITIVE" }],
+              },
+            },
+            { status: 400 },
+          );
+        });
+
+        const router = ReactRouter.createMemoryRouter(
+          [
+            {
+              path: "/app/add-ons/:id",
+              element: <AddOnRoute />,
+              loader: () => ({
+                addOn: null,
+                plan: { active: true },
+                shopDomain: "test-shop.myshopify.com",
+              }),
+              action: actionSpy,
+            },
+          ],
+          { initialEntries: ["/app/add-ons/new"] },
+        );
+
+        const { container } = render(<ReactRouter.RouterProvider router={router} />);
+
+        await waitFor(() => {
+          expect(container.querySelector("form")).not.toBeNull();
+        });
+
+        const form = container.querySelector("form")!;
+
+        fireEvent.submit(form);
+
+        await waitFor(
+          () => {
+            expect(actionSpy).toHaveBeenCalledTimes(1);
+            expect(container.querySelector('s-banner[heading="Invalid price"]')).not.toBeNull();
+            expect(screen.getByText("Price must be greater than 0.")).toBeTruthy();
+          },
+          { timeout: 4000 },
+        );
+      } finally {
+        (ReactRouter as Record<string, unknown>).Form = mockRouterForm;
+      }
+    });
+
+    it("R4-F2: a valid form's Save and an enabled Move button have no disabled attribute", async () => {
+      const shopId = await createShop("shop-r4f2.myshopify.com");
+      mocks.currentShop = "shop-r4f2.myshopify.com";
+
+      // 1. Valid OptionValueForm Save button has no disabled or loading attribute
+      const { container: formContainer } = render(
+        <DataRouterWrapper>
+          <OptionValueForm
+            initialData={{ label: "1.67 High Index", priceDelta: "35.00" }}
+            groupKind="MATERIAL"
+            currency="USD"
+            isSubmitting={false}
+            onCancel={() => {}}
+          />
+        </DataRouterWrapper>,
+      );
+
+      const saveBtn = within(formContainer).getByRole("button", { name: "Save option value" });
+      expect(saveBtn.hasAttribute("disabled")).toBe(false);
+      expect(saveBtn.getAttribute("disabled")).toBeNull();
+      expect(saveBtn.hasAttribute("loading")).toBe(false);
+      expect(saveBtn.getAttribute("loading")).toBeNull();
+
+      // Cancel button also has no disabled attribute
+      const cancelBtn = within(formContainer).getByRole("button", { name: "Cancel" });
+      expect(cancelBtn.hasAttribute("disabled")).toBe(false);
+      expect(cancelBtn.getAttribute("disabled")).toBeNull();
+
+      // When isSubmitting is true, Save button HAS disabled and loading attributes
+      const { container: submittingContainer } = render(
+        <DataRouterWrapper>
+          <OptionValueForm
+            initialData={{ label: "1.67 High Index", priceDelta: "35.00" }}
+            groupKind="MATERIAL"
+            currency="USD"
+            isSubmitting={true}
+          />
+        </DataRouterWrapper>,
+      );
+      const submittingSaveBtn = within(submittingContainer).getByRole("button", {
+        name: "Save option value",
+      });
+      expect(submittingSaveBtn.hasAttribute("disabled")).toBe(true);
+      expect(submittingSaveBtn.hasAttribute("loading")).toBe(true);
+
+      // 2. AddOn form Save button has no disabled attribute when isSubmitting is false
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        addOn: {
+          id: "addon-1",
+          name: "Blue light blocking",
+          price: { amountMinor: 2000, currency: "USD" },
+          shopifyVariantId: "gid://shopify/ProductVariant/101",
+        },
+        plan: { active: true },
+        shopDomain: "shop-r4f2.myshopify.com",
+      });
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(undefined);
+      vi.spyOn(ReactRouter, "useNavigation").mockReturnValue({ state: "idle" } as ReactRouter.Navigation);
+
+      const { container: addOnContainer } = render(
+        <DataRouterWrapper>
+          <AddOnRoute />
+        </DataRouterWrapper>,
+      );
+      const addOnSaveBtn = within(addOnContainer).getByRole("button", { name: "Save add-on" });
+      expect(addOnSaveBtn.hasAttribute("disabled")).toBe(false);
+      expect(addOnSaveBtn.getAttribute("disabled")).toBeNull();
+      expect(addOnSaveBtn.hasAttribute("loading")).toBe(false);
+
+      // 3. Enabled Move button in AdminOptionsIndexRoute has no disabled attribute
+      const g1 = await catalogService.createOptionGroup(shopId, {
+        name: "Material 1",
+        kind: "MATERIAL",
+        position: 0,
+      });
+      const g2 = await catalogService.createOptionGroup(shopId, {
+        name: "Material 2",
+        kind: "MATERIAL",
+        position: 1,
+      });
+
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        groups: [
+          { ...g1, values: [] },
+          { ...g2, values: [] },
+        ],
+        addOns: [],
+        syncFailedId: null,
+        plan: { active: true },
+        shopDomain: "shop-r4f2.myshopify.com",
+      });
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(undefined);
+      vi.spyOn(ReactRouter, "useNavigation").mockReturnValue({ state: "idle" } as ReactRouter.Navigation);
+
+      const { container: indexContainer } = render(
+        <DataRouterWrapper>
+          <AdminOptionsIndexRoute />
+        </DataRouterWrapper>,
+      );
+
+      // Group 1 (index 0): Move up is disabled (index === 0), Move down is enabled!
+      const moveUpBtns = within(indexContainer).getAllByRole("button", { name: "Move up" });
+      const moveDownBtns = within(indexContainer).getAllByRole("button", { name: "Move down" });
+
+      const disabledGroupMoveUp = moveUpBtns[0];
+      const enabledGroupMoveDown = moveDownBtns[0];
+
+      expect(disabledGroupMoveUp.hasAttribute("disabled")).toBe(true);
+      expect(enabledGroupMoveDown.hasAttribute("disabled")).toBe(false);
+      expect(enabledGroupMoveDown.getAttribute("disabled")).toBeNull();
+
+      // Group 2 (index 1): Move up is enabled, Move down is disabled (index === length - 1)!
+      const enabledGroupMoveUp = moveUpBtns[1];
+      const disabledGroupMoveDown = moveDownBtns[1];
+
+      expect(enabledGroupMoveUp.hasAttribute("disabled")).toBe(false);
+      expect(enabledGroupMoveUp.getAttribute("disabled")).toBeNull();
+      expect(disabledGroupMoveDown.hasAttribute("disabled")).toBe(true);
+    });
+  });
+
+  describe("Accepted Findings Verification Tests (Spec 19 R4)", () => {
+    it("R4-F2: submit buttons use native submit without requestSubmit in onClick, and one click causes exactly one action call", async () => {
+      (ReactRouter as Record<string, unknown>).Form = origReactRouterForm;
+      vi.restoreAllMocks();
+
+      try {
+        const actionSpy = vi.fn(async () => {
+          return ReactRouter.data({ ok: true });
+        });
+
+        const router = ReactRouter.createMemoryRouter(
+          [
+            {
+              path: "/app/options",
+              element: <AdminOptionsIndexRoute />,
+              loader: () => ({
+                groups: [
+                  {
+                    id: "g1",
+                    name: "Material 1",
+                    kind: "MATERIAL",
+                    position: 0,
+                    status: "ACTIVE",
+                    values: [],
+                  },
+                  {
+                    id: "g2",
+                    name: "Material 2",
+                    kind: "MATERIAL",
+                    position: 1,
+                    status: "ACTIVE",
+                    values: [],
+                  },
+                ],
+                addOns: [],
+                syncFailedId: null,
+                plan: { active: true },
+                shopDomain: "test-shop.myshopify.com",
+              }),
+              action: actionSpy,
+            },
+          ],
+          { initialEntries: ["/app/options"] },
+        );
+
+        const { container } = render(<ReactRouter.RouterProvider router={router} />);
+
+        await waitFor(() => {
+          expect(container.querySelectorAll("s-button[type='submit']").length).toBeGreaterThan(0);
+        });
+
+        // Group 1 Move down button is enabled
+        const moveDownButtons = screen.getAllByRole("button", { name: "Move down" });
+        const enabledMoveDown = moveDownButtons[0];
+        expect(enabledMoveDown.hasAttribute("disabled")).toBe(false);
+
+        // Click once
+        fireEvent.click(enabledMoveDown);
+
+        await waitFor(() => {
+          expect(actionSpy).toHaveBeenCalledTimes(1);
+        });
+
+        expect(actionSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        (ReactRouter as Record<string, unknown>).Form = mockRouterForm;
+      }
+    });
+
+    it("R4-F3: reads shop currency via ShopCurrency query and supports JPY shop creating option values and add-ons", async () => {
+      const shopId = await createShop("shop-jpy-items.myshopify.com");
+      mocks.currentShop = "shop-jpy-items.myshopify.com";
+
+      const g1 = await catalogService.createOptionGroup(shopId, {
+        name: "Index",
+        kind: "MATERIAL",
+        position: 0,
+      });
+
+      const defaultGraphql = mocks.adminGraphql.getMockImplementation()!;
+      mocks.adminGraphql.mockImplementation(async (query: string, init?: { variables?: Record<string, unknown> }) => {
+        if (query.includes("ShopCurrency")) {
+          return new Response(
+            JSON.stringify({ data: { shop: { currencyCode: "JPY" } } }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return defaultGraphql(query, init);
+      });
+
+      // A. Option value loader returns currency: "JPY" for id="new"
+      const optLoaderRes = await optionValueLoader(
+        createLoaderArgs(new Request(`https://test-shop.myshopify.com/app/options/new?groupId=${g1.id}`), { id: "new" }),
+      );
+      const optLoaderData = (await unwrapResponse<{ currency: string }>(optLoaderRes)).data;
+      expect(optLoaderData.currency).toBe("JPY");
+
+      // B. Rendering OptionValueRoute with JPY displays "Price delta (JPY)"
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        optionValue: null,
+        group: g1,
+        allGroups: [g1],
+        plan: { active: true },
+        shopDomain: "shop-jpy-items.myshopify.com",
+        currency: "JPY",
+      });
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(undefined);
+
+      const { container: optContainer } = render(
+        <DataRouterWrapper>
+          <OptionValueRoute />
+        </DataRouterWrapper>,
+      );
+      expect(
+        optContainer.querySelector('s-text-field[name="priceDelta"]')?.getAttribute("label"),
+      ).toBe("Price delta (JPY)");
+
+      // C. Action rejects decimal places in JPY with 400 MONEY_PRECISION
+      const invalidJpyReq = new Request("https://test-shop.myshopify.com/app/options/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          optionGroupId: g1.id,
+          label: "1.74 Extreme",
+          priceDelta: "1500.5",
+        }),
+      });
+      const invalidJpyRes = await optionValueAction(createActionArgs(invalidJpyReq, { id: "new" }));
+      const invalidJpyUnwrapped = await unwrapResponse<{ error: { code: string; message: string } }>(invalidJpyRes);
+      expect(invalidJpyUnwrapped.status).toBe(400);
+      expect(invalidJpyUnwrapped.data.error.code).toBe("MONEY_PRECISION");
+      expect(invalidJpyUnwrapped.data.error.message).toContain("0 decimal places");
+
+      // D. Action creates item with 0 decimals, currency "JPY", and syncItem succeeds
+      const validJpyReq = new Request("https://test-shop.myshopify.com/app/options/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          optionGroupId: g1.id,
+          label: "1.74 Extreme",
+          priceDelta: "1500",
+        }),
+      });
+      const validJpyRes = await optionValueAction(createActionArgs(validJpyReq, { id: "new" }));
+      const validJpyUnwrapped = await unwrapResponse<{
+        ok: boolean;
+        syncFailed: boolean;
+        optionValue: { priceDelta: { amountMinor: number; currency: string } };
+      }>(validJpyRes);
+      expect(validJpyUnwrapped.status).toBe(200);
+      expect(validJpyUnwrapped.data.ok).toBe(true);
+      expect(validJpyUnwrapped.data.syncFailed).toBe(false);
+      expect(validJpyUnwrapped.data.optionValue.priceDelta.amountMinor).toBe(1500);
+      expect(validJpyUnwrapped.data.optionValue.priceDelta.currency).toBe("JPY");
+
+      // E. AddOn loader returns currency: "JPY" for id="new" and renders "Price (JPY)"
+      const addOnLoaderRes = await addOnLoader(
+        createLoaderArgs(new Request("https://test-shop.myshopify.com/app/add-ons/new"), { id: "new" }),
+      );
+      const addOnLoaderData = (await unwrapResponse<{ currency: string }>(addOnLoaderRes)).data;
+      expect(addOnLoaderData.currency).toBe("JPY");
+
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        addOn: null,
+        plan: { active: true },
+        shopDomain: "shop-jpy-items.myshopify.com",
+        currency: "JPY",
+      });
+      const { container: addOnContainer } = render(
+        <DataRouterWrapper>
+          <AddOnRoute />
+        </DataRouterWrapper>,
+      );
+      expect(
+        addOnContainer.querySelector('s-text-field[name="price"]')?.getAttribute("label"),
+      ).toBe("Price (JPY)");
+
+      // F. If ShopCurrency query fails, throws 500 CURRENCY_UNAVAILABLE
+      mocks.adminGraphql.mockImplementation(async (query: string, init?: { variables?: Record<string, unknown> }) => {
+        if (query.includes("ShopCurrency")) {
+          throw new Error("GraphQL network failure");
+        }
+        return defaultGraphql(query, init);
+      });
+
+      await expect(
+        optionValueLoader(
+          createLoaderArgs(new Request(`https://test-shop.myshopify.com/app/options/new?groupId=${g1.id}`), { id: "new" }),
+        ),
+      ).rejects.toMatchObject({ status: 500, code: "CURRENCY_UNAVAILABLE" });
+    });
+
+    it("R4-F6: saving at delta 0 with leftover variant id calls archiveItem and reports syncFailed accurately", async () => {
+      const shopId = await createShop("shop-r4f6.myshopify.com");
+      mocks.currentShop = "shop-r4f6.myshopify.com";
+
+      const g1 = await catalogService.createOptionGroup(shopId, {
+        name: "Lens Type",
+        kind: "MATERIAL",
+        position: 0,
+      });
+
+      // Item already has delta 0 and a leftover shopifyVariantId (from earlier archive failure)
+      const opt = await catalogService.createOptionValue(shopId, {
+        optionGroupId: g1.id,
+        label: "Single Vision",
+        priceDeltaMinor: 0,
+        currency: "USD",
+      });
+      await catalogService.updateOptionValue(shopId, opt.id, {
+        shopifyVariantId: "gid://shopify/ProductVariant/leftover-1",
+      });
+
+      const defaultGraphql = mocks.adminGraphql.getMockImplementation()!;
+
+      // Scenario A: Shopify archive fails
+      let archiveCalled = false;
+      mocks.adminGraphql.mockImplementation(async (query: string, init?: { variables?: Record<string, unknown> }) => {
+        if (query.includes("ProductUpdate")) {
+          archiveCalled = true;
+          return new Response(
+            JSON.stringify({
+              data: {
+                productUpdate: {
+                  product: null,
+                  userErrors: [{ message: "Archive failed" }],
+                },
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return defaultGraphql(query, init);
+      });
+
+      const failReq = new Request(`https://test-shop.myshopify.com/app/options/${opt.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: "Single Vision Updated",
+          priceDelta: "0",
+        }),
+      });
+      const failRes = await optionValueAction(createActionArgs(failReq, { id: opt.id }));
+      const failData = (
+        await unwrapResponse<{
+          ok: boolean;
+          syncFailed: boolean;
+          optionValue: { shopifyVariantId: string | null };
+        }>(failRes)
+      ).data;
+
+      expect(archiveCalled).toBe(true);
+      expect(failData.ok).toBe(true);
+      expect(failData.syncFailed).toBe(true);
+      expect(failData.optionValue.shopifyVariantId).toBe("gid://shopify/ProductVariant/leftover-1");
+
+      const inDbAfterFail = await catalogService.getOptionValue(shopId, opt.id);
+      expect(inDbAfterFail?.shopifyVariantId).toBe("gid://shopify/ProductVariant/leftover-1");
+
+      // Scenario B: Shopify archive succeeds
+      archiveCalled = false;
+      mocks.adminGraphql.mockImplementation(async (query: string, init?: { variables?: Record<string, unknown> }) => {
+        if (query.includes("ProductUpdate")) {
+          archiveCalled = true;
+          return new Response(
+            JSON.stringify({
+              data: {
+                productUpdate: {
+                  product: { id: "gid://shopify/Product/existing-product", status: "DRAFT" },
+                  userErrors: [],
+                },
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return defaultGraphql(query, init);
+      });
+
+      const successReq = new Request(`https://test-shop.myshopify.com/app/options/${opt.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: "Single Vision Succeeded",
+          priceDelta: "0",
+        }),
+      });
+      const successRes = await optionValueAction(createActionArgs(successReq, { id: opt.id }));
+      const successData = (
+        await unwrapResponse<{
+          ok: boolean;
+          syncFailed: boolean;
+          optionValue: { shopifyVariantId: string | null };
+        }>(successRes)
+      ).data;
+
+      expect(archiveCalled).toBe(true);
+      expect(successData.ok).toBe(true);
+      expect(successData.syncFailed).toBe(false);
+      expect(successData.optionValue.shopifyVariantId).toBeNull();
+
+      const inDbAfterSuccess = await catalogService.getOptionValue(shopId, opt.id);
+      expect(inDbAfterSuccess?.shopifyVariantId).toBeNull();
+    });
+
+    it("R4-F8: posts codeType once with no duplicate name=codeType elements", () => {
+      const { container } = render(
+        <DataRouterWrapper>
+          <OptionValueForm
+            initialData={{
+              label: "Anti-reflective",
+              codeType: "token",
+              token: "coat=AR",
+            }}
+            groupKind="MATERIAL"
+            currency="USD"
+            isSubmitting={false}
+          />
+        </DataRouterWrapper>,
+      );
+
+      const codeTypeElements = container.querySelectorAll('[name="codeType"]');
+      expect(codeTypeElements.length).toBe(1);
+      expect(codeTypeElements[0].tagName.toLowerCase()).toBe("input");
+      expect((codeTypeElements[0] as HTMLInputElement).type).toBe("hidden");
+      expect((codeTypeElements[0] as HTMLInputElement).value).toBe("token");
+
+      // Verify choice list does not have name="codeType"
+      const choiceList = container.querySelector("s-choice-list");
+      expect(choiceList).not.toBeNull();
+      expect(choiceList?.getAttribute("name")).toBeNull();
+    });
+
+    it("R4-F9: index page disables primary action, modal buttons, Move and Retry controls during submission", async () => {
+      const shopId = await createShop("shop-r4f9-submitting.myshopify.com");
+      mocks.currentShop = "shop-r4f9-submitting.myshopify.com";
+
+      const g1 = await catalogService.createOptionGroup(shopId, {
+        name: "Materials",
+        kind: "MATERIAL",
+        position: 0,
+      });
+      const v1 = await catalogService.createOptionValue(shopId, {
+        optionGroupId: g1.id,
+        label: "CR-39",
+        priceDeltaMinor: 2000,
+        currency: "USD",
+      });
+
+      const loaderData = {
+        groups: [{ ...g1, values: [v1] }],
+        addOns: [],
+        syncFailedId: v1.id,
+        plan: { active: true },
+        shopDomain: "shop-r4f9-submitting.myshopify.com",
+      };
+
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue(loaderData);
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(undefined);
+      vi.spyOn(ReactRouter, "useNavigation").mockReturnValue({
+        state: "submitting",
+        location: { pathname: "/app/options", search: "", hash: "", state: null, key: "submitting" },
+        formMethod: "POST",
+        formAction: "/app/options",
+        formEncType: "application/x-www-form-urlencoded",
+        formData: new FormData(),
+        json: undefined,
+        text: undefined,
+      } as ReactRouter.Navigation);
+
+      const { container } = render(
+        <DataRouterWrapper>
+          <AdminOptionsIndexRoute />
+        </DataRouterWrapper>,
+      );
+
+      // 1. Primary action "Add option group" button is disabled
+      const primaryBtn = within(container).getByRole("button", { name: "Add option group" });
+      expect(primaryBtn.hasAttribute("disabled")).toBe(true);
+
+      // 2. Modal action buttons are disabled
+      const createGroupBtn = within(container).getByRole("button", { name: "Create group" });
+      expect(createGroupBtn.hasAttribute("disabled")).toBe(true);
+
+      const confirmDeleteBtn = within(container).getByRole("button", { name: "Confirm delete" });
+      expect(confirmDeleteBtn.hasAttribute("disabled")).toBe(true);
+
+      // 3. Move up and Move down buttons are disabled
+      const moveButtons = within(container).getAllByRole("button", { name: /Move (up|down)/ });
+      expect(moveButtons.length).toBeGreaterThan(0);
+      for (const btn of moveButtons) {
+        expect(btn.hasAttribute("disabled")).toBe(true);
+      }
+
+      // 4. Retry button is disabled
+      const retryButtons = within(container).getAllByRole("button", { name: "Retry" });
+      expect(retryButtons.length).toBeGreaterThan(0);
+      for (const btn of retryButtons) {
+        expect(btn.hasAttribute("disabled")).toBe(true);
+      }
+    });
+
+    it("R4-F9: creating an option value with another shop's optionGroupId returns 404 with no DB write (INV-1)", async () => {
+      const shop1Id = await createShop("shop-inv1-owner.myshopify.com");
+      const shop2Id = await createShop("shop-inv1-attacker.myshopify.com");
+
+      // Shop 1 creates a group
+      const shop1Group = await catalogService.createOptionGroup(shop1Id, {
+        name: "Shop 1 Group",
+        kind: "MATERIAL",
+        position: 0,
+      });
+
+      // Shop 2 attempts to create an option value pointing to shop 1's group
+      mocks.currentShop = "shop-inv1-attacker.myshopify.com";
+
+      const req = new Request("https://test-shop.myshopify.com/app/options/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          optionGroupId: shop1Group.id,
+          label: "Malicious Value",
+          priceDelta: "10.00",
+        }),
+      });
+
+      const res = await optionValueAction(createActionArgs(req, { id: "new" }));
+      const unwrapped = await unwrapResponse<{ error: { code: string; message: string } }>(res);
+
+      expect(unwrapped.status).toBe(404);
+      expect(unwrapped.data.error.code).toBe("NOT_FOUND");
+      expect(unwrapped.data.error.message).toMatch(/Option\s*Group not found/i);
+
+      // Verify no DB write occurred in shop 1's group or in shop 2
+      const shop1Values = await catalogService.listOptionValues(shop1Id, {
+        optionGroupId: shop1Group.id,
+      });
+      expect(shop1Values.length).toBe(0);
+
+      const allShop2Groups = await catalogService.listOptionGroups(shop2Id);
+      expect(allShop2Groups.length).toBe(0);
+    });
+  });
+
+  describe("Review R5 Fixes", () => {
+    it("R5-F1: OptionValueRoute navigates to /app/options and shows 'Saved' toast on successful save without syncFailed", async () => {
+      const navigateSpy = vi.fn();
+      vi.spyOn(ReactRouter, "useNavigate").mockReturnValue(navigateSpy);
+
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        optionValue: null,
+        group: { id: "grp-1", name: "Index", kind: "MATERIAL" },
+        allGroups: [{ id: "grp-1", name: "Index", kind: "MATERIAL" }],
+        plan: { active: true },
+        currency: "USD",
+        shopDomain: "test.myshopify.com",
+      });
+
+      // 1. Initial render without actionData
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(undefined);
+      const { rerender } = render(
+        <DataRouterWrapper>
+          <OptionValueRoute />
+        </DataRouterWrapper>,
+      );
+      expect(mocks.toastShow).not.toHaveBeenCalled();
+      expect(navigateSpy).not.toHaveBeenCalled();
+
+      // 2. Successful save: ok: true, syncFailed: false
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue({
+        ok: true,
+        optionValue: { id: "opt-1", label: "1.67 High Index" },
+        syncFailed: false,
+      });
+      rerender(
+        <DataRouterWrapper>
+          <OptionValueRoute />
+        </DataRouterWrapper>,
+      );
+
+      expect(mocks.toastShow).toHaveBeenCalledTimes(1);
+      expect(mocks.toastShow).toHaveBeenCalledWith("Saved");
+      expect(navigateSpy).toHaveBeenCalledTimes(1);
+      expect(navigateSpy).toHaveBeenCalledWith("/app/options");
+    });
+
+    it("R5-F1: OptionValueRoute stays on page and shows badge when save has syncFailed: true", async () => {
+      const navigateSpy = vi.fn();
+      vi.spyOn(ReactRouter, "useNavigate").mockReturnValue(navigateSpy);
+
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        optionValue: {
+          id: "opt-1",
+          label: "1.67 High Index",
+          priceDelta: { amountMinor: 3500, currency: "USD" },
+          shopifyVariantId: null,
+        },
+        group: { id: "grp-1", name: "Index", kind: "MATERIAL" },
+        allGroups: [{ id: "grp-1", name: "Index", kind: "MATERIAL" }],
+        plan: { active: true },
+        currency: "USD",
+        shopDomain: "test.myshopify.com",
+      });
+
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue({
+        ok: true,
+        optionValue: { id: "opt-1", label: "1.67 High Index", shopifyVariantId: null },
+        syncFailed: true,
+      });
+
+      const { container } = render(
+        <DataRouterWrapper>
+          <OptionValueRoute />
+        </DataRouterWrapper>,
+      );
+
+      // Does not toast or navigate
+      expect(mocks.toastShow).not.toHaveBeenCalled();
+      expect(navigateSpy).not.toHaveBeenCalled();
+
+      // Renders sync failed badge and retry button
+      expect(within(container).getByText("Sync failed")).toBeTruthy();
+      expect(within(container).getByText("Retry")).toBeTruthy();
+    });
+
+    it("R5-F1: AddOnRoute navigates to /app/options and shows 'Saved' toast on successful save without syncFailed", async () => {
+      const navigateSpy = vi.fn();
+      vi.spyOn(ReactRouter, "useNavigate").mockReturnValue(navigateSpy);
+
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        addOn: null,
+        plan: { active: true },
+        currency: "USD",
+        shopDomain: "test.myshopify.com",
+      });
+
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(undefined);
+      const { rerender } = render(
+        <DataRouterWrapper>
+          <AddOnRoute />
+        </DataRouterWrapper>,
+      );
+      expect(mocks.toastShow).not.toHaveBeenCalled();
+      expect(navigateSpy).not.toHaveBeenCalled();
+
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue({
+        ok: true,
+        addOn: { id: "addon-1", name: "Anti-Scratch Coating" },
+        syncFailed: false,
+      });
+      rerender(
+        <DataRouterWrapper>
+          <AddOnRoute />
+        </DataRouterWrapper>,
+      );
+
+      expect(mocks.toastShow).toHaveBeenCalledTimes(1);
+      expect(mocks.toastShow).toHaveBeenCalledWith("Saved");
+      expect(navigateSpy).toHaveBeenCalledTimes(1);
+      expect(navigateSpy).toHaveBeenCalledWith("/app/options");
+    });
+
+    it("R5-F1: AddOnRoute stays on page and shows badge when save has syncFailed: true", async () => {
+      const navigateSpy = vi.fn();
+      vi.spyOn(ReactRouter, "useNavigate").mockReturnValue(navigateSpy);
+
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        addOn: {
+          id: "addon-1",
+          name: "Anti-Scratch Coating",
+          price: { amountMinor: 2000, currency: "USD" },
+          shopifyVariantId: null,
+        },
+        plan: { active: true },
+        currency: "USD",
+        shopDomain: "test.myshopify.com",
+      });
+
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue({
+        ok: true,
+        addOn: { id: "addon-1", name: "Anti-Scratch Coating", shopifyVariantId: null },
+        syncFailed: true,
+      });
+
+      const { container } = render(
+        <DataRouterWrapper>
+          <AddOnRoute />
+        </DataRouterWrapper>,
+      );
+
+      expect(mocks.toastShow).not.toHaveBeenCalled();
+      expect(navigateSpy).not.toHaveBeenCalled();
+
+      expect(within(container).getByText("Sync failed")).toBeTruthy();
+      expect(within(container).getByText("Retry")).toBeTruthy();
+    });
+
+    it("R5-F3: OptionValueForm swatch details contains colour name example and no hex literal (INV-7)", () => {
+      const { container } = render(
+        <DataRouterWrapper>
+          <OptionValueForm
+            groupKind="COLOR"
+            initialData={{ label: "Blue Tint", swatch: "blue" }}
+          />
+        </DataRouterWrapper>,
+      );
+
+      const swatchField = container.querySelector('s-text-field[name="swatch"]');
+      expect(swatchField).not.toBeNull();
+      const details = swatchField?.getAttribute("details") ?? "";
+      expect(details).toContain("black");
+      expect(details).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    });
+
+    it("R5-F4: new option value ignores tampered currency field and uses shop currency from getShopCurrency", async () => {
+      const shopId = await createShop("shop-tampered-cur-opt.myshopify.com");
+      mocks.currentShop = "shop-tampered-cur-opt.myshopify.com";
+
+      // Shop currency is USD from getShopCurrency
+      const group = await catalogService.createOptionGroup(shopId, {
+        name: "Test Group",
+        kind: "MATERIAL",
+        position: 0,
+      });
+
+      // Submit new option with tampered currency "JPY"
+      const req = new Request("https://test-shop.myshopify.com/app/options/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          optionGroupId: group.id,
+          label: "1.60 High Index",
+          priceDelta: "25.00",
+          currency: "JPY",
+        }),
+      });
+
+      const res = await optionValueAction(createActionArgs(req, { id: "new" }));
+      const unwrapped = await unwrapResponse<{ ok: boolean; optionValue: { id: string; priceDelta: { currency: string; amountMinor: number } } }>(res);
+
+      expect(unwrapped.status).toBe(200);
+      expect(unwrapped.data.ok).toBe(true);
+      // Ignored posted "JPY" and used shop currency "USD"
+      expect(unwrapped.data.optionValue.priceDelta.currency).toBe("USD");
+      expect(unwrapped.data.optionValue.priceDelta.amountMinor).toBe(2500);
+
+      const inDb = await catalogService.getOptionValue(shopId, unwrapped.data.optionValue.id);
+      expect(inDb?.priceDelta.currency).toBe("USD");
+      expect(inDb?.priceDelta.amountMinor).toBe(2500);
+    });
+
+    it("R5-F4: new add-on ignores tampered currency field and uses shop currency from getShopCurrency", async () => {
+      const shopId = await createShop("shop-tampered-cur-addon.myshopify.com");
+      mocks.currentShop = "shop-tampered-cur-addon.myshopify.com";
+
+      // Submit new add-on with tampered currency "JPY"
+      const req = new Request("https://test-shop.myshopify.com/app/add-ons/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Blue Light Filter",
+          price: "15.00",
+          currency: "JPY",
+        }),
+      });
+
+      const res = await addOnAction(createActionArgs(req, { id: "new" }));
+      const unwrapped = await unwrapResponse<{ ok: boolean; addOn: { id: string; price: { currency: string; amountMinor: number } } }>(res);
+
+      expect(unwrapped.status).toBe(200);
+      expect(unwrapped.data.ok).toBe(true);
+      // Ignored posted "JPY" and used shop currency "USD"
+      expect(unwrapped.data.addOn.price.currency).toBe("USD");
+      expect(unwrapped.data.addOn.price.amountMinor).toBe(1500);
+
+      const inDb = await catalogService.getAddOn(shopId, unwrapped.data.addOn.id);
+      expect(inDb?.price.currency).toBe("USD");
+      expect(inDb?.price.amountMinor).toBe(1500);
+    });
+
+    it("R5-F5: OptionValueForm renders hidden optionGroupId and /app/options/new without ?groupId saves to default group", async () => {
+      const shopId = await createShop("shop-r5f5-default-grp.myshopify.com");
+      mocks.currentShop = "shop-r5f5-default-grp.myshopify.com";
+
+      const defaultGroup = await catalogService.createOptionGroup(shopId, {
+        name: "Default Material",
+        kind: "MATERIAL",
+        position: 0,
+      });
+
+      // 1. Loader without ?groupId returns allGroups[0] as group
+      const loaderReq = new Request("https://test-shop.myshopify.com/app/options/new");
+      const loaderRes = await optionValueLoader(createLoaderArgs(loaderReq, { id: "new" }));
+      const loaderData = (await unwrapResponse<{
+        group: { id: string; name: string };
+        allGroups: Array<{ id: string; name: string }>;
+        currency: string;
+      }>(loaderRes)).data;
+
+      expect(loaderData.group.id).toBe(defaultGroup.id);
+
+      // 2. OptionValueForm renders hidden optionGroupId with the group's ID
+      const { container } = render(
+        <DataRouterWrapper>
+          <OptionValueForm
+            initialData={{
+              optionGroupId: defaultGroup.id,
+              label: "",
+              priceDelta: "0.00",
+            }}
+            groupKind="MATERIAL"
+            currency="USD"
+          />
+        </DataRouterWrapper>,
+      );
+
+      const hiddenGroupIdInput = container.querySelector('input[type="hidden"][name="optionGroupId"]');
+      expect(hiddenGroupIdInput).not.toBeNull();
+      expect(hiddenGroupIdInput?.getAttribute("value")).toBe(defaultGroup.id);
+
+      // 3. Submitting formData with optionGroupId from initialData saves successfully without ?groupId in URL
+      const formData = new FormData();
+      formData.set("optionGroupId", defaultGroup.id);
+      formData.set("label", "CR-39 Standard");
+      formData.set("priceDelta", "0.00");
+
+      const actionReq = new Request("https://test-shop.myshopify.com/app/options/new", {
+        method: "POST",
+        body: formData,
+      });
+
+      const actionRes = await optionValueAction(createActionArgs(actionReq, { id: "new" }));
+      const actionUnwrapped = await unwrapResponse<{
+        ok: boolean;
+        optionValue: { id: string; optionGroupId: string; label: string };
+      }>(actionRes);
+
+      expect(actionUnwrapped.status).toBe(200);
+      expect(actionUnwrapped.data.ok).toBe(true);
+      expect(actionUnwrapped.data.optionValue.optionGroupId).toBe(defaultGroup.id);
+      expect(actionUnwrapped.data.optionValue.label).toBe("CR-39 Standard");
+
+      // Verify in DB
+      const inDb = await catalogService.getOptionValue(shopId, actionUnwrapped.data.optionValue.id);
+      expect(inDb?.optionGroupId).toBe(defaultGroup.id);
+      expect(inDb?.label).toBe("CR-39 Standard");
+    });
+  });
+
+});

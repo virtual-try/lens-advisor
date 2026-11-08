@@ -242,6 +242,35 @@ describe("CatalogRepository (DB-backed)", { timeout: 60_000 }, () => {
         expect(checkGroupB?.lenses.some((l) => l.id === lensA.id)).toBe(false);
       });
 
+      it("updateLens with null addMin and addMax clears existing persisted ADD limits (R7-F2)", async () => {
+        const lensesA = await repo.listLenses(shopA);
+        const lensA = lensesA[0];
+
+        // First set ADD limits
+        const updatedWithAdd = await repo.updateLens(shopA, lensA.id, {
+          addMin: 100,
+          addMax: 250,
+        });
+        expect(updatedWithAdd.addMin).toBe(100);
+        expect(updatedWithAdd.addMax).toBe(250);
+
+        const checkWithAdd = await repo.getLens(shopA, lensA.id);
+        expect(checkWithAdd?.addMin).toBe(100);
+        expect(checkWithAdd?.addMax).toBe(250);
+
+        // Now clear ADD limits by passing null
+        const cleared = await repo.updateLens(shopA, lensA.id, {
+          addMin: null,
+          addMax: null,
+        });
+        expect(cleared.addMin).toBeNull();
+        expect(cleared.addMax).toBeNull();
+
+        const checkCleared = await repo.getLens(shopA, lensA.id);
+        expect(checkCleared?.addMin).toBeNull();
+        expect(checkCleared?.addMax).toBeNull();
+      });
+
       it("deleteLens with another shop's ID throws NotFoundError and leaves row untouched", async () => {
         const lensesB = await repo.listLenses(shopB);
         const lensB = lensesB[0];
@@ -865,6 +894,54 @@ describe("CatalogRepository (DB-backed)", { timeout: 60_000 }, () => {
       // With includeArchived: true, it is returned
       const fullList = await repo.listLenses(shopA, { includeArchived: true });
       expect(fullList.some((l) => l.id === lens.id)).toBe(true);
+    });
+  });
+
+  describe("Archived group protection (R5-F1)", () => {
+    it("createLens into an archived group throws NotFoundError (R5-F1)", async () => {
+      const group = await repo.createLensGroup(shopA, { name: "Archived Group Repo R5F1" });
+      await repo.deleteLensGroup(shopA, group.id);
+
+      await expect(
+        repo.createLens(shopA, {
+          groupId: group.id,
+          name: "Repo Lens in Archived Group",
+          priceMinor: 1000,
+          currency: "USD",
+          rxTypes: ["SINGLE_VISION"],
+          sphMin: -200,
+          sphMax: 200,
+          cylMin: -100,
+          cylMax: 0,
+        }),
+      ).rejects.toThrow(NotFoundError);
+    });
+
+    it("updateLens moving a lens into an archived group throws NotFoundError and leaves row untouched (R5-F1)", async () => {
+      const activeGroup = await repo.createLensGroup(shopA, { name: "Active Source Group Repo R5F1" });
+      const archivedGroup = await repo.createLensGroup(shopA, { name: "Archived Target Group Repo R5F1" });
+      const lens = await repo.createLens(shopA, {
+        groupId: activeGroup.id,
+        name: "Repo Lens To Move R5F1",
+        priceMinor: 1000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -200,
+        sphMax: 200,
+        cylMin: -100,
+        cylMax: 0,
+      });
+
+      await repo.deleteLensGroup(shopA, archivedGroup.id);
+
+      await expect(
+        repo.updateLens(shopA, lens.id, {
+          groupId: archivedGroup.id,
+        }),
+      ).rejects.toThrow(NotFoundError);
+
+      const checkLens = await repo.getLens(shopA, lens.id);
+      expect(checkLens?.groupId).toBe(activeGroup.id);
     });
   });
 });

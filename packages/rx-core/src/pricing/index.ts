@@ -5,6 +5,7 @@ export {
 } from "./errors.js";
 
 export {
+  minorUnitDigits,
   parseMoneyText,
   toShopifyDecimal,
   type MoneyTextFailure,

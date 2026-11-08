@@ -39,6 +39,7 @@ export interface EnqueueOptions {
   retryLimit?: number;
   retryDelay?: number;
   retryBackoff?: boolean;
+  startAfter?: number | string | Date;
 }
 
 interface ResolvedQueueConfig {
@@ -254,6 +255,7 @@ export class Queue {
     if (options.retryLimit !== undefined) sendOptions.retryLimit = options.retryLimit;
     if (options.retryDelay !== undefined) sendOptions.retryDelay = options.retryDelay;
     if (options.retryBackoff !== undefined) sendOptions.retryBackoff = options.retryBackoff;
+    if (options.startAfter !== undefined) sendOptions.startAfter = options.startAfter;
     return sendOptions;
   }
 }
