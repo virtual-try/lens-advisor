@@ -1969,6 +1969,340 @@ describe("Spec 18 — Admin: lens groups and lenses", () => {
       expect(lenses[0].id).toBe(l2.id);
       expect(lenses[1].id).toBe(l1.id);
     }, DB_TIMEOUT_MS);
+
+    it("refuses to archive a group that still has active lenses with 409 GROUP_NOT_EMPTY in both routes, makes no cascading Shopify calls, disables or explains the control in the UI, and allows archiving an empty group (R4-F1)", async () => {
+      const shopDomain = "archive-group-r4f1.myshopify.com";
+      const shopId = await createShop(shopDomain);
+      mocks.currentShop = shopDomain;
+
+      const repo = createCatalogRepository(getTestPrisma());
+      const groupWithLens = await repo.createLensGroup(shopId, { name: "Non-empty Group" });
+      const emptyGroup = await repo.createLensGroup(shopId, { name: "Empty Group" });
+
+      const lens = await repo.createLens(shopId, {
+        groupId: groupWithLens.id,
+        name: "Active Lens In Group",
+        priceMinor: 5000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -400,
+        sphMax: 400,
+        cylMin: -200,
+        cylMax: 0,
+        labCodeTemplate: "PO-R4F1",
+        position: 0,
+        shopifyProductId: "gid://shopify/Product/9991",
+        shopifyVariantId: "gid://shopify/ProductVariant/9992",
+      });
+
+      // Clear any prior mock calls
+      mocks.adminGraphql.mockClear();
+
+      // 1. Attempt archive of non-empty group via lenses index action -> 409 GROUP_NOT_EMPTY
+      const indexArchiveForm = new FormData();
+      indexArchiveForm.append("intent", "archive-group");
+      indexArchiveForm.append("groupId", groupWithLens.id);
+
+      const indexArchiveReq = new Request("https://app.test/app/lenses", {
+        method: "POST",
+        body: indexArchiveForm,
+      });
+
+      const indexArchiveRes = await listAction(createActionArgs(indexArchiveReq));
+      const indexUnwrapped = await unwrapResponse<{ error: { code: string; message: string } }>(indexArchiveRes);
+      expect(indexUnwrapped.status).toBe(409);
+      expect(indexUnwrapped.data.error.code).toBe("GROUP_NOT_EMPTY");
+      expect(indexUnwrapped.data.error.message).toContain("Archive its lenses first");
+
+      // Verify no cascading Shopify calls were made
+      expect(mocks.adminGraphql).not.toHaveBeenCalled();
+
+      // Verify group remains active
+      const groupAfterIndex = await repo.getLensGroup(shopId, groupWithLens.id);
+      expect(groupAfterIndex?.archivedAt).toBeNull();
+
+      // 2. Attempt archive of non-empty group via lens-group route action -> 409 GROUP_NOT_EMPTY
+      const groupRouteArchiveForm = new FormData();
+      groupRouteArchiveForm.append("intent", "archive");
+
+      const groupRouteArchiveReq = new Request(`https://app.test/app/lens-groups/${groupWithLens.id}`, {
+        method: "POST",
+        body: groupRouteArchiveForm,
+      });
+
+      const groupRouteArchiveRes = await groupAction(
+        createActionArgs(groupRouteArchiveReq, { id: groupWithLens.id }),
+      );
+      const groupRouteUnwrapped = await unwrapResponse<{ error: { code: string; message: string } }>(
+        groupRouteArchiveRes,
+      );
+      expect(groupRouteUnwrapped.status).toBe(409);
+      expect(groupRouteUnwrapped.data.error.code).toBe("GROUP_NOT_EMPTY");
+      expect(groupRouteUnwrapped.data.error.message).toContain("Archive its lenses first");
+
+      // Verify no cascading Shopify calls
+      expect(mocks.adminGraphql).not.toHaveBeenCalled();
+
+      // Verify group still remains active
+      const groupAfterGroupRoute = await repo.getLensGroup(shopId, groupWithLens.id);
+      expect(groupAfterGroupRoute?.archivedAt).toBeNull();
+
+      // 3. UI checks:
+      // a) LensesList UI disables Archive group button and shows explanation for non-empty group
+      const service = createCatalogService({ prisma: getTestPrisma() });
+      const groupsList = await service.listLensGroups(shopId, { includeArchived: false });
+      const { container } = render(<LensesList groups={groupsList} />);
+
+      const nonEmptySection = container.querySelector('s-section[heading="Non-empty Group"]');
+      const nonEmptyArchiveBtn = nonEmptySection?.querySelector('s-button[tone="critical"]');
+      expect(nonEmptyArchiveBtn?.hasAttribute("disabled")).toBe(true);
+      expect(screen.getByText("Archive all lenses before archiving this group.")).not.toBeNull();
+
+      // Empty group archive button should NOT be disabled
+      const emptySection = container.querySelector('s-section[heading="Empty Group"]');
+      const emptyArchiveBtn = emptySection?.querySelector('s-button[tone="critical"]');
+      expect(emptyArchiveBtn?.hasAttribute("disabled")).toBe(false);
+
+      cleanup();
+
+      // b) LensGroupEditRoute UI disables Archive button and shows banner for non-empty group
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(undefined);
+      vi.spyOn(ReactRouter, "useNavigation").mockReturnValue({
+        state: "idle",
+      } as unknown as ReactRouter.Navigation);
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        isNew: false,
+        group: {
+          id: groupWithLens.id,
+          name: groupWithLens.name,
+          description: groupWithLens.description,
+          position: 0,
+          lenses: [
+            {
+              id: lens.id,
+              groupId: groupWithLens.id,
+              name: lens.name,
+              price: { amountMinor: 5000, currency: "USD" },
+              limits: {
+                rxTypes: ["SINGLE_VISION"],
+                sphMin: -400,
+                sphMax: 400,
+                cylMin: -200,
+                cylMax: 0,
+              },
+              labCodeTemplate: "PO-R4F1",
+              position: 0,
+              archivedAt: null,
+            },
+          ],
+        },
+      });
+
+      render(<LensGroupEditRoute />);
+      const groupArchiveBtn = screen.getByText("Archive").closest("s-button");
+      expect(groupArchiveBtn?.hasAttribute("disabled")).toBe(true);
+      expect(screen.getByText("Archive all lenses in this group before archiving the group.")).not.toBeNull();
+
+      cleanup();
+
+      // 4. Archiving empty group succeeds in both routes
+      // via lens-group route:
+      const archiveEmptyGroupForm = new FormData();
+      archiveEmptyGroupForm.append("intent", "archive");
+      const archiveEmptyReq = new Request(`https://app.test/app/lens-groups/${emptyGroup.id}`, {
+        method: "POST",
+        body: archiveEmptyGroupForm,
+      });
+      const archiveEmptyRes = await groupAction(
+        createActionArgs(archiveEmptyReq, { id: emptyGroup.id }),
+      );
+      expect((await unwrapResponse(archiveEmptyRes)).status).toBe(302);
+
+      const archivedEmptyGroup = await repo.getLensGroup(shopId, emptyGroup.id);
+      expect(archivedEmptyGroup?.archivedAt).not.toBeNull();
+
+      // via lenses index action for another empty group:
+      const emptyGroup2 = await repo.createLensGroup(shopId, { name: "Empty Group 2" });
+      const indexArchiveEmptyForm = new FormData();
+      indexArchiveEmptyForm.append("intent", "archive-group");
+      indexArchiveEmptyForm.append("groupId", emptyGroup2.id);
+      const indexArchiveEmptyReq = new Request("https://app.test/app/lenses", {
+        method: "POST",
+        body: indexArchiveEmptyForm,
+      });
+      const indexArchiveEmptyRes = await listAction(createActionArgs(indexArchiveEmptyReq));
+      const indexEmptyUnwrapped = await unwrapResponse<{ ok: boolean; archivedGroupId: string }>(
+        indexArchiveEmptyRes,
+      );
+      expect(indexEmptyUnwrapped.status).toBe(200);
+      expect(indexEmptyUnwrapped.data.ok).toBe(true);
+      expect(indexEmptyUnwrapped.data.archivedGroupId).toBe(emptyGroup2.id);
+
+      const archivedEmptyGroup2 = await repo.getLensGroup(shopId, emptyGroup2.id);
+      expect(archivedEmptyGroup2?.archivedAt).not.toBeNull();
+    }, DB_TIMEOUT_MS);
+
+    it("synchronizes group fields through DOM properties (.value) and updates hidden inputs on typing (R4-F2)", () => {
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(undefined);
+      vi.spyOn(ReactRouter, "useNavigation").mockReturnValue({
+        state: "idle",
+      } as unknown as ReactRouter.Navigation);
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        isNew: false,
+        group: {
+          id: "group-sync-1",
+          name: "Initial Group Name",
+          description: "Initial Description",
+          position: 0,
+          lenses: [],
+        },
+      });
+
+      const { container } = render(<LensGroupEditRoute />);
+
+      const nameField = container.querySelector('s-text-field[name="nameField"]') as
+        | (HTMLElement & { value: string })
+        | null;
+      const descField = container.querySelector('s-text-area[name="descriptionField"]') as
+        | (HTMLElement & { value: string })
+        | null;
+      const nameHidden = container.querySelector('input[name="name"]') as HTMLInputElement | null;
+      const descHidden = container.querySelector('input[name="description"]') as HTMLInputElement | null;
+
+      expect(nameField).not.toBeNull();
+      expect(descField).not.toBeNull();
+      expect(nameHidden).not.toBeNull();
+      expect(descHidden).not.toBeNull();
+
+      // Initial DOM properties synchronized under React 18
+      expect(nameField?.value).toBe("Initial Group Name");
+      expect(descField?.value).toBe("Initial Description");
+      expect(nameHidden?.value).toBe("Initial Group Name");
+      expect(descHidden?.value).toBe("Initial Description");
+
+      // Typing into name updates DOM property and hidden input
+      nameField!.value = "Updated Name";
+      fireEvent(nameField!, new Event("input", { bubbles: true }));
+      fireEvent(nameField!, new Event("change", { bubbles: true }));
+
+      expect(nameField?.value).toBe("Updated Name");
+      expect(nameHidden?.value).toBe("Updated Name");
+
+      // Typing into description updates DOM property and hidden input
+      descField!.value = "Updated Desc";
+      fireEvent(descField!, new Event("input", { bubbles: true }));
+      fireEvent(descField!, new Event("change", { bubbles: true }));
+
+      expect(descField?.value).toBe("Updated Desc");
+      expect(descHidden?.value).toBe("Updated Desc");
+
+      cleanup();
+    });
+
+    it("starts new lenses with an empty price field without MONEY_PRECISION, and saves lenses for zero-decimal currency shops like JPY (R4-F3)", async () => {
+      // 1. Component test: LensForm starts with empty price and Save disabled, no MONEY_PRECISION error
+      const { container } = render(
+        <LensForm
+          groups={[{ id: "g-jpy", name: "JPY Group", position: 0, lenses: [], archivedAt: null }]}
+          defaultGroupId="g-jpy"
+          shopCurrency="JPY"
+        />,
+      );
+
+      const priceField = container.querySelector('s-text-field[name="priceField"]') as
+        | (HTMLElement & { value: string })
+        | null;
+      expect(priceField).not.toBeNull();
+      expect(priceField?.value).toBe("");
+      expect(screen.queryByText("MONEY_PRECISION")).toBeNull();
+
+      // Save button is disabled because price is empty
+      const saveButton = screen.getByText("Save").closest("s-button");
+      expect(saveButton?.hasAttribute("disabled")).toBe(true);
+
+      cleanup();
+
+      // 2. Action test: save lens for JPY shop
+      const shopDomain = "jpy-shop.myshopify.com";
+      const shopId = await createShop(shopDomain);
+      mocks.currentShop = shopDomain;
+
+      const repo = createCatalogRepository(getTestPrisma());
+      const group = await repo.createLensGroup(shopId, { name: "Tokyo Optics" });
+
+      // Mock ShopCurrency to return JPY
+      const originalAdminGraphql = mocks.adminGraphql.getMockImplementation();
+      mocks.adminGraphql.mockImplementation(async (query: string, vars?: Record<string, unknown>) => {
+        if (query.includes("ShopCurrency")) {
+          return new Response(
+            JSON.stringify({ data: { shop: { currencyCode: "JPY" } } }),
+            { status: 200 },
+          );
+        }
+        return originalAdminGraphql ? originalAdminGraphql(query, vars) : new Response("{}", { status: 200 });
+      });
+
+      // Saving with empty price should be rejected (required on save)
+      const emptyPriceReq = new Request("https://app.test/app/lenses/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent: "save",
+          groupId: group.id,
+          name: "Empty Price Lens",
+          price: "",
+          sphMin: "-4.00",
+          sphMax: "+4.00",
+          cylMin: "-2.00",
+          cylMax: "0.00",
+          rxTypes: ["SINGLE_VISION"],
+        }),
+      });
+      const emptyPriceRes = await lensAction(createActionArgs(emptyPriceReq, { id: "new" }));
+      const emptyPriceUnwrapped = await unwrapResponse<{ error: { code: string; message: string; fields?: unknown[] } }>(emptyPriceRes);
+      expect(emptyPriceUnwrapped.status).toBe(400);
+      expect(emptyPriceUnwrapped.data.error.code).toBe("MONEY_FORMAT");
+
+      // Saving with valid JPY price (e.g. 5000 yen) succeeds
+      const jpySaveForm = new FormData();
+      jpySaveForm.append("intent", "save");
+      jpySaveForm.append("groupId", group.id);
+      jpySaveForm.append("name", "Standard JPY Lens");
+      jpySaveForm.append("price", "5000");
+      jpySaveForm.append("sphMin", "-4.00");
+      jpySaveForm.append("sphMax", "+4.00");
+      jpySaveForm.append("cylMin", "-2.00");
+      jpySaveForm.append("cylMax", "0.00");
+      jpySaveForm.append("rxTypes", "SINGLE_VISION");
+      jpySaveForm.append("labCodeTemplate", "PO-58-NONE-NONE-00");
+
+      const jpySaveReq = new Request("https://app.test/app/lenses/new", {
+        method: "POST",
+        body: jpySaveForm,
+      });
+
+      const jpySaveRes = await lensAction(createActionArgs(jpySaveReq, { id: "new" }));
+      const jpySaveUnwrapped = await unwrapResponse(jpySaveRes);
+      expect(jpySaveUnwrapped.status).toBe(302);
+
+      // Verify lens was saved with JPY currency and 5000 minor units
+      const lenses = await repo.listLenses(shopId, { groupId: group.id });
+      expect(lenses.length).toBe(1);
+      expect(lenses[0].currency).toBe("JPY");
+      expect(lenses[0].priceMinor).toBe(5000);
+
+      // Verify variant update in Shopify was called with price "5000"
+      const variantCalls = mocks.adminGraphql.mock.calls.filter((call) =>
+        String(call[0]).includes("productVariantsBulkUpdate"),
+      );
+      expect(variantCalls.length).toBeGreaterThan(0);
+      const lastVariantCall = variantCalls[variantCalls.length - 1];
+      expect(lastVariantCall[1]?.variables?.variants?.[0]?.price).toBe("5000");
+
+      if (originalAdminGraphql) {
+        mocks.adminGraphql.mockImplementation(originalAdminGraphql);
+      }
+    }, DB_TIMEOUT_MS);
   });
 
   describe("Helper functions & Route loaders", () => {

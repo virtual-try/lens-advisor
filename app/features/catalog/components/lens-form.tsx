@@ -134,7 +134,7 @@ export function LensForm({
     defaultValues?.price ??
     (lens
       ? toShopifyDecimal(lens.price.amountMinor, lens.price.currency)
-      : "80.00");
+      : "");
   const initialCurrency =
     defaultValues?.currency ?? (lens?.price.currency ?? shopCurrency);
   const initialRxTypes =
@@ -276,12 +276,14 @@ export function LensForm({
   }
 
   // Price validation
-  const parsedPrice = parseMoneyText(price, currency);
   let priceError: string | undefined;
-  if (!parsedPrice.ok) {
-    priceError = parsedPrice.error;
-  } else if (parsedPrice.amountMinor < 0) {
-    priceError = "NEGATIVE_PRICE";
+  if (price.trim().length > 0) {
+    const parsedPrice = parseMoneyText(price, currency);
+    if (!parsedPrice.ok) {
+      priceError = parsedPrice.error;
+    } else if (parsedPrice.amountMinor < 0) {
+      priceError = "NEGATIVE_PRICE";
+    }
   }
 
   // Action field errors from server (if any)
@@ -321,6 +323,7 @@ export function LensForm({
     Boolean(cylMaxError) ||
     Boolean(addMaxError) ||
     Boolean(priceError) ||
+    !price.trim() ||
     !name.trim() ||
     !groupId ||
     rxTypes.length === 0 ||

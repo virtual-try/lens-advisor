@@ -4,7 +4,7 @@ import {
   type RxLimits,
 } from "../../../packages/rx-core/src/index.js";
 import { createTestDb, seedShop, type TestDb } from "../../../test/db";
-import { errorResponse, NotFoundError } from "../../shared/http/errors.server";
+import { ConflictError, errorResponse, NotFoundError } from "../../shared/http/errors.server";
 import {
   archiveAddOn,
   archiveLens,
@@ -967,6 +967,26 @@ describe("CatalogService (DB-backed)", { timeout: 60_000 }, () => {
       const archived = await archiveLensGroup(shopA, created.id, { prisma: db.prisma });
       expect(archived.archivedAt).not.toBeNull();
       expect(archived.id).toBe(created.id);
+    });
+
+    it("archiveLensGroup rejects archiving group with active lenses with ConflictError GROUP_NOT_EMPTY (R4-F1)", async () => {
+      const createdGroup = await service.createLensGroup(shopA, { name: "Non-empty Group For Service" });
+      await service.createLens(shopA, {
+        groupId: createdGroup.id,
+        name: "Active Lens in Group",
+        priceMinor: 2000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -200,
+        sphMax: 200,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "PO-TEST",
+      });
+
+      await expect(
+        archiveLensGroup(shopA, createdGroup.id, { prisma: db.prisma }),
+      ).rejects.toThrowError(ConflictError);
     });
 
     it("archiveLens standalone function archives lens and returns DTO", async () => {

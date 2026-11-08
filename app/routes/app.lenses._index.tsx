@@ -24,6 +24,7 @@ import { getPrisma } from "../shared/container/prisma.server";
 import {
   AppError,
   BadRequestError,
+  ConflictError,
   errorResponse,
   NotFoundError,
 } from "../shared/http/errors.server";
@@ -299,6 +300,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return errorResponse(new NotFoundError("Lens group not found"));
       }
 
+      const activeLensesCount = await prisma.lens.count({
+        where: {
+          shopId: shop.id,
+          groupId,
+          archivedAt: null,
+        },
+      });
+      if (activeLensesCount > 0) {
+        return errorResponse(
+          new ConflictError(
+            "Cannot archive a group that still has active lenses. Archive its lenses first.",
+            "GROUP_NOT_EMPTY",
+          ),
+        );
+      }
+
       await archiveLensGroup(shop.id, groupId);
       return data({ ok: true, archivedGroupId: groupId });
     }
@@ -553,6 +570,15 @@ export function LensesList({
       lenses: (g.lenses ?? []).filter((l) => l.id !== archivedLensId),
     }));
 
+  const fetcherError =
+    fetcher.data && typeof fetcher.data === "object" && "error" in fetcher.data
+      ? (
+          fetcher.data as {
+            error?: { code?: string; message?: string };
+          }
+        ).error
+      : undefined;
+
   if (isLoading) {
     return (
       <s-page heading="Lenses">
@@ -584,41 +610,54 @@ export function LensesList({
         </s-empty-state>
       ) : (
         <s-stack direction="block" gap="base">
-          {groups.map((group, groupIdx) => (
-            <s-section key={group.id} heading={group.name}>
-              <s-stack direction="block" gap="base">
-                {group.description && (
-                  <s-paragraph>{group.description}</s-paragraph>
-                )}
+          {fetcherError && (
+            <s-banner tone="critical" heading="Action error">
+              {fetcherError.message || fetcherError.code}
+            </s-banner>
+          )}
+          {groups.map((group, groupIdx) => {
+            const hasActiveLenses = (group.lenses ?? []).some((l) => !l.archivedAt);
+            return (
+              <s-section key={group.id} heading={group.name}>
+                <s-stack direction="block" gap="base">
+                  {group.description && (
+                    <s-paragraph>{group.description}</s-paragraph>
+                  )}
 
-                <s-stack direction="inline" gap="base">
-                  <s-link href={`/app/lens-groups/${group.id}`}>
-                    Edit group
-                  </s-link>
-                  <s-link href={`/app/lenses/new?groupId=${group.id}`}>
-                    Add lens to group
-                  </s-link>
-                  <s-button
-                    disabled={groupIdx === 0}
-                    onClick={() => handleMoveGroup(groupIdx, -1)}
-                  >
-                    Move group up
-                  </s-button>
-                  <s-button
-                    disabled={groupIdx === groups.length - 1}
-                    onClick={() => handleMoveGroup(groupIdx, 1)}
-                  >
-                    Move group down
-                  </s-button>
-                  <s-button
-                    tone="critical"
-                    onClick={() =>
-                      openArchiveModal("group", group.id, group.name)
-                    }
-                  >
-                    Archive group
-                  </s-button>
-                </s-stack>
+                  <s-stack direction="inline" gap="base">
+                    <s-link href={`/app/lens-groups/${group.id}`}>
+                      Edit group
+                    </s-link>
+                    <s-link href={`/app/lenses/new?groupId=${group.id}`}>
+                      Add lens to group
+                    </s-link>
+                    <s-button
+                      disabled={groupIdx === 0}
+                      onClick={() => handleMoveGroup(groupIdx, -1)}
+                    >
+                      Move group up
+                    </s-button>
+                    <s-button
+                      disabled={groupIdx === groups.length - 1}
+                      onClick={() => handleMoveGroup(groupIdx, 1)}
+                    >
+                      Move group down
+                    </s-button>
+                    <s-button
+                      tone="critical"
+                      {...(hasActiveLenses ? { disabled: true } : {})}
+                      onClick={() =>
+                        openArchiveModal("group", group.id, group.name)
+                      }
+                    >
+                      Archive group
+                    </s-button>
+                    {hasActiveLenses && (
+                      <s-text tone="neutral">
+                        Archive all lenses before archiving this group.
+                      </s-text>
+                    )}
+                  </s-stack>
 
                 {group.lenses.length === 0 ? (
                   <s-paragraph>No lenses in this group.</s-paragraph>
@@ -718,7 +757,8 @@ export function LensesList({
                 )}
               </s-stack>
             </s-section>
-          ))}
+          );
+        })}
         </s-stack>
       )}
 

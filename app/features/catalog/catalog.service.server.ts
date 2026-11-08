@@ -21,7 +21,7 @@ import {
   type RxType,
 } from "../../../packages/rx-core/src/index.js";
 import { getPrisma } from "../../shared/container/prisma.server";
-import { NotFoundError } from "../../shared/http/errors.server";
+import { ConflictError, NotFoundError } from "../../shared/http/errors.server";
 import {
   CatalogRepository,
   createCatalogRepository,
@@ -293,6 +293,13 @@ export class CatalogService {
     const existing = await this.repository.getLensGroup(shopId, id);
     if (!existing) {
       throw new NotFoundError("LensGroup not found");
+    }
+    const activeLenses = (existing.lenses ?? []).filter((l) => !l.archivedAt);
+    if (activeLenses.length > 0) {
+      throw new ConflictError(
+        "Cannot archive a group that still has active lenses. Archive its lenses first.",
+        "GROUP_NOT_EMPTY",
+      );
     }
     const deleted = await this.repository.deleteLensGroup(shopId, id);
     return mapLensGroupToDto({ ...deleted, lenses: existing.lenses });

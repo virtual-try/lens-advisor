@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
   ActionFunctionArgs,
   HeadersFunction,
@@ -20,6 +20,7 @@ import { getPrisma } from "../shared/container/prisma.server";
 import {
   AppError,
   BadRequestError,
+  ConflictError,
   errorResponse,
   NotFoundError,
 } from "../shared/http/errors.server";
@@ -160,6 +161,23 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       if (!existing || existing.archivedAt) {
         return errorResponse(new NotFoundError("Lens group not found"));
       }
+
+      const activeLensesCount = await prisma.lens.count({
+        where: {
+          shopId: shop.id,
+          groupId: id,
+          archivedAt: null,
+        },
+      });
+      if (activeLensesCount > 0) {
+        return errorResponse(
+          new ConflictError(
+            "Cannot archive a group that still has active lenses. Archive its lenses first.",
+            "GROUP_NOT_EMPTY",
+          ),
+        );
+      }
+
       await archiveLensGroup(shop.id, id);
       return redirect("/app/lenses");
     }
@@ -222,6 +240,31 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   }
 };
 
+const useIsomorphicLayoutEffect =
+  typeof window !== "undefined" ? useLayoutEffect : useEffect;
+
+function usePolarisProperty<T extends HTMLElement>(
+  propName: "checked" | "value",
+  val: boolean | string,
+) {
+  const ref = useRef<T | null>(null);
+
+  useIsomorphicLayoutEffect(() => {
+    if (ref.current) {
+      (ref.current as Record<string, unknown>)[propName] = val;
+    }
+  });
+
+  const refCallback = (el: T | null) => {
+    ref.current = el;
+    if (el) {
+      (el as Record<string, unknown>)[propName] = val;
+    }
+  };
+
+  return [ref, refCallback] as const;
+}
+
 export default function LensGroupEditRoute() {
   const { group, isNew } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
@@ -232,6 +275,18 @@ export default function LensGroupEditRoute() {
   const [name, setName] = useState(group?.name ?? "");
   const [description, setDescription] = useState(group?.description ?? "");
   const modalRef = useRef<HTMLElementTagNameMap["s-modal"] | null>(null);
+
+  const [, setNameRef] = usePolarisProperty<HTMLElementTagNameMap["s-text-field"]>(
+    "value",
+    name,
+  );
+  const [, setDescriptionRef] = usePolarisProperty<
+    HTMLElementTagNameMap["s-text-area"]
+  >("value", description);
+
+  const hasActiveLenses = Boolean(
+    group?.lenses && group.lenses.some((l) => !l.archivedAt),
+  );
 
   const actionError =
     actionData && typeof actionData === "object" && "error" in actionData
@@ -297,6 +352,7 @@ export default function LensGroupEditRoute() {
         <s-button
           slot="secondary-actions"
           tone="critical"
+          {...(hasActiveLenses ? { disabled: true } : {})}
           onClick={openArchiveModal}
         >
           Archive
@@ -315,9 +371,16 @@ export default function LensGroupEditRoute() {
             </s-banner>
           )}
 
+          {hasActiveLenses && (
+            <s-banner tone="info" heading="Active lenses">
+              Archive all lenses in this group before archiving the group.
+            </s-banner>
+          )}
+
           <s-section heading="Lens group details">
             <s-stack direction="block" gap="base">
               <s-text-field
+                ref={setNameRef}
                 label="Group name"
                 name="nameField"
                 value={name}
@@ -333,6 +396,7 @@ export default function LensGroupEditRoute() {
               />
 
               <s-text-area
+                ref={setDescriptionRef}
                 label="Description"
                 name="descriptionField"
                 value={description}

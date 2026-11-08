@@ -1,6 +1,6 @@
 # Spec 31 — Admin home and setup checklist
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 09, Spec 14, Spec 15
 **Model:** Light — `claude-haiku-5-5` · `gpt-6-luna` · `gemini-3.5-flash-lite`
 **Issue:** —
