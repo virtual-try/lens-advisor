@@ -21,18 +21,19 @@ import {
 } from "./lab-orders.repository.server";
 
 export const ORDER_INTAKE_QUERY = `#graphql
-query getOrderForIntake($id: ID!) {
+query getOrderForIntake($id: ID!, $cursor: String) {
   order(id: $id) {
     id
     name
-    lineItems(first: 250) {
+    lineItems(first: 250, after: $cursor) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
       nodes {
         id
         title
         sku
-        parentLineItem {
-          id
-        }
         customAttributes {
           key
           value
@@ -67,9 +68,6 @@ export interface RawLineItem {
   id?: string;
   title?: string;
   sku?: string | null;
-  parentLineItem?: { id?: string } | null;
-  parentLineItemId?: string | null;
-  parent_id?: string | null;
   customAttributes?: RawCustomAttribute[] | { nodes?: RawCustomAttribute[] };
   properties?: RawCustomAttribute[] | Record<string, unknown>;
 }
@@ -206,29 +204,68 @@ export class IntakeService {
       admin = unauthAdmin;
     }
 
-    // 3. Fetch Order from Shopify Admin GraphQL
+    // 3. Fetch Order from Shopify Admin GraphQL (with cursor pagination)
     const orderGid = toOrderGid(shopifyOrderId);
-    const data = await executeGraphQL<{
-      order?: {
-        id?: string;
-        name?: string;
-        lineItems?: {
-          nodes?: Array<RawLineItem>;
-        } | Array<RawLineItem>;
-        line_items?: Array<RawLineItem>;
-      };
-    }>(admin, ORDER_INTAKE_QUERY, { id: orderGid });
+    const rawLineItems: RawLineItem[] = [];
+    let orderName: string | undefined;
+    let cursor: string | null = null;
+    let hasNextPage = true;
 
-    const order = data.order;
-    if (!order) {
-      return { ok: false, reason: "ORDER_NOT_FOUND", labOrders: [] };
+    while (hasNextPage) {
+      const variables: Record<string, unknown> = { id: orderGid };
+      if (cursor) {
+        variables.cursor = cursor;
+      }
+
+      const data = await executeGraphQL<{
+        order?: {
+          id?: string;
+          name?: string;
+          lineItems?: {
+            pageInfo?: {
+              hasNextPage?: boolean;
+              endCursor?: string | null;
+            };
+            nodes?: Array<RawLineItem>;
+          } | Array<RawLineItem>;
+          line_items?: Array<RawLineItem>;
+        };
+      }>(admin, ORDER_INTAKE_QUERY, variables);
+
+      const order = data.order;
+      if (!order) {
+        if (rawLineItems.length === 0) {
+          return { ok: false, reason: "ORDER_NOT_FOUND", labOrders: [] };
+        }
+        break;
+      }
+
+      if (!orderName && order.name) {
+        orderName = order.name;
+      }
+
+      const connection = order.lineItems;
+      if (Array.isArray(connection)) {
+        rawLineItems.push(...connection);
+        hasNextPage = false;
+      } else if (connection && "nodes" in connection && Array.isArray(connection.nodes)) {
+        rawLineItems.push(...connection.nodes);
+        const pageInfo = connection.pageInfo;
+        if (pageInfo?.hasNextPage && pageInfo.endCursor) {
+          cursor = pageInfo.endCursor;
+          hasNextPage = true;
+        } else {
+          hasNextPage = false;
+        }
+      } else if (Array.isArray(order.line_items)) {
+        rawLineItems.push(...order.line_items);
+        hasNextPage = false;
+      } else {
+        hasNextPage = false;
+      }
     }
 
-    const rawLineItems: RawLineItem[] = Array.isArray(order.lineItems)
-      ? order.lineItems
-      : (order.lineItems?.nodes ?? order.line_items ?? []);
-
-    const orderName = order.name ?? `#${fromOrderGid(shopifyOrderId)}`;
+    orderName = orderName ?? `#${fromOrderGid(shopifyOrderId)}`;
 
     // 4. Group lines by _bundle_id
     const bundleMap = new Map<string, RawLineItem[]>();
@@ -252,25 +289,12 @@ export class IntakeService {
 
     // 5. Process each bundle
     for (const [bundleId, bundleLines] of bundleMap.entries()) {
-      // Find frame line
-      let frameLine: RawLineItem | undefined = bundleLines.find((line) => {
+      // Find frame line within bundle using spec 03's readBundleProperties
+      const frameLine: RawLineItem | undefined = bundleLines.find((line) => {
         const attrs = extractAttributesRecord(line);
         const parsed = readBundleProperties(attrs);
         return parsed.role === "frame";
       });
-
-      if (!frameLine) {
-        const childWithParent = bundleLines.find(
-          (line) => line.parentLineItem?.id ?? line.parentLineItemId ?? line.parent_id,
-        );
-        const parentId =
-          childWithParent?.parentLineItem?.id ??
-          childWithParent?.parentLineItemId ??
-          childWithParent?.parent_id;
-        if (parentId) {
-          frameLine = rawLineItems.find((line) => line.id === parentId);
-        }
-      }
 
       const frameTitle = frameLine?.title ?? bundleLines[0]?.title ?? "Frame";
       const frameSku = frameLine?.sku ?? null;
@@ -395,12 +419,14 @@ export class IntakeService {
 
       labOrders.push(labOrder);
 
-      // Enqueue lab-orders.dispatch job
-      await queue.enqueue(
-        DISPATCH_JOB_NAME,
-        { labOrderId: labOrder.id },
-        { singletonKey: labOrder.id },
-      );
+      // Enqueue lab-orders.dispatch job only if the order is in PENDING status (R1-F3)
+      if (labOrder.status === "PENDING") {
+        await queue.enqueue(
+          DISPATCH_JOB_NAME,
+          { labOrderId: labOrder.id },
+          { singletonKey: labOrder.id },
+        );
+      }
     }
 
     return { ok: true, labOrders };

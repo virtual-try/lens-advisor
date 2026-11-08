@@ -121,15 +121,7 @@ export async function upsertLabOrder(
     },
     update: {
       orderName: input.orderName,
-      prescriptionId: input.prescriptionId ?? null,
-      lensId: input.lensId,
-      optionValueIds: input.optionValueIds ? [...input.optionValueIds] : [],
-      addOnIds: input.addOnIds ? [...input.addOnIds] : [],
-      frameTitle: input.frameTitle,
-      frameSku: input.frameSku ?? null,
-      rxOutOfLimits: input.rxOutOfLimits ?? false,
-      status: input.status ?? "PENDING",
-      lastErrorCode: input.lastErrorCode ?? null,
+      // On conflict, preserve terminal/workflow-owned fields (status, lastErrorCode, attempts, ticketKeys, providerId, sentAt) (R1-F3)
     },
   });
 

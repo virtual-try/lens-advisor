@@ -118,4 +118,13 @@ Stubbed until spec 30 — test code only: the `lab-orders.dispatch` handler; tes
   - `pnpm build`: exit 0.
   - `pnpm test`: Test Files 48 passed (48), Tests 767 passed (767), 0 failures.
   - `git diff --check`: clean.
-- **2026-11-08** — Evidence (orchestro spec verify, tree 71cb8625): install pass · typecheck pass · lint pass · build pass · test pass 767/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree bcd06bdd): install pass · typecheck pass · lint pass · build pass · test pass 773/0/0
+- **2026-11-08** — Fix round R1 (coder agy-3):
+  - Fixed R1-F1: Dropped `parentLineItem` from `ORDER_INTAKE_QUERY`, `RawLineItem`, and frame resolution logic; frame line identified via spec 03's `readBundleProperties` (`role === "frame"`). Added 2026-10 LineItem schema-contract test.
+  - Fixed R1-F2: Registered `dispatchJob` as a producer schema without a production worker handler (`dispatchJob.handler === undefined`), avoiding premature job completion before spec 30.
+  - Fixed R1-F3: Preserved terminal/workflow fields (`status`, `lastErrorCode`, `attempts`, `ticketKeys`, etc.) on conflict in `upsertLabOrder`. In `processOrderIntake`, only enqueue dispatch if `labOrder.status === "PENDING"`. Added test proving existing SENT/FAILED row retains status without re-dispatch.
+  - Fixed R1-F4: Authenticated webhook request failures return standard 401 JSON shape (`error.code: "UNAUTHORIZED"`). Payload validated with Zod (`orderWebhookPayloadSchema`); malformed payload returns 400 with no enqueue and logs error code only (INV-2).
+  - Fixed R1-F5: Added cursor pagination for lineItems in `ORDER_INTAKE_QUERY` and `processOrderIntake` using `pageInfo.hasNextPage` and `pageInfo.endCursor`. Tested orders of 250 and 251 line items across page boundaries.
+  - Fixed R1-F6: Updated INV-6 test to assert that invalid HMAC returns 401 with standard JSON error body and that nothing is enqueued (`getQueue` and `fakeQueue.enqueue` not called).
+  - Fixed R1-F7: Updated INV-1 test to seed identical order ID and bundle ID for shop A and shop B, updated shop A, and asserted that shop B's complete row remains byte-for-byte unchanged.
+  - Fixed R1-F8: Made the no-Rx check structural on Prisma DMMF `LabOrder`: verified `'rx'` is absent, verified no field matches `/rx|sph|cyl|axis|add|pd|prism/i` except allowed names (`prescriptionId`, `prescription`, `rxOutOfLimits`, `addOnIds`), and verified exact allowed model field set.

@@ -38,6 +38,11 @@ export const intakeJob = defineJob({
   },
 });
 
+/**
+ * Producer definition for lab-orders.dispatch.
+ * Registers the queue and validates payloads on enqueue; the executable handler
+ * is exported by spec 30 (app/features/lab-dispatch/jobs.server.ts).
+ */
 export const dispatchJob = defineJob({
   name: DISPATCH_JOB_NAME,
   schema: dispatchJobPayloadSchema,
@@ -45,8 +50,5 @@ export const dispatchJob = defineJob({
     retryLimit: 3,
     retryDelay: 2,
     retryBackoff: true,
-  },
-  handler: async () => {
-    // Stubbed until spec 30 — test code only: the lab-orders.dispatch handler; tests assert it was enqueued.
   },
 });

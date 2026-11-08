@@ -16,6 +16,7 @@ import {
   createIntakeService,
   extractAttributesRecord,
   fromOrderGid,
+  ORDER_INTAKE_QUERY,
   toOrderGid,
 } from "./intake.service.server";
 import {
@@ -175,7 +176,6 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
               id: `gid://shopify/LineItem/${randomUUID()}`,
               title: "1.56 Standard Lens",
               sku: "LENS-156",
-              parentLineItem: { id: frameLineId },
               customAttributes: Object.entries(lensProps).map(([key, value]) => ({ key, value })),
             },
           ],
@@ -285,7 +285,6 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
             {
               id: `gid://shopify/LineItem/${randomUUID()}`,
               title: "1.56 Lens Bundle 1",
-              parentLineItem: { id: frame1Id },
               customAttributes: Object.entries(
                 buildBundleLineProperties({
                   role: "lens",
@@ -312,7 +311,6 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
             {
               id: `gid://shopify/LineItem/${randomUUID()}`,
               title: "1.56 Lens Bundle 2",
-              parentLineItem: { id: frame2Id },
               customAttributes: Object.entries(
                 buildBundleLineProperties({
                   role: "lens",
@@ -409,7 +407,6 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
             {
               id: `gid://shopify/LineItem/${randomUUID()}`,
               title: "1.56 Lens",
-              parentLineItem: { id: frameLineId },
               customAttributes: Object.entries(
                 buildBundleLineProperties({
                   role: "lens",
@@ -508,7 +505,6 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
             {
               id: `gid://shopify/LineItem/${randomUUID()}`,
               title: "1.56 Lens",
-              parentLineItem: { id: frameLineId },
               customAttributes: Object.entries(
                 buildBundleLineProperties({
                   role: "lens",
@@ -598,7 +594,6 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
             {
               id: `gid://shopify/LineItem/${randomUUID()}`,
               title: "Lens Line",
-              parentLineItem: { id: frameLineId },
               customAttributes: Object.entries(
                 buildBundleLineProperties({
                   role: "lens",
@@ -698,7 +693,7 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
       expect(fakeQueue.enqueue).not.toHaveBeenCalled();
     });
 
-    it("Row 7: invalid HMAC -> 401, nothing enqueued (INV-6)", async () => {
+    it("Row 7: invalid HMAC -> 401, nothing enqueued (INV-6, R1-F6)", async () => {
       const request = new Request("https://example.com/webhooks/orders/create", {
         method: "POST",
         headers: {
@@ -715,17 +710,80 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
         new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 }),
       );
 
+      const fakeQueue = createFakeQueue();
+      const queueModule = await import("../../shared/container/queue.server");
+      const getQueueSpy = vi.spyOn(queueModule, "getQueue").mockResolvedValue(fakeQueue as unknown as Queue);
+
       const response = await ordersCreateAction(createActionArgs(request));
 
       expect(response.status).toBe(401);
+      const json = await response.json();
+      expect(json.error?.code).toBe("UNAUTHORIZED");
+      expect(getQueueSpy).not.toHaveBeenCalled();
+      expect(fakeQueue.enqueue).not.toHaveBeenCalled();
+    });
+
+    it("Malformed webhook payload -> 400, logs error code only, nothing enqueued (R1-F4)", async () => {
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const invalidPayloads = [
+        {}, // missing id
+        { id: { invalid: true } }, // object id
+        { admin_graphql_api_id: "not-a-gid" }, // invalid gid format
+        { id: -5 }, // negative integer
+      ];
+
+      for (const payload of invalidPayloads) {
+        const request = new Request("https://example.com/webhooks/orders/create", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Shopify-Shop-Domain": shopA.domain,
+            "X-Shopify-Topic": "orders/create",
+          },
+          body: JSON.stringify(payload),
+        });
+
+        vi.spyOn(getShopify().authenticate, "webhook").mockResolvedValueOnce({
+          shop: shopA.domain,
+          topic: "orders/create",
+          webhookId: "wh_test",
+          payload,
+          apiVersion: "2026-10",
+          webhookType: "webhooks" as const,
+          session: undefined,
+          admin: undefined,
+        });
+
+        const fakeQueue = createFakeQueue();
+        const queueModule = await import("../../shared/container/queue.server");
+        const getQueueSpy = vi.spyOn(queueModule, "getQueue").mockResolvedValue(fakeQueue as unknown as Queue);
+
+        const response = await ordersCreateAction(createActionArgs(request));
+
+        expect(response.status).toBe(400);
+        const json = await response.json();
+        expect(json.error?.code).toBe("MALFORMED_PAYLOAD");
+        expect(getQueueSpy).not.toHaveBeenCalled();
+        expect(fakeQueue.enqueue).not.toHaveBeenCalled();
+      }
+
+      // Verify that error logs contain ONLY error codes and never payload content (INV-2)
+      for (const call of consoleErrorSpy.mock.calls) {
+        const logged = call.join(" ");
+        expect(logged).toContain("MALFORMED_PAYLOAD");
+        expect(logged).not.toContain("invalid");
+        expect(logged).not.toContain("not-a-gid");
+      }
+
+      consoleErrorSpy.mockRestore();
     });
   });
 
   describe("INV-1: Multi-tenant Shop Scoping", () => {
-    it("Repository functions strictly filter by shopId across two shops", async () => {
+    it("Repository functions strictly filter by shopId across two shops (R1-F7)", async () => {
       const shopifyOrderId = `order_${randomUUID()}`;
-      const bundleA = `bundle_a_${randomUUID()}`;
-      const bundleB = `bundle_b_${randomUUID()}`;
+      const sharedBundleId = `bundle_shared_${randomUUID()}`;
 
       // Get lens for shop B
       const lensB = await testDb.prisma.lens.findFirst({
@@ -733,28 +791,52 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
       });
       expect(lensB).toBeDefined();
 
-      // 1. upsertLabOrder for Shop A
+      // 1. upsertLabOrder for Shop A with shared order and bundle key
       const orderA = await upsertLabOrder(testDb.prisma, shopA.shopId, {
         shopifyOrderId,
         orderName: "#100A",
-        bundleId: bundleA,
+        bundleId: sharedBundleId,
         lensId: lensA.id,
         frameTitle: "Shop A Frame",
       });
 
-      // 2. upsertLabOrder for Shop B
+      // 2. upsertLabOrder for Shop B with identical order and bundle key
       const orderB = await upsertLabOrder(testDb.prisma, shopB.shopId, {
         shopifyOrderId,
         orderName: "#100B",
-        bundleId: bundleB,
+        bundleId: sharedBundleId,
         lensId: lensB!.id,
         frameTitle: "Shop B Frame",
       });
 
       expect(orderA.shopId).toBe(shopA.shopId);
       expect(orderB.shopId).toBe(shopB.shopId);
+      expect(orderA.id).not.toBe(orderB.id);
 
-      // 3. getLabOrderById
+      // Snapshot Shop B's complete row before updating Shop A
+      const shopBRowBefore = await testDb.prisma.labOrder.findUnique({
+        where: { id: orderB.id },
+      });
+      expect(shopBRowBefore).not.toBeNull();
+
+      // 3. Update Shop A with the same order and bundle key
+      const updatedOrderA = await upsertLabOrder(testDb.prisma, shopA.shopId, {
+        shopifyOrderId,
+        orderName: "#100A-RENAMED",
+        bundleId: sharedBundleId,
+        lensId: lensA.id,
+        frameTitle: "Shop A Frame Renamed",
+      });
+      expect(updatedOrderA.id).toBe(orderA.id);
+      expect(updatedOrderA.orderName).toBe("#100A-RENAMED");
+
+      // Assert Shop B's complete row is byte-for-byte unchanged after Shop A update
+      const shopBRowAfter = await testDb.prisma.labOrder.findUnique({
+        where: { id: orderB.id },
+      });
+      expect(shopBRowAfter).toEqual(shopBRowBefore);
+
+      // 4. getLabOrderById
       // Requesting Shop A's order with Shop B's ID returns null
       const crossShopRead = await getLabOrderById(testDb.prisma, shopB.shopId, orderA.id);
       expect(crossShopRead).toBeNull();
@@ -764,28 +846,32 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
       expect(sameShopRead).not.toBeNull();
       expect(sameShopRead?.id).toBe(orderA.id);
 
-      // 4. getLabOrderByShopifyOrderAndBundle
-      const crossBundleRead = await getLabOrderByShopifyOrderAndBundle(
+      // 5. getLabOrderByShopifyOrderAndBundle
+      const shopBRead = await getLabOrderByShopifyOrderAndBundle(
         testDb.prisma,
         shopB.shopId,
         shopifyOrderId,
-        bundleA,
+        sharedBundleId,
       );
-      expect(crossBundleRead).toBeNull();
+      expect(shopBRead).not.toBeNull();
+      expect(shopBRead?.id).toBe(orderB.id);
+      expect(shopBRead?.shopId).toBe(shopB.shopId);
 
-      const sameBundleRead = await getLabOrderByShopifyOrderAndBundle(
+      const shopARead = await getLabOrderByShopifyOrderAndBundle(
         testDb.prisma,
         shopA.shopId,
         shopifyOrderId,
-        bundleA,
+        sharedBundleId,
       );
-      expect(sameBundleRead).not.toBeNull();
-      expect(sameBundleRead?.bundleId).toBe(bundleA);
+      expect(shopARead).not.toBeNull();
+      expect(shopARead?.id).toBe(orderA.id);
+      expect(shopARead?.shopId).toBe(shopA.shopId);
 
-      // 5. listLabOrdersByShop
+      // 6. listLabOrdersByShop
       const shopAList = await listLabOrdersByShop(testDb.prisma, shopA.shopId);
       const shopBList = await listLabOrdersByShop(testDb.prisma, shopB.shopId);
 
+      expect(shopAList.some((o) => o.id === orderA.id)).toBe(true);
       expect(shopAList.some((o) => o.id === orderA.id)).toBe(true);
       expect(shopAList.some((o) => o.id === orderB.id)).toBe(false);
 
@@ -795,10 +881,20 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
   });
 
   describe("INV-2: Prescription Privacy and Encryption", () => {
-    it("Job payload schemas hold IDs only (spec 08 guard)", () => {
+    it("Job payload schemas hold IDs only (spec 08 guard, R1-F2)", async () => {
       // Test intakeJob and dispatchJob schemas
       expect(intakeJob.name).toBe(INTAKE_JOB_NAME);
       expect(dispatchJob.name).toBe(DISPATCH_JOB_NAME);
+
+      // dispatchJob has no production worker handler (R1-F2)
+      expect(dispatchJob.handler).toBeUndefined();
+
+      // Discovering jobs does not register a no-op worker handler for dispatchJob (R1-F2)
+      const { discoverJobs } = await import("../../shared/queue/discovery.server");
+      const discovered = await discoverJobs();
+      const discoveredDispatch = discovered.find((d) => d.name === DISPATCH_JOB_NAME);
+      expect(discoveredDispatch).toBeDefined();
+      expect(discoveredDispatch?.handler).toBeUndefined();
 
       const validIntakePayload = {
         shopId: "shop_123",
@@ -823,18 +919,53 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
       }).toThrowError(JobDefinitionError);
     });
 
-    it("LabOrder table schema in Prisma DMMF contains zero Rx diopter columns", () => {
+    it("LabOrder table schema in Prisma DMMF contains zero Rx diopter columns (R1-F8)", () => {
       const labOrderModel = Prisma.dmmf.datamodel.models.find(
         (m) => m.name === "LabOrder",
       );
       expect(labOrderModel).toBeDefined();
 
-      const fieldNames = labOrderModel!.fields.map((f) => f.name.toLowerCase());
-      const forbiddenRxFields = ["sph", "cyl", "axis", "add", "pd", "prism", "notes"];
+      const fieldNames = labOrderModel!.fields.map((f) => f.name);
 
-      for (const field of forbiddenRxFields) {
-        expect(fieldNames).not.toContain(field);
+      // 1. Assert 'rx' itself is absent
+      expect(fieldNames.map((n) => n.toLowerCase())).not.toContain("rx");
+
+      // 2. Structural regex check: no field matches /rx|sph|cyl|axis|add|pd|prism/i except allowed names
+      const allowedRxMatchingFields = new Set(["prescriptionId", "prescription", "rxOutOfLimits", "addOnIds"]);
+      const rxRegex = /rx|sph|cyl|axis|add|pd|prism/i;
+
+      for (const field of labOrderModel!.fields) {
+        if (rxRegex.test(field.name)) {
+          expect(allowedRxMatchingFields.has(field.name)).toBe(true);
+        }
       }
+
+      // 3. Exact allowed field set: any new column (such as odSph or prescriptionNotes) fails
+      const allowedLabOrderFields = [
+        "id",
+        "shopId",
+        "shop",
+        "shopifyOrderId",
+        "orderName",
+        "bundleId",
+        "prescriptionId",
+        "prescription",
+        "lensId",
+        "lens",
+        "optionValueIds",
+        "addOnIds",
+        "frameTitle",
+        "frameSku",
+        "rxOutOfLimits",
+        "status",
+        "attempts",
+        "lastErrorCode",
+        "ticketKeys",
+        "providerId",
+        "sentAt",
+        "createdAt",
+      ];
+      expect([...fieldNames].sort()).toEqual([...allowedLabOrderFields].sort());
     });
 
     it("Decrypted Rx is never logged during intake processing", async () => {
@@ -877,7 +1008,6 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
             {
               id: `gid://shopify/LineItem/${randomUUID()}`,
               title: "Lens",
-              parentLineItem: { id: frameLineId },
               customAttributes: Object.entries(
                 buildBundleLineProperties({
                   role: "lens",
@@ -1039,6 +1169,390 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
       expect(extractAttributesRecord(itemWithPropertiesObj)).toEqual({
         _bundle_id: "b2",
       });
+    });
+  });
+
+  describe("Review R1 Findings Verification", () => {
+    it("R1-F1: ORDER_INTAKE_QUERY conforms to Shopify 2026-10 LineItem schema and contains no parentLineItem", () => {
+      // 1. Assert parentLineItem is absent from the query string
+      expect(ORDER_INTAKE_QUERY).not.toContain("parentLineItem");
+
+      // Canonical LineItem fields from Shopify 2026-10 Admin GraphQL schema
+      const shopify2026_10_LineItemFields = new Set([
+        "contract",
+        "customAttributes",
+        "discountAllocations",
+        "discountedTotalSet",
+        "discountedUnitPriceAfterAllDiscountsSet",
+        "discountedUnitPriceSet",
+        "duties",
+        "id",
+        "image",
+        "isGiftCard",
+        "lineItemGroup",
+        "name",
+        "nonFulfillableQuantity",
+        "originalTotalSet",
+        "originalUnitPriceSet",
+        "product",
+        "quantity",
+        "refundableQuantity",
+        "requiresShipping",
+        "restockable",
+        "sellingPlan",
+        "sku",
+        "staffMember",
+        "taxLines",
+        "taxable",
+        "title",
+        "totalDiscountSet",
+        "unfulfilledDiscountedTotalSet",
+        "unfulfilledOriginalTotalSet",
+        "unfulfilledQuantity",
+        "variant",
+        "variantTitle",
+        "vendor",
+      ]);
+
+      // Assert parentLineItem does not exist in Shopify 2026-10 schema
+      expect(shopify2026_10_LineItemFields.has("parentLineItem")).toBe(false);
+
+      // Direct fields queried on LineItem under nodes
+      const queriedDirectFields = ["id", "title", "sku", "customAttributes"];
+      for (const field of queriedDirectFields) {
+        expect(shopify2026_10_LineItemFields.has(field)).toBe(true);
+      }
+    });
+
+    it("R1-F3: Duplicate intake against an existing SENT row preserves status and does not re-dispatch", async () => {
+      const cipher = getCipher();
+      const prescriptionId = randomUUID();
+      const validRx = {
+        od: { sph: -200, cyl: 0, axis: 180 },
+        os: { sph: -200, cyl: 0, axis: 180 },
+        pd: { single: 630 },
+      };
+      await testDb.prisma.prescription.create({
+        data: {
+          id: prescriptionId,
+          shopId: shopA.shopId,
+          rxType: "SINGLE_VISION",
+          source: "MANUAL",
+          cipher: cipher.encrypt(validRx, `${shopA.shopId}:${prescriptionId}`),
+          uploadKeys: [],
+        },
+      });
+
+      const orderId = `1003_sent_${randomUUID()}`;
+      const bundleId = `bundle_${randomUUID()}`;
+      const frameLineId = `gid://shopify/LineItem/${randomUUID()}`;
+
+      // Create an existing LabOrder in SENT status with workflow data
+      const existing = await testDb.prisma.labOrder.create({
+        data: {
+          shopId: shopA.shopId,
+          shopifyOrderId: orderId,
+          bundleId,
+          orderName: `#${orderId}`,
+          lensId: lensA.id,
+          frameTitle: "Classic Frame",
+          status: "SENT",
+          lastErrorCode: null,
+          attempts: 1,
+          ticketKeys: ["shops/test/tickets/order_1.pdf"],
+          sentAt: new Date(),
+        },
+      });
+
+      const frameProps = buildBundleLineProperties({
+        role: "frame",
+        bundleId,
+        storeRxInOrder: false,
+      });
+
+      const lensProps = buildBundleLineProperties({
+        role: "lens",
+        bundleId,
+        itemId: lensA.id,
+        rxRef: prescriptionId,
+        storeRxInOrder: false,
+      });
+
+      const fakeOrder = {
+        id: `gid://shopify/Order/${orderId}`,
+        name: `#${orderId}`,
+        lineItems: {
+          nodes: [
+            {
+              id: frameLineId,
+              title: "Classic Frame",
+              customAttributes: Object.entries(frameProps).map(([key, value]) => ({ key, value })),
+            },
+            {
+              id: `gid://shopify/LineItem/${randomUUID()}`,
+              title: "1.56 Standard Lens",
+              customAttributes: Object.entries(lensProps).map(([key, value]) => ({ key, value })),
+            },
+          ],
+        },
+      };
+
+      const fakeQueue = createFakeQueue();
+      const fakeAdmin = {
+        graphql: vi.fn(async () => ({ data: { order: fakeOrder } })),
+      };
+
+      const service = createIntakeService({
+        db: testDb.prisma,
+        cipher,
+        queue: fakeQueue as unknown as Queue,
+        adminClient: fakeAdmin,
+      });
+
+      const result = await service.processOrderIntake(shopA.shopId, orderId);
+
+      expect(result.ok).toBe(true);
+      expect(result.labOrders).toHaveLength(1);
+      expect(result.labOrders[0].id).toBe(existing.id);
+      expect(result.labOrders[0].status).toBe("SENT");
+
+      // Verify row in DB kept its status and workflow fields
+      const rowInDb = await testDb.prisma.labOrder.findUnique({
+        where: { id: existing.id },
+      });
+      expect(rowInDb?.status).toBe("SENT");
+      expect(rowInDb?.attempts).toBe(1);
+      expect(rowInDb?.ticketKeys).toEqual(["shops/test/tickets/order_1.pdf"]);
+
+      // Verify NO dispatch job was enqueued for the already SENT row
+      expect(fakeQueue.enqueue).not.toHaveBeenCalled();
+    });
+
+    it("R1-F3: Direct repository upsertLabOrder on existing SENT/FAILED row preserves status and lastErrorCode", async () => {
+      const orderId = `repo_test_${randomUUID()}`;
+      const bundleId = `bundle_${randomUUID()}`;
+
+      // 1. Initial insert with FAILED status and error code
+      const initial = await upsertLabOrder(testDb.prisma, shopA.shopId, {
+        shopifyOrderId: orderId,
+        orderName: "#1001",
+        bundleId,
+        lensId: lensA.id,
+        frameTitle: "Frame 1",
+        status: "FAILED",
+        lastErrorCode: "RX_NOT_FOUND",
+      });
+      expect(initial.status).toBe("FAILED");
+      expect(initial.lastErrorCode).toBe("RX_NOT_FOUND");
+
+      // 2. Conflict upsert trying to set PENDING
+      const duplicate = await upsertLabOrder(testDb.prisma, shopA.shopId, {
+        shopifyOrderId: orderId,
+        orderName: "#1001-Duplicate",
+        bundleId,
+        lensId: lensA.id,
+        frameTitle: "Frame 1",
+        status: "PENDING",
+        lastErrorCode: null,
+      });
+
+      expect(duplicate.id).toBe(initial.id);
+      expect(duplicate.status).toBe("FAILED");
+      expect(duplicate.lastErrorCode).toBe("RX_NOT_FOUND");
+    });
+
+    it("R1-F5: Intake handles exactly 250 lines in a single page", async () => {
+      const cipher = getCipher();
+      const prescriptionId = randomUUID();
+      const validRx = {
+        od: { sph: -200, cyl: 0, axis: 180 },
+        os: { sph: -200, cyl: 0, axis: 180 },
+        pd: { single: 630 },
+      };
+      await testDb.prisma.prescription.create({
+        data: {
+          id: prescriptionId,
+          shopId: shopA.shopId,
+          rxType: "SINGLE_VISION",
+          source: "MANUAL",
+          cipher: cipher.encrypt(validRx, `${shopA.shopId}:${prescriptionId}`),
+          uploadKeys: [],
+        },
+      });
+
+      const orderId = `page250_${randomUUID()}`;
+      const bundleId = `bundle_${randomUUID()}`;
+      const frameLineId = `gid://shopify/LineItem/${randomUUID()}`;
+
+      const frameProps = buildBundleLineProperties({ role: "frame", bundleId, storeRxInOrder: false });
+      const lensProps = buildBundleLineProperties({
+        role: "lens",
+        bundleId,
+        itemId: lensA.id,
+        rxRef: prescriptionId,
+        storeRxInOrder: false,
+      });
+
+      // 248 dummy items + 1 frame + 1 lens = 250 items
+      const nodes = [
+        {
+          id: frameLineId,
+          title: "Frame Line",
+          customAttributes: Object.entries(frameProps).map(([key, value]) => ({ key, value })),
+        },
+        {
+          id: `gid://shopify/LineItem/${randomUUID()}`,
+          title: "Lens Line",
+          customAttributes: Object.entries(lensProps).map(([key, value]) => ({ key, value })),
+        },
+      ];
+      for (let i = 0; i < 248; i++) {
+        nodes.push({
+          id: `gid://shopify/LineItem/dummy_${i}`,
+          title: `Dummy Item ${i}`,
+          customAttributes: [],
+        });
+      }
+
+      const fakeAdmin = {
+        graphql: vi.fn(async () => ({
+          data: {
+            order: {
+              id: `gid://shopify/Order/${orderId}`,
+              name: `#${orderId}`,
+              lineItems: {
+                pageInfo: { hasNextPage: false, endCursor: "cursor_page1" },
+                nodes,
+              },
+            },
+          },
+        })),
+      };
+
+      const fakeQueue = createFakeQueue();
+      const service = createIntakeService({
+        db: testDb.prisma,
+        cipher,
+        queue: fakeQueue as unknown as Queue,
+        adminClient: fakeAdmin,
+      });
+
+      const result = await service.processOrderIntake(shopA.shopId, orderId);
+
+      expect(result.ok).toBe(true);
+      expect(result.labOrders).toHaveLength(1);
+      expect(fakeAdmin.graphql).toHaveBeenCalledTimes(1);
+    });
+
+    it("R1-F5: Intake paginates lineItems across page boundary for 251 lines", async () => {
+      const cipher = getCipher();
+      const prescriptionId = randomUUID();
+      const validRx = {
+        od: { sph: -200, cyl: 0, axis: 180 },
+        os: { sph: -200, cyl: 0, axis: 180 },
+        pd: { single: 630 },
+      };
+      await testDb.prisma.prescription.create({
+        data: {
+          id: prescriptionId,
+          shopId: shopA.shopId,
+          rxType: "SINGLE_VISION",
+          source: "MANUAL",
+          cipher: cipher.encrypt(validRx, `${shopA.shopId}:${prescriptionId}`),
+          uploadKeys: [],
+        },
+      });
+
+      const orderId = `page251_${randomUUID()}`;
+      const bundleId = `bundle_${randomUUID()}`;
+      const frameLineId = `gid://shopify/LineItem/${randomUUID()}`;
+
+      const frameProps = buildBundleLineProperties({ role: "frame", bundleId, storeRxInOrder: false });
+      const lensProps = buildBundleLineProperties({
+        role: "lens",
+        bundleId,
+        itemId: lensA.id,
+        rxRef: prescriptionId,
+        storeRxInOrder: false,
+      });
+
+      // Page 1 has 250 lines (frame line + 249 dummy items)
+      const page1Nodes = [
+        {
+          id: frameLineId,
+          title: "Frame Line",
+          customAttributes: Object.entries(frameProps).map(([key, value]) => ({ key, value })),
+        },
+      ];
+      for (let i = 0; i < 249; i++) {
+        page1Nodes.push({
+          id: `gid://shopify/LineItem/p1_dummy_${i}`,
+          title: `Dummy ${i}`,
+          customAttributes: [],
+        });
+      }
+
+      // Page 2 has the 251st line (lens line belonging to the bundle on page 1)
+      const page2Nodes = [
+        {
+          id: `gid://shopify/LineItem/${randomUUID()}`,
+          title: "Lens Line Page 2",
+          customAttributes: Object.entries(lensProps).map(([key, value]) => ({ key, value })),
+        },
+      ];
+
+      const fakeAdmin = {
+        graphql: vi.fn(async (_query: string, options?: { variables?: Record<string, unknown> }) => {
+          if (!options?.variables?.cursor) {
+            return {
+              data: {
+                order: {
+                  id: `gid://shopify/Order/${orderId}`,
+                  name: `#${orderId}`,
+                  lineItems: {
+                    pageInfo: { hasNextPage: true, endCursor: "cursor_p1_end" },
+                    nodes: page1Nodes,
+                  },
+                },
+              },
+            };
+          }
+          if (options.variables.cursor === "cursor_p1_end") {
+            return {
+              data: {
+                order: {
+                  id: `gid://shopify/Order/${orderId}`,
+                  name: `#${orderId}`,
+                  lineItems: {
+                    pageInfo: { hasNextPage: false, endCursor: "cursor_p2_end" },
+                    nodes: page2Nodes,
+                  },
+                },
+              },
+            };
+          }
+          throw new Error(`Unexpected cursor ${String(options?.variables?.cursor)}`);
+        }),
+      };
+
+      const fakeQueue = createFakeQueue();
+      const service = createIntakeService({
+        db: testDb.prisma,
+        cipher,
+        queue: fakeQueue as unknown as Queue,
+        adminClient: fakeAdmin,
+      });
+
+      const result = await service.processOrderIntake(shopA.shopId, orderId);
+
+      expect(result.ok).toBe(true);
+      expect(result.labOrders).toHaveLength(1);
+      expect(fakeAdmin.graphql).toHaveBeenCalledTimes(2);
+      expect(fakeAdmin.graphql).toHaveBeenNthCalledWith(
+        2,
+        ORDER_INTAKE_QUERY,
+        { variables: { id: `gid://shopify/Order/${orderId}`, cursor: "cursor_p1_end" } },
+      );
     });
   });
 });

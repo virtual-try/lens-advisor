@@ -27,7 +27,7 @@ export interface JobDefinition<
   readonly __jobDefinition: true;
   readonly name: string;
   readonly schema: TSchema;
-  readonly handler: JobHandler<TPayload>;
+  readonly handler?: JobHandler<TPayload>;
   readonly retry: Readonly<Required<Pick<RetryOptions, "retryLimit" | "retryDelay" | "retryBackoff">>>;
   readonly allowStringFields: readonly string[];
 }
@@ -37,7 +37,7 @@ export type AnyJobDefinition = JobDefinition<z.ZodTypeAny, never>;
 export interface DefineJobOptions<TSchema extends z.ZodTypeAny> {
   name: string;
   schema: TSchema;
-  handler: JobHandler<z.infer<TSchema>>;
+  handler?: JobHandler<z.infer<TSchema>>;
   retry?: RetryOptions;
   /**
    * Field names that may hold strings or numbers even though they do not end in Id/Ids/Key/Keys.
@@ -363,6 +363,10 @@ export function registerJob(definition: AnyJobDefinition): void {
   }
   const existing = registry.get(definition.name);
   if (existing && existing !== definition) {
+    if (!existing.handler && definition.handler) {
+      registry.set(definition.name, definition);
+      return;
+    }
     throw new JobDefinitionError(`Duplicate job definition for "${definition.name}"`);
   }
   registry.set(definition.name, definition);
