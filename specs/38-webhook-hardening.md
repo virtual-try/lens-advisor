@@ -82,13 +82,13 @@ Real, used now: `app/routes/webhooks.app.scopes_update.tsx`, `app/routes/webhook
     - Removed direct `import db from "../db.server"` and Prisma calls; delegated session scope updates to `updateSessionScope`.
     - Added 400 Bad Request response on invalid payloads without executing database writes.
   - Refactored `app/routes/webhooks.products.update.tsx`:
-    - Defined `productUpdateWebhookPayloadSchema` validating `id: z.union([z.number().int().positive(), z.string().min(1)])`.
+    - Defined `productUpdateWebhookPayloadSchema` validating `id: z.union([z.number().int().positive(), z.string().regex(PRODUCT_ID_REGEX)])` (digits-only id or `gid://shopify/Product/<digits>`; R2-F1).
     - Removed raw `console.log(JSON.stringify(payload, null, 2))`; replaced with safe identifier logging (`shop`, `topic`, `payload.id`).
     - Added 400 Bad Request response on invalid payloads.
   - Added unit test suites:
     - `app/shared/session/session.server.test.ts`: DB-backed repository and service tests proving persistence, array scope joining, mandatory shop enforcement, and two-shop isolation (INV-1).
     - `app/routes/webhooks.app.scopes_update.test.ts` (15 tests): schema validation, 401 on auth failure, 400 on malformed payloads without writes, 200 on success, and static check asserting 0 references to `db.server`.
-    - `app/routes/webhooks.products.update.test.ts` (16 tests): schema validation, 401 on auth failure, 400 on malformed payloads, safe identifier logging, and anti-dumping static check.
+    - `app/routes/webhooks.products.update.test.ts` (19 tests): schema validation, 401 on auth failure, 400 on malformed payloads, safe identifier logging, and anti-dumping static check.
   - Review fix round R1:
     - R1-F1: Made `shop` a required parameter on repository and service scope update signatures; queries strictly filter by `{ id, shop }` (INV-1). Added two-shop isolation and missing-shop tests across repository and service layers.
     - R1-F2: Removed unused `getSession`/`findSessionById` read path and tests to avoid exposing full Prisma Session rows.
@@ -99,4 +99,4 @@ Real, used now: `app/routes/webhooks.app.scopes_update.tsx`, `app/routes/webhook
     - `pnpm test`: 75 test files passed, 1345 tests passed, 0 failures.
     - `pnpm test:e2e --project=server`: 30 passed, 0 failures.
     - `pnpm build`: passed.
-- **2026-11-08** — Evidence (orchestro spec verify, tree e68b3e00): install pass · typecheck pass · lint pass · build pass · test pass 1351/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree e4df5b0c): install pass · typecheck pass · lint pass · build pass · test pass 1351/0/0
