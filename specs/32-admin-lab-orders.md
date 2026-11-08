@@ -1,6 +1,6 @@
 # Spec 32 — Admin: lab orders list, resend and ticket download
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 06, Spec 09, Spec 30
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —
@@ -117,4 +117,4 @@ Real, used now: 06, 09, 30. Tests: `testConfig()` routes on the real test DB, in
   - `pnpm lint`: exit 0 (0 errors, 0 warnings).
   - `pnpm build`: exit 0.
   - `git diff --check`: clean.
-- **2026-11-08** — Evidence (orchestro spec verify, tree b6eae37d): install pass · typecheck pass · lint pass · build pass · test pass 1163/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree b11c6feb): install pass · typecheck pass · lint pass · build pass · test pass 1277/0/0

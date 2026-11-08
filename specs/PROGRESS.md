@@ -38,7 +38,7 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | 29 | [Configurator step 7: review and add to cart (nested lines)](./29-step-review-add-to-cart.md) | Not started | 13, 16, 28 | Heavy | — |  |
 | 30 | [Lab order dispatch job (ticket → S3 → email)](./30-lab-order-dispatch.md) | Done | 05, 06, 07, 14, 15, 23, 24 | Heavy | — | PR #61 |
 | 31 | [Admin home and setup checklist](./31-admin-home-setup.md) | Done | 09, 14, 15 | Light | — | PR #52 |
-| 32 | [Admin: lab orders list, resend and ticket download](./32-admin-lab-orders.md) | Not started | 06, 09, 30 | Standard | — |  |
+| 32 | [Admin: lab orders list, resend and ticket download](./32-admin-lab-orders.md) | Done | 06, 09, 30 | Standard | — | PR #70 |
 | 33 | [End-to-end suite](./33-e2e-suite.md) | Not started | 18, 19, 20, 21, 22, 25, 26, 27, 29, 31, 32 | Heavy | — | Only spec with e2e |
 | 34 | [Verification pass](./34-verification-pass.md) | Not started | 33 | Heavy | — | Final gate |
 
@@ -92,3 +92,4 @@ Not started · In progress · Blocked · Done
 - **2026-11-08** — Spec 28 merged (PR #65).
 - **2026-11-08** — Spec 27 merged (PR #66).
 - **2026-11-08** — Spec 26 merged (PR #67).
+- **2026-11-08** — Spec 32 merged (PR #70).
