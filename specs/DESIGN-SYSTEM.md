@@ -84,6 +84,7 @@ is applied as an inline custom property on its swatch chip (`--la-swatch-color`)
 | `--la-shadow-sheet` | `0 24px 64px rgb(10 10 9 / 0.22), 0 2px 8px rgb(10 10 9 / 0.08)` |
 | `--la-shadow-footer` | `0 -1px 0 var(--la-hairline)` |
 | `--la-z-overlay` | `2147483000` |
+| `--la-z-footer` | `10` |
 
 ## Layout conventions
 
@@ -92,6 +93,7 @@ is applied as an inline custom property on its swatch chip (`--la-swatch-color`)
 | `--la-modal-max` | `720px` | Desktop modal width (> 640px) |
 | `--la-drawer-max` | `420px` | Cart drawer reference width |
 | `--la-sheet-gap` | `8px` | Space above the mobile bottom sheet |
+| `--la-sheet-max-height` | `90vh` | Maximum height of the sheet dialog |
 | `--la-label-col` | `168px` | Rx grid label column, desktop |
 | `--la-target` | `44px` | Minimum touch target |
 | `--la-segment-h` | `44px` | Segmented control height |
