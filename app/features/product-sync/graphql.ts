@@ -90,6 +90,7 @@ export const PRODUCT_UPDATE_MUTATION = `#graphql
     productUpdate(product: $product) {
       product {
         id
+        title
         status
       }
       userErrors {

@@ -38,7 +38,14 @@ interface ProductVariantsBulkUpdateVariables {
 interface ProductUpdateVariables {
   product?: {
     id?: string;
+    title?: string;
     status?: string;
+    metafields?: Array<{
+      namespace: string;
+      key: string;
+      value: string;
+      type: string;
+    }>;
   };
 }
 
@@ -48,6 +55,8 @@ interface FakeAdminOptions {
   variantBulkUpdateUserErrors?: Array<{ field?: string[]; message: string }>;
   publishUserErrors?: Array<{ field?: string[]; message: string }>;
   productUpdateUserErrors?: Array<{ field?: string[]; message: string }>;
+  productDeleteUserErrors?: Array<{ field?: string[]; message: string }>;
+  productDeleteDeletedId?: string | null;
   topLevelErrors?: Array<{ message: string }>;
   publicationsPages?: Array<{
     nodes: Array<{ id: string; name: string }>;
@@ -288,6 +297,7 @@ function createFakeAdminClient(options: FakeAdminOptions = {}) {
             productUpdate: {
               product: {
                 id: vars.product?.id ?? "gid://shopify/Product/1",
+                title: vars.product?.title ?? "Test Title",
                 status: vars.product?.status ?? "DRAFT",
               },
               userErrors: [],
@@ -300,12 +310,31 @@ function createFakeAdminClient(options: FakeAdminOptions = {}) {
 
     // 8. Product delete (compensation)
     if (query.includes("ProductDelete")) {
+      if (options.productDeleteUserErrors && options.productDeleteUserErrors.length > 0) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              productDelete: {
+                deletedProductId: null,
+                userErrors: options.productDeleteUserErrors,
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
       const vars = (init?.variables ?? {}) as { input?: { id?: string } };
+      const deletedProductId =
+        options.productDeleteDeletedId !== undefined
+          ? options.productDeleteDeletedId
+          : vars.input?.id ?? "gid://shopify/Product/1";
+
       return new Response(
         JSON.stringify({
           data: {
             productDelete: {
-              deletedProductId: vars.input?.id ?? "gid://shopify/Product/1",
+              deletedProductId,
               userErrors: [],
             },
           },
@@ -1342,6 +1371,272 @@ describe("Shopify Product Sync (DB-backed)", { timeout: 60_000 }, () => {
       expect(run2.variantId).toBe(run1.variantId);
       expect(run3.productId).toBe(run1.productId);
       expect(run3.variantId).toBe(run1.variantId);
+    });
+
+    it("R2-F1: publish fails once after ids are persisted, retry publishes and reports success", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const lens = await service.createLens(shopA, {
+        groupId: groups[0].id,
+        name: "Publish Fail Once Lens",
+        priceMinor: 5000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -100,
+        sphMax: 100,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "R2F1-1",
+      });
+
+      let publishAttempts = 0;
+      const fake = createFakeAdminClient({
+        shopCurrency: "USD",
+        customHandler: (query) => {
+          if (query.includes("PublishablePublish")) {
+            publishAttempts++;
+            if (publishAttempts === 1) {
+              return new Response(
+                JSON.stringify({
+                  data: {
+                    publishablePublish: {
+                      publishable: null,
+                      userErrors: [{ field: ["publicationId"], message: "Storefront temporarily unavailable" }],
+                    },
+                  },
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } },
+              );
+            }
+          }
+          return undefined;
+        },
+      });
+
+      // Call 1: fails at publishablePublish after productCreate and markSynced succeeded
+      await expect(
+        syncItem(fake.admin, shopA, "lens", lens.id, {
+          catalogService: service,
+        }),
+      ).rejects.toThrow(new SyncError("Storefront temporarily unavailable"));
+
+      // Exactly 1 productCreate call so far
+      expect(fake.countCalls("ProductCreate")).toBe(1);
+      // Publish was attempted once
+      expect(fake.countCalls("PublishablePublish")).toBe(1);
+
+      // Verify IDs were already persisted right after productCreate
+      const intermediate = await service.getLens(shopA, lens.id);
+      expect(intermediate.shopifyProductId).toBeTruthy();
+      expect(intermediate.shopifyVariantId).toBeTruthy();
+
+      // Call 2: retry on the same item succeeds
+      const retryRes = await syncItem(fake.admin, shopA, "lens", lens.id, {
+        catalogService: service,
+      });
+
+      expect(retryRes.ok).toBe(true);
+      expect(retryRes.updated).toBe(true);
+      // ProductCreate was NOT called again (still 1 overall)
+      expect(fake.countCalls("ProductCreate")).toBe(1);
+      // ProductUpdate was called to ensure title, ACTIVE status, metafields
+      expect(fake.countCalls("ProductUpdate")).toBe(1);
+      const updateCall = fake.findCall("ProductUpdate");
+      expect(updateCall?.variables).toEqual({
+        product: {
+          id: intermediate.shopifyProductId,
+          title: "Lens: Publish Fail Once Lens",
+          status: "ACTIVE",
+          metafields: [
+            {
+              namespace: "seo",
+              key: "hidden",
+              value: "1",
+              type: "integer",
+            },
+          ],
+        },
+      });
+      // PublishablePublish was called again (now 2 calls overall) and succeeded
+      expect(fake.countCalls("PublishablePublish")).toBe(2);
+      expect(retryRes.productId).toBe(intermediate.shopifyProductId);
+      expect(retryRes.variantId).toBe(intermediate.shopifyVariantId);
+    });
+
+    it("R2-F1: renamed lens updates the product title, ensures ACTIVE status, and publishes", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const lens = await service.createLens(shopA, {
+        groupId: groups[0].id,
+        name: "Original Name Lens",
+        priceMinor: 6000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -100,
+        sphMax: 100,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "R2F1-2",
+      });
+
+      const fake1 = createFakeAdminClient({ shopCurrency: "USD" });
+      const initialSync = await syncItem(fake1.admin, shopA, "lens", lens.id, {
+        catalogService: service,
+      });
+      expect(initialSync.ok).toBe(true);
+      expect(initialSync.created).toBe(true);
+
+      // Rename lens in catalog DB
+      await service.updateLens(shopA, lens.id, {
+        name: "Renamed Ultra Clear Lens",
+      });
+
+      // Sync again
+      const fake2 = createFakeAdminClient({ shopCurrency: "USD" });
+      const secondSync = await syncItem(fake2.admin, shopA, "lens", lens.id, {
+        catalogService: service,
+      });
+
+      expect(secondSync.ok).toBe(true);
+      expect(secondSync.updated).toBe(true);
+      expect(fake2.countCalls("ProductCreate")).toBe(0);
+
+      // ProductUpdate called with new title and ACTIVE status
+      expect(fake2.countCalls("ProductUpdate")).toBe(1);
+      const updateCall = fake2.findCall("ProductUpdate");
+      expect(updateCall?.variables).toEqual({
+        product: {
+          id: initialSync.productId,
+          title: "Lens: Renamed Ultra Clear Lens",
+          status: "ACTIVE",
+          metafields: [
+            {
+              namespace: "seo",
+              key: "hidden",
+              value: "1",
+              type: "integer",
+            },
+          ],
+        },
+      });
+
+      // Variant price updated and published
+      expect(fake2.countCalls("ProductVariantsBulkUpdate")).toBe(1);
+      expect(fake2.countCalls("PublishablePublish")).toBe(1);
+    });
+
+    it("R2-F2: compensation deletion user errors throws SyncError with code ORPHAN_PRODUCT and logs", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const lens = await service.createLens(shopA, {
+        groupId: groups[0].id,
+        name: "Delete User Error Lens",
+        priceMinor: 4500,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -100,
+        sphMax: 100,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "R2F2-1",
+      });
+
+      const fake = createFakeAdminClient({
+        shopCurrency: "USD",
+        productDeleteUserErrors: [{ field: ["id"], message: "Product is locked and cannot be deleted" }],
+      });
+
+      const markSyncedSpy = vi
+        .spyOn(service, "markSynced")
+        .mockRejectedValueOnce(new Error("DB failure during markSynced"));
+
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      try {
+        let thrownError: unknown;
+        try {
+          await syncItem(fake.admin, shopA, "lens", lens.id, {
+            catalogService: service,
+          });
+        } catch (err) {
+          thrownError = err;
+        }
+
+        expect(thrownError).toBeInstanceOf(SyncError);
+        const syncErr = thrownError as SyncError;
+        expect(syncErr.code).toBe("ORPHAN_PRODUCT");
+        expect(syncErr.status).toBe(400);
+
+        // ProductCreate was called
+        expect(fake.countCalls("ProductCreate")).toBe(1);
+        // ProductDelete was attempted
+        expect(fake.countCalls("ProductDelete")).toBe(1);
+
+        // Logged only product GID and catalog id
+        expect(consoleErrorSpy).toHaveBeenCalled();
+        const loggedMsg = consoleErrorSpy.mock.calls[0].join(" ");
+        expect(loggedMsg).toContain("gid://shopify/Product/1");
+        expect(loggedMsg).toContain(lens.id);
+
+        // Catalog row was NOT marked synced
+        const check = await service.getLens(shopA, lens.id);
+        expect(check.shopifyProductId).toBeNull();
+        expect(check.shopifyVariantId).toBeNull();
+      } finally {
+        markSyncedSpy.mockRestore();
+        consoleErrorSpy.mockRestore();
+      }
+    });
+
+    it("R2-F2: compensation with missing/null deletedProductId throws SyncError with code ORPHAN_PRODUCT", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const lens = await service.createLens(shopA, {
+        groupId: groups[0].id,
+        name: "Missing Deleted Id Lens",
+        priceMinor: 4500,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -100,
+        sphMax: 100,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "R2F2-2",
+      });
+
+      const fake = createFakeAdminClient({
+        shopCurrency: "USD",
+        productDeleteDeletedId: null,
+      });
+
+      const markSyncedSpy = vi
+        .spyOn(service, "markSynced")
+        .mockRejectedValueOnce(new Error("DB failure during markSynced"));
+
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      try {
+        let thrownError: unknown;
+        try {
+          await syncItem(fake.admin, shopA, "lens", lens.id, {
+            catalogService: service,
+          });
+        } catch (err) {
+          thrownError = err;
+        }
+
+        expect(thrownError).toBeInstanceOf(SyncError);
+        const syncErr = thrownError as SyncError;
+        expect(syncErr.code).toBe("ORPHAN_PRODUCT");
+        expect(syncErr.status).toBe(400);
+
+        expect(fake.countCalls("ProductCreate")).toBe(1);
+        expect(fake.countCalls("ProductDelete")).toBe(1);
+
+        expect(consoleErrorSpy).toHaveBeenCalled();
+        const loggedMsg = consoleErrorSpy.mock.calls[0].join(" ");
+        expect(loggedMsg).toContain("gid://shopify/Product/1");
+        expect(loggedMsg).toContain(lens.id);
+      } finally {
+        markSyncedSpy.mockRestore();
+        consoleErrorSpy.mockRestore();
+      }
     });
   });
 });

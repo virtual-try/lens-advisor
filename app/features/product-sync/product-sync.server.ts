@@ -159,7 +159,10 @@ export async function syncItem(
   // 2. Convert minor units to decimal string via integer split (INV-4)
   const decimalPrice = toShopifyDecimal(itemPriceMinor, itemCurrency);
 
-  // 3. Idempotent check: look up by stored id first, never recreate on retry
+  // 3. Resolve Online Store publication (paginate until found; if absent, throw SyncError and do not markSynced)
+  const publicationId = await findOnlineStorePublicationId(admin);
+
+  // 4. Idempotent check: look up by stored id first, never recreate on retry
   if (storedVariantId) {
     let productId = storedProductId;
     if (!productId) {
@@ -173,6 +176,32 @@ export async function syncItem(
       productId = variantData.productVariant.product.id;
     }
 
+    // Converge to the same end state as a fresh sync:
+    // Update product title, ensure ACTIVE status, set metafields
+    const productUpdateData = await executeGraphQL<{
+      productUpdate: {
+        product?: { id: string; title?: string; status: string };
+        userErrors?: Array<{ field?: string[]; message: string }>;
+      };
+    }>(admin, PRODUCT_UPDATE_MUTATION, {
+      product: {
+        id: productId,
+        title: itemTitle,
+        status: "ACTIVE",
+        metafields: [
+          {
+            namespace: "seo",
+            key: "hidden",
+            value: "1",
+            type: "integer",
+          },
+        ],
+      },
+    });
+
+    checkUserErrors(productUpdateData.productUpdate?.userErrors);
+
+    // Update variant price and inventory tracking
     const updateData = await executeGraphQL<{
       productVariantsBulkUpdate: {
         productVariants?: Array<{ id: string; price: string }>;
@@ -193,6 +222,22 @@ export async function syncItem(
 
     checkUserErrors(updateData.productVariantsBulkUpdate?.userErrors);
 
+    // Publish to Online Store channel
+    const publishData = await executeGraphQL<{
+      publishablePublish: {
+        userErrors?: Array<{ field?: string[]; message: string }>;
+      };
+    }>(admin, PUBLISHABLE_PUBLISH_MUTATION, {
+      id: productId,
+      input: [
+        {
+          publicationId,
+        },
+      ],
+    });
+
+    checkUserErrors(publishData.publishablePublish?.userErrors);
+
     await service.markSynced(shopId, entity, id, storedVariantId, productId);
 
     return {
@@ -202,9 +247,6 @@ export async function syncItem(
       variantId: storedVariantId,
     };
   }
-
-  // 4. Resolve Online Store publication (paginate until found; if absent, throw SyncError and do not markSynced)
-  const publicationId = await findOnlineStorePublicationId(admin);
 
   // 5. Create new product
   const createData = await executeGraphQL<{
@@ -258,13 +300,37 @@ export async function syncItem(
   try {
     await service.markSynced(shopId, entity, id, variantId, productId);
   } catch (persistError) {
+    let deletionConfirmed = false;
     try {
-      await executeGraphQL(admin, PRODUCT_DELETE_MUTATION, {
+      const deleteData = await executeGraphQL<{
+        productDelete?: {
+          deletedProductId?: string | null;
+          userErrors?: Array<{ field?: string[]; message: string }>;
+        };
+      }>(admin, PRODUCT_DELETE_MUTATION, {
         input: { id: productId },
       });
+
+      const userErrors = deleteData.productDelete?.userErrors;
+      const deletedProductId = deleteData.productDelete?.deletedProductId;
+
+      if ((!userErrors || userErrors.length === 0) && deletedProductId === productId) {
+        deletionConfirmed = true;
+      }
     } catch {
-      // Ignore compensation failure so primary error is thrown
+      deletionConfirmed = false;
     }
+
+    if (!deletionConfirmed) {
+      console.error(
+        `Orphan Shopify product: ${productId} for catalog item: ${id}`,
+      );
+      throw new SyncError(
+        `Failed to persist synced product and compensation failed; orphan Shopify product: ${productId}`,
+        "ORPHAN_PRODUCT",
+      );
+    }
+
     if (persistError instanceof SyncError) {
       throw persistError;
     }
