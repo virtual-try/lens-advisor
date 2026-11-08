@@ -96,4 +96,14 @@ Real, used now: 15, 09. Tests: `testConfig()` loader/action calls. Stubbed: none
   - `pnpm build` → exit 0
   - `rg 'style=|className=|<style' app/routes/app.settings.tsx` → exit 1 (0 matches, INV-7 clean)
   - `git diff --check` → exit 0 (clean, no trailing whitespace)
-- **2026-11-08** — Evidence (orchestro spec verify, tree a471b7d6): install pass · typecheck pass · lint pass · build pass · test pass 353/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 479ee671): install pass · typecheck pass · lint pass · build pass · test pass 361/0/0
+- **2026-11-08** — Fix round R1 accepted findings addressed by coder agy-2:
+  - R1-F1 [BLOCKER]: Driven privacy confirmation flow through the toggle (user event opens modal, cancel resets toggle, confirm enables and submits). Sabotage: emptied toggle's open handler -> test failed with `AssertionError: expected false to be true` on `confirmModal?.hasAttribute("open")`. Restored.
+  - R1-F2 [BLOCKER]: Replaced all vacuous `toBeDefined()` assertions on `querySelector` results with presence assertions (`not.toBeNull()`, `toBeTruthy()`) plus attribute/text checks.
+  - R1-F3 [MAJOR]: Boundary validation of action input via Zod schema (`actionInputSchema`). Primitive/non-object JSON payloads and invalid boolean strings return structured 400 Bad Request via `errorResponse` and write nothing.
+  - R1-F4 [MAJOR]: Validation responses return canonical `{ error: { code, message, fields } }` shape via `AppError`/`errorResponse`. UI adapted to consume canonical `fields` array.
+  - R1-F5 [MAJOR]: Added authorization refusal test cases where `authenticate.admin` rejects (throws Response): loader and action refuse access and no settings write occurs.
+  - R1-F6 [MAJOR]: Switched lab email input to `<s-text-area>`; added round-trip test that two saved addresses render and round-trip unchanged.
+  - R1-F7 [MAJOR]: Moved `AT_LEAST_ONE_RX_INPUT` error banner inside the Prescription inputs `<s-section>` (instead of top-level page banner) and added assertion.
+  - R1-F8 [MAJOR]: Keyed success toast on completed submission transition to idle with ok data; tested two successive successful saves emit two toasts.
+  - R1-F9 [MAJOR]: Added UI component cases for default (empty) settings, submitting state (Save button loading), and field error responses.

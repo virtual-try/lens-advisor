@@ -7,10 +7,16 @@ import type {
 import { data, useFetcher, useLoaderData, useRouteError } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
+import { z } from "zod";
 
 import { authenticate } from "../shopify.server";
 import { getConfig } from "../shared/config.server";
 import { getPrisma } from "../shared/container/prisma.server";
+import {
+  BadRequestError,
+  errorResponse,
+  type ErrorResponseBody,
+} from "../shared/http/errors.server";
 import { buildPricingPlansUrl } from "../features/billing/plan.server";
 import { requireActivePlan } from "../features/billing/require-plan.server";
 import {
@@ -19,9 +25,10 @@ import {
   ValidationError,
   type ShopSettings,
 } from "../features/settings/settings.service.server";
-import type {
-  SettingsPatch,
-  TicketFormat,
+import {
+  TICKET_FORMATS,
+  type SettingsPatch,
+  type TicketFormat,
 } from "../features/settings/schema";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -50,9 +57,133 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
 };
 
+function parseBooleanString(val: unknown): boolean | null {
+  if (typeof val === "boolean") return val;
+  if (typeof val === "string") {
+    const s = val.trim().toLowerCase();
+    if (s === "true" || s === "on" || s === "1") return true;
+    if (s === "false" || s === "0") return false;
+    return null;
+  }
+  return null;
+}
+
+function parseBooleanInput(val: unknown): boolean | null {
+  if (val === undefined) return null;
+  if (Array.isArray(val)) {
+    if (val.length === 0) return null;
+    const last = val[val.length - 1];
+    return parseBooleanString(last);
+  }
+  return parseBooleanString(val);
+}
+
+const booleanFieldSchema = z
+  .custom<boolean>(
+    (val) => {
+      if (val === undefined) return true;
+      return parseBooleanInput(val) !== null;
+    },
+    { message: "INVALID_BOOLEAN" },
+  )
+  .transform((val) => {
+    if (val === undefined) return undefined;
+    return parseBooleanInput(val)!;
+  });
+
+const ticketFormatSchema = z.enum(TICKET_FORMATS, {
+  errorMap: () => ({ message: "INVALID_TICKET_FORMAT" }),
+});
+
+const labEmailInputSchema = z
+  .union([z.string(), z.array(z.string())], {
+    errorMap: () => ({ message: "INVALID_LAB_EMAIL" }),
+  })
+  .optional();
+
+const actionInputSchema = z
+  .object({
+    shopId: z.unknown().optional(),
+    ticketFormat: ticketFormatSchema.optional(),
+    storeRxInOrder: booleanFieldSchema.optional(),
+    rxUploadEnabled: booleanFieldSchema.optional(),
+    manualRxEnabled: booleanFieldSchema.optional(),
+    confirmStoreRxInOrder: booleanFieldSchema.optional(),
+    confirm: booleanFieldSchema.optional(),
+    confirmed: booleanFieldSchema.optional(),
+    privacyConfirmed: booleanFieldSchema.optional(),
+    labEmail: labEmailInputSchema,
+  })
+  .passthrough();
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const prisma = getPrisma();
+
+  let rawData: unknown;
+  const contentType = request.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    try {
+      rawData = await request.json();
+    } catch {
+      return errorResponse(
+        new BadRequestError("Invalid JSON payload", "INVALID_INPUT", [
+          { path: "body", code: "INVALID_JSON" },
+        ]),
+      );
+    }
+  } else {
+    try {
+      const formData = await request.formData();
+      const obj: Record<string, unknown> = {};
+      for (const [key, val] of formData.entries()) {
+        if (key in obj) {
+          const existing = obj[key];
+          if (Array.isArray(existing)) {
+            existing.push(val);
+          } else {
+            obj[key] = [existing, val];
+          }
+        } else {
+          obj[key] = val;
+        }
+      }
+      rawData = obj;
+    } catch {
+      return errorResponse(
+        new BadRequestError("Invalid form data", "INVALID_INPUT", [
+          { path: "body", code: "INVALID_FORM_DATA" },
+        ]),
+      );
+    }
+  }
+
+  if (
+    typeof rawData !== "object" ||
+    rawData === null ||
+    Array.isArray(rawData)
+  ) {
+    return errorResponse(
+      new BadRequestError(
+        "Expected a JSON object or form data",
+        "INVALID_INPUT",
+        [{ path: "body", code: "INVALID_TYPE" }],
+      ),
+    );
+  }
+
+  const parseResult = actionInputSchema.safeParse(rawData);
+  if (!parseResult.success) {
+    const fields = parseResult.error.issues.map((issue) => ({
+      path: issue.path.join(".") || "input",
+      code: issue.message || "INVALID",
+    }));
+    return errorResponse(
+      new BadRequestError("Invalid request input", "INVALID_INPUT", fields),
+    );
+  }
+
+  const parsed = parseResult.data;
 
   // INV-1: Ignore any shopId in request body or query; scope to session shop only.
   let shop = await prisma.shop.findUnique({
@@ -64,76 +195,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
   }
 
-  let rawData: Record<string, unknown> = {};
-  const contentType = request.headers.get("content-type") || "";
-  if (contentType.includes("application/json")) {
-    rawData = (await request.json()) as Record<string, unknown>;
-  } else {
-    const formData = await request.formData();
-    for (const [key, val] of formData.entries()) {
-      if (key in rawData) {
-        const existing = rawData[key];
-        if (Array.isArray(existing)) {
-          existing.push(val);
-        } else {
-          rawData[key] = [existing, val];
-        }
-      } else {
-        rawData[key] = val;
-      }
-    }
-  }
-
   const patch: SettingsPatch = {};
 
-  if ("ticketFormat" in rawData && rawData.ticketFormat !== undefined) {
-    patch.ticketFormat = String(rawData.ticketFormat) as TicketFormat;
+  if (parsed.ticketFormat !== undefined) {
+    patch.ticketFormat = parsed.ticketFormat;
   }
 
-  if ("storeRxInOrder" in rawData && rawData.storeRxInOrder !== undefined) {
-    const val = rawData.storeRxInOrder;
-    if (Array.isArray(val)) {
-      patch.storeRxInOrder =
-        val.includes("true") ||
-        val.includes("on") ||
-        val.includes("1") ||
-        val.includes(true);
-    } else {
-      patch.storeRxInOrder =
-        val === true || val === "true" || val === "on" || val === "1";
-    }
+  if (parsed.storeRxInOrder !== undefined) {
+    patch.storeRxInOrder = parsed.storeRxInOrder;
   }
 
-  if ("rxUploadEnabled" in rawData && rawData.rxUploadEnabled !== undefined) {
-    const val = rawData.rxUploadEnabled;
-    if (Array.isArray(val)) {
-      patch.rxUploadEnabled =
-        val.includes("true") ||
-        val.includes("on") ||
-        val.includes("1") ||
-        val.includes(true);
-    } else {
-      patch.rxUploadEnabled =
-        val === true || val === "true" || val === "on" || val === "1";
-    }
+  if (parsed.rxUploadEnabled !== undefined) {
+    patch.rxUploadEnabled = parsed.rxUploadEnabled;
   }
 
-  if ("manualRxEnabled" in rawData && rawData.manualRxEnabled !== undefined) {
-    const val = rawData.manualRxEnabled;
-    if (Array.isArray(val)) {
-      patch.manualRxEnabled =
-        val.includes("true") ||
-        val.includes("on") ||
-        val.includes("1") ||
-        val.includes(true);
-    } else {
-      patch.manualRxEnabled =
-        val === true || val === "true" || val === "on" || val === "1";
-    }
+  if (parsed.manualRxEnabled !== undefined) {
+    patch.manualRxEnabled = parsed.manualRxEnabled;
   }
 
-  if ("labEmail" in rawData && rawData.labEmail !== undefined) {
-    const rawEmails = rawData.labEmail;
+  if (parsed.labEmail !== undefined) {
+    const rawEmails = parsed.labEmail;
     if (Array.isArray(rawEmails)) {
       patch.labEmail = rawEmails.flatMap((item) =>
         typeof item === "string"
@@ -159,29 +240,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   // INV-3: Privacy toggle cannot be turned on without the confirmation field
-  const confirmVal =
-    rawData.confirmStoreRxInOrder ??
-    rawData.confirm ??
-    rawData.confirmed ??
-    rawData.privacyConfirmed;
-  const isConfirmed =
-    confirmVal === true ||
-    confirmVal === "true" ||
-    confirmVal === "on" ||
-    confirmVal === "1";
+  const isConfirmed = Boolean(
+    parsed.confirmStoreRxInOrder ||
+      parsed.confirm ||
+      parsed.confirmed ||
+      parsed.privacyConfirmed,
+  );
 
   if (patch.storeRxInOrder === true && !isConfirmed) {
-    return data(
-      {
-        ok: false,
-        code: "CONFIRMATION_REQUIRED",
-        error:
-          "Confirmation is required to save prescription values in Shopify orders.",
-        errors: {
-          storeRxInOrder: "CONFIRMATION_REQUIRED",
-        },
-      },
-      { status: 400 },
+    return errorResponse(
+      new BadRequestError(
+        "Confirmation is required to save prescription values in Shopify orders.",
+        "CONFIRMATION_REQUIRED",
+        [{ path: "storeRxInOrder", code: "CONFIRMATION_REQUIRED" }],
+      ),
     );
   }
 
@@ -190,32 +262,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return data({ ok: true, settings: updated });
   } catch (error) {
     if (error instanceof ValidationError) {
-      const fieldErrors: Record<string, string> = {};
-      for (const f of error.fields ?? []) {
-        const key = f.path.split(".")[0];
-        fieldErrors[key] = f.code;
-      }
-      return data(
-        {
-          ok: false,
-          code: error.code,
-          error: error.message,
-          errors: fieldErrors,
-        },
-        { status: 400 },
-      );
+      return errorResponse(error);
     }
     throw error;
   }
 };
 
-type ActionData = {
-  ok: boolean;
-  settings?: ShopSettings;
-  code?: string;
-  error?: string;
-  errors?: Record<string, string>;
-};
+type ActionData =
+  | {
+      ok: true;
+      settings: ShopSettings;
+    }
+  | ErrorResponseBody;
 
 export default function SettingsRoute() {
   const loaderData = useLoaderData<typeof loader>();
@@ -247,24 +305,55 @@ export default function SettingsRoute() {
   );
   const [pendingPrivacyModal, setPendingPrivacyModal] = useState(false);
 
+  const prevStateRef = useRef(fetcher.state);
+  const lastToastDataRef = useRef<ActionData | null | undefined>(null);
+
   useEffect(() => {
-    if (fetcher.data?.ok) {
+    const isTransitionToIdle =
+      prevStateRef.current !== "idle" && fetcher.state === "idle";
+    const isNewData =
+      fetcher.data !== undefined && fetcher.data !== lastToastDataRef.current;
+
+    const isOk =
+      fetcher.data && "ok" in fetcher.data && Boolean(fetcher.data.ok);
+
+    if (isOk && (isTransitionToIdle || isNewData)) {
       shopify.toast.show("Settings saved");
+      lastToastDataRef.current = fetcher.data;
     }
-  }, [fetcher.data?.ok, shopify]);
+
+    prevStateRef.current = fetcher.state;
+  }, [fetcher.state, fetcher.data, shopify]);
 
   const isSubmitting =
     fetcher.state === "submitting" || fetcher.state === "loading";
-  const actionErrors = fetcher.data?.errors;
-  const emailError =
-    actionErrors?.labEmail === "EMAIL"
+
+  const actionError =
+    fetcher.data && "error" in fetcher.data ? fetcher.data.error : undefined;
+  const fieldErrors = actionError?.fields;
+
+  const emailField = fieldErrors?.find(
+    (f) => f.path === "labEmail" || f.path.startsWith("labEmail."),
+  );
+  const emailError = emailField
+    ? emailField.code === "EMAIL"
       ? "Enter a valid lab email address."
-      : actionErrors?.labEmail;
-  const rxInputError =
-    actionErrors?.rxUploadEnabled === "AT_LEAST_ONE_RX_INPUT" ||
-    actionErrors?.manualRxEnabled === "AT_LEAST_ONE_RX_INPUT"
-      ? "Keep at least one prescription input on."
-      : undefined;
+      : emailField.code
+    : undefined;
+
+  const rxInputError = fieldErrors?.some(
+    (f) =>
+      (f.path === "rxUploadEnabled" || f.path === "manualRxEnabled") &&
+      f.code === "AT_LEAST_ONE_RX_INPUT",
+  )
+    ? "Keep at least one prescription input on."
+    : undefined;
+
+  const privacyConfirmationError =
+    fieldErrors?.some(
+      (f) =>
+        f.path === "storeRxInOrder" && f.code === "CONFIRMATION_REQUIRED",
+    ) || actionError?.code === "CONFIRMATION_REQUIRED";
 
   const showModal = () => {
     setPendingPrivacyModal(true);
@@ -315,11 +404,7 @@ export default function SettingsRoute() {
       </s-button>
 
       <fetcher.Form method="post" id="settings-form">
-        <input
-          type="hidden"
-          name="ticketFormat"
-          value={ticketFormat}
-        />
+        <input type="hidden" name="ticketFormat" value={ticketFormat} />
         <input
           type="hidden"
           name="manualRxEnabled"
@@ -342,16 +427,10 @@ export default function SettingsRoute() {
         />
 
         <s-stack direction="block" gap="base">
-          {actionErrors?.storeRxInOrder && (
+          {privacyConfirmationError && (
             <s-banner tone="critical" heading="Privacy confirmation required">
               Confirmation is required to save prescription values in Shopify
               orders.
-            </s-banner>
-          )}
-
-          {rxInputError && (
-            <s-banner tone="critical" heading="Prescription inputs required">
-              {rxInputError}
             </s-banner>
           )}
 
@@ -361,13 +440,22 @@ export default function SettingsRoute() {
             </s-banner>
           )}
 
+          {actionError &&
+            !privacyConfirmationError &&
+            !emailError &&
+            !rxInputError && (
+              <s-banner tone="critical" heading="Invalid settings">
+                {actionError.message}
+              </s-banner>
+            )}
+
           <s-section heading="Lab fulfillment">
             <s-stack direction="block" gap="base">
-              <s-text-field
+              <s-text-area
                 label="Lab email addresses"
                 name="labEmail"
                 value={labEmailText}
-                details="Enter one or more email addresses separated by commas or new lines."
+                details="Enter one or more email addresses (one per line)."
                 error={emailError}
                 onInput={(e) => {
                   setLabEmailText(e.currentTarget.value);
@@ -392,6 +480,15 @@ export default function SettingsRoute() {
 
           <s-section heading="Prescription inputs">
             <s-stack direction="block" gap="base">
+              {rxInputError && (
+                <s-banner
+                  tone="critical"
+                  heading="Prescription inputs required"
+                >
+                  {rxInputError}
+                </s-banner>
+              )}
+
               <s-paragraph>
                 Choose how shoppers can submit their prescriptions on your
                 storefront.
@@ -404,6 +501,9 @@ export default function SettingsRoute() {
                 onChange={(e) => {
                   setManualRxEnabled(e.currentTarget.checked);
                 }}
+                onInput={(e) => {
+                  setManualRxEnabled(e.currentTarget.checked);
+                }}
               />
 
               <s-checkbox
@@ -411,6 +511,9 @@ export default function SettingsRoute() {
                 name="rxUploadCheckbox"
                 checked={rxUploadEnabled}
                 onChange={(e) => {
+                  setRxUploadEnabled(e.currentTarget.checked);
+                }}
+                onInput={(e) => {
                   setRxUploadEnabled(e.currentTarget.checked);
                 }}
               />
@@ -424,6 +527,9 @@ export default function SettingsRoute() {
                 name="storeRxInOrderCheckbox"
                 checked={storeRxInOrder}
                 onChange={(e) => {
+                  handlePrivacyToggleChange(e.currentTarget.checked);
+                }}
+                onInput={(e) => {
                   handlePrivacyToggleChange(e.currentTarget.checked);
                 }}
               />
