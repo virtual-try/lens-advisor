@@ -1,6 +1,6 @@
 # Spec 16 — Configurator shell, state machine and API client
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 03, Spec 04
 **Model:** Heavy — `claude-opus-5-5` · `gpt-6-astra` · `gemini-3.1-pro-preview`
 **Issue:** —
@@ -147,4 +147,4 @@ step folders the shell shows the empty-catalog message, never a blank sheet.
   - **R5-F2** [BLOCKER]: Updated Row 6 Escape test in `packages/configurator/src/shell/shell.test.tsx` to assert localized header text (`Lenses for Harlow`) is present before Escape, and that both the dialog (`queryByRole("dialog")`) and localized header text (`queryByText(...)`) are null after exit completes.
   - **R5-F3** [MAJOR]: Replaced `font-family: var(--la-font-numeric);` on `.la-total` in `packages/configurator/src/shell/shell.css:189` with `font-variant-numeric: var(--la-font-numeric);` so running totals receive tabular numerals while font stack inherits `--la-font-family`. Added CSS regression test asserting `font-variant-numeric: var(--la-font-numeric)` is applied and `--la-font-numeric` is not assigned to `font-family`.
 - **2026-11-08** — Evidence (orchestro spec verify): typecheck pass · lint pass · build pass (`loader.js` 1314 B, `configurator.js` 96779 B) · test pass 596/0/0
-- **2026-11-08** — Evidence (orchestro spec verify, tree 8bdc8cc7): install pass · typecheck pass · lint pass · build pass · test pass 598/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 7ba0e56f): install pass · typecheck pass · lint pass · build pass · test pass 987/0/0
