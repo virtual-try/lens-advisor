@@ -86,7 +86,7 @@ Stubbed: none. Consumer: configurator API client (16) at runtime; e2e flow (33).
     - 15 unit tests covering all 5 Examples table rows, INV-1 multi-tenant shop isolation, INV-3 order privacy and leak prevention, INV-6 unauthenticated/forged call prevention with spies, 404 on uninstalled/inactive plan, 502 on billing failure, 500 on malformed schema validation, and method validation.
   - Implemented `specs/inventory/21-proxy-catalog-endpoint.md`:
     - Documented `proxy-catalog-endpoint` and `catalog-response-schema`.
-  - Self-check 1: checked, holds. Unsigned and forged requests call zero services or repositories. Spies on `getStorefrontCatalog`, `getSettings`, `getPlanStatus`, and `prisma.shop.findUnique` assert zero calls (`toHaveBeenCalledTimes(0)`).
+  - Self-check 1: checked, holds. Unsigned and forged requests call zero services or repositories. Spies on shop repository read (`prisma.shop.findUnique`), `getStorefrontCatalog`, `getSettings`, and `getPlanStatus` assert zero calls (`toHaveBeenCalledTimes(0)`) for both unsigned and forged requests.
   - Self-check 2: API checklist (`spec-quality.md` §8) checked, holds. Authentication-first, safe error payloads via `errorResponse`, strict status codes (200, 400, 401, 404, 500, 502), response validated against Zod schema, Cache-Control set, shop isolation proven across two shops.
   - Sabotage: bypassed proxy signature authentication in route -> `unsignedRes.status` returned 200 instead of 401 (`AssertionError: expected 200 to be 401`); restored, green.
   - Sabotage 2: injected float price into catalog response -> `catalogResponseSchema.parse` rejected payload, returning 500 `INVALID_CATALOG_RESPONSE`; restored, green.
@@ -97,4 +97,7 @@ Stubbed: none. Consumer: configurator API client (16) at runtime; e2e flow (33).
     - `pnpm lint` (`eslint . --max-warnings 0`) -> exit 0
     - `pnpm build` -> exit 0
   - The dev-store box is unticked: requires a Shopify dev store and app proxy configured in Partner Dashboard, which the owner provides. Not run by the coder.
-- **2026-11-08** — Evidence (orchestro spec verify, tree 275b0e6b): install pass · typecheck pass · lint pass · build pass · test pass 522/0/0
+- **2026-11-08** — Fix round R1 by agy-2 addressing rev-codex review findings:
+  - R1-F1: Updated Examples Row 3 test in `app/routes/proxy.catalog.test.ts` to test literally: arranged a verified app-proxy request whose query URL carries `shop=B` (`shop-b-catalog.myshopify.com`) while `authenticate.public.appProxy` returns session A (`shop-a-catalog.myshopify.com`); asserted 200 OK returning Shop A's catalog, asserted `catalogService.getStorefrontCatalog` was called with `shopA.shopId` only (0 calls with `shopB.shopId`), and asserted `prisma.shop.findUnique` was called for domain A only.
+  - R1-F2: Added spies on shop repository read (`prisma.shop.findUnique`) alongside `catalogService.getStorefrontCatalog`, `settingsService.getSettings`, and `getPlanStatus` for both unsigned and forged requests in Row 2 and Self-check 1 (INV-6); asserted zero calls (`toHaveBeenCalledTimes(0)`) on each. Fixed Self-check 1 documentation in the Log so it states exactly what is asserted.
+- **2026-11-08** — Evidence (orchestro spec verify, tree 028bd019): install pass · typecheck pass · lint pass · build pass · test pass 522/0/0

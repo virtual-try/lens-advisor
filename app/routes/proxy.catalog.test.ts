@@ -1,6 +1,7 @@
 // @vitest-environment node
 import crypto from "node:crypto";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createTestDb, seedShop, type TestDb } from "../../test/db";
@@ -11,6 +12,7 @@ import {
   action,
   loader,
 } from "./proxy.catalog";
+import { authenticate } from "../shopify.server";
 import { getConfig } from "../shared/config.server";
 import { AppError } from "../shared/http/errors.server";
 
@@ -243,6 +245,21 @@ describe("Spec 21: App Proxy Catalog Endpoint (proxy.catalog.test.ts)", () => {
     });
   }
 
+  function spyOnShopFindUnique() {
+    const original = db.prisma.shop.findUnique;
+    const spy = vi.fn((...args: Parameters<typeof original>) =>
+      original.apply(db.prisma.shop, args),
+    );
+    db.prisma.shop.findUnique =
+      spy as unknown as PrismaClient["shop"]["findUnique"];
+    return {
+      spy,
+      restore() {
+        db.prisma.shop.findUnique = original;
+      },
+    };
+  }
+
   // =========================================================================
   // Examples Table Verification
   // =========================================================================
@@ -274,67 +291,93 @@ describe("Spec 21: App Proxy Catalog Endpoint (proxy.catalog.test.ts)", () => {
     });
 
     it("Row 2: missing/forged signature -> 401, no repository call (INV-6)", async () => {
+      const shopSpy = spyOnShopFindUnique();
       const catalogSpy = vi.spyOn(catalogService, "getStorefrontCatalog");
       const settingsSpy = vi.spyOn(settingsService, "getSettings");
 
-      // 1. Missing signature
-      const unsignedReq = makeSignedProxyRequest(
-        "/apps/lens-advisor/catalog",
-        shopA.domain,
-        {},
-        { unsigned: true },
-      );
-      const unsignedRes = await loader(createLoaderArgs(unsignedReq));
+      try {
+        // 1. Missing signature
+        const unsignedReq = makeSignedProxyRequest(
+          "/apps/lens-advisor/catalog",
+          shopA.domain,
+          {},
+          { unsigned: true },
+        );
+        const unsignedRes = await loader(createLoaderArgs(unsignedReq));
 
-      expect(unsignedRes.status).toBe(401);
-      const unsignedBody = await unsignedRes.json();
-      expect(unsignedBody.error.code).toBe("UNAUTHORIZED");
+        expect(unsignedRes.status).toBe(401);
+        const unsignedBody = await unsignedRes.json();
+        expect(unsignedBody.error.code).toBe("UNAUTHORIZED");
 
-      expect(catalogSpy).toHaveBeenCalledTimes(0);
-      expect(settingsSpy).toHaveBeenCalledTimes(0);
-      expect(mocks.getPlanStatus).toHaveBeenCalledTimes(0);
+        expect(shopSpy.spy).toHaveBeenCalledTimes(0);
+        expect(catalogSpy).toHaveBeenCalledTimes(0);
+        expect(settingsSpy).toHaveBeenCalledTimes(0);
+        expect(mocks.getPlanStatus).toHaveBeenCalledTimes(0);
 
-      // 2. Forged signature
-      const forgedReq = makeSignedProxyRequest(
-        "/apps/lens-advisor/catalog",
-        shopA.domain,
-        {},
-        { forged: true },
-      );
-      const forgedRes = await loader(createLoaderArgs(forgedReq));
+        // 2. Forged signature
+        const forgedReq = makeSignedProxyRequest(
+          "/apps/lens-advisor/catalog",
+          shopA.domain,
+          {},
+          { forged: true },
+        );
+        const forgedRes = await loader(createLoaderArgs(forgedReq));
 
-      expect(forgedRes.status).toBe(401);
-      const forgedBody = await forgedRes.json();
-      expect(forgedBody.error.code).toBe("UNAUTHORIZED");
+        expect(forgedRes.status).toBe(401);
+        const forgedBody = await forgedRes.json();
+        expect(forgedBody.error.code).toBe("UNAUTHORIZED");
 
-      expect(catalogSpy).toHaveBeenCalledTimes(0);
-      expect(settingsSpy).toHaveBeenCalledTimes(0);
-      expect(mocks.getPlanStatus).toHaveBeenCalledTimes(0);
+        expect(shopSpy.spy).toHaveBeenCalledTimes(0);
+        expect(catalogSpy).toHaveBeenCalledTimes(0);
+        expect(settingsSpy).toHaveBeenCalledTimes(0);
+        expect(mocks.getPlanStatus).toHaveBeenCalledTimes(0);
+      } finally {
+        shopSpy.restore();
+        catalogSpy.mockRestore();
+        settingsSpy.mockRestore();
+      }
     });
 
     it("Row 3: ?shop=B added to A's signed request -> still A's catalog (signature covers params) (INV-1)", async () => {
-      // If ?shop=B is appended without recalculating HMAC with secret, signature is invalid -> 401
-      const tamperedUrlReq = new Request(
-        `https://${shopA.domain}/apps/lens-advisor/catalog?path_prefix=%2Fapps%2Flens-advisor&shop=${shopA.domain}&timestamp=${Math.floor(
-          Date.now() / 1000,
-        )}&shop=${shopB.domain}&signature=forged_or_old`,
-      );
-      const tamperedRes = await loader(createLoaderArgs(tamperedUrlReq));
-      expect(tamperedRes.status).toBe(401);
+      const shopSpy = spyOnShopFindUnique();
+      const catalogSpy = vi.spyOn(catalogService, "getStorefrontCatalog");
+      type AppProxyResult = Awaited<ReturnType<typeof authenticate.public.appProxy>>;
+      const appProxySpy = vi
+        .spyOn(authenticate.public, "appProxy")
+        .mockResolvedValueOnce({
+          session: { shop: shopA.domain } as unknown as AppProxyResult["session"],
+          admin: {} as unknown as AppProxyResult["admin"],
+          liquid: vi.fn(),
+        } as unknown as AppProxyResult);
 
-      // If an extra query param is signed for Shop A, tenancy strictly uses session.shop (Shop A)
-      const reqWithExtraParam = makeSignedProxyRequest(
-        "/apps/lens-advisor/catalog",
-        shopA.domain,
-        { attempt_override_shop: shopB.domain },
-      );
-      const res = await loader(createLoaderArgs(reqWithExtraParam));
-      expect(res.status).toBe(200);
+      try {
+        // Arrange a verified app-proxy request for shop A whose query literally carries shop=B
+        const reqWithShopB = new Request(
+          `https://${shopA.domain}/apps/lens-advisor/catalog?path_prefix=%2Fapps%2Flens-advisor&shop=${shopB.domain}&timestamp=${Math.floor(
+            Date.now() / 1000,
+          )}`,
+        );
 
-      const body = (await res.json()) as CatalogResponse;
-      const lensNames = body.lensGroups.flatMap((g) => g.lenses.map((l) => l.name));
-      expect(lensNames).toContain("Shop A Premium Single Vision");
-      expect(lensNames).not.toContain("Shop B Ultra Progressive");
+        const res = await loader(createLoaderArgs(reqWithShopB));
+        expect(res.status).toBe(200);
+
+        const body = (await res.json()) as CatalogResponse;
+        const lensNames = body.lensGroups.flatMap((g) => g.lenses.map((l) => l.name));
+        expect(lensNames).toContain("Shop A Premium Single Vision");
+        expect(lensNames).not.toContain("Shop B Ultra Progressive");
+
+        // Tenancy strictly uses verified session A; catalog lookup called with A's id only
+        expect(catalogSpy).toHaveBeenCalledWith(shopA.shopId, expect.anything());
+        expect(catalogSpy).not.toHaveBeenCalledWith(shopB.shopId, expect.anything());
+        expect(catalogSpy).toHaveBeenCalledTimes(1);
+
+        expect(shopSpy.spy).toHaveBeenCalledWith({ where: { domain: shopA.domain } });
+        expect(shopSpy.spy).not.toHaveBeenCalledWith({ where: { domain: shopB.domain } });
+      } finally {
+        appProxySpy.mockRestore();
+        catalogSpy.mockRestore();
+        shopSpy.restore();
+      }
     });
 
     it("Row 4: shop with no catalog -> 200 with empty groups", async () => {
@@ -457,21 +500,45 @@ describe("Spec 21: App Proxy Catalog Endpoint (proxy.catalog.test.ts)", () => {
     });
 
     it("INV-6: Spies assert zero calls on unsigned and forged requests", async () => {
+      const shopSpy = spyOnShopFindUnique();
       const getCatalogSpy = vi.spyOn(catalogService, "getStorefrontCatalog");
       const getSettingsSpy = vi.spyOn(settingsService, "getSettings");
 
-      const unsignedReq = makeSignedProxyRequest(
-        "/apps/lens-advisor/catalog",
-        shopA.domain,
-        {},
-        { unsigned: true },
-      );
-      const res = await loader(createLoaderArgs(unsignedReq));
-      expect(res.status).toBe(401);
+      try {
+        // 1. Unsigned request
+        const unsignedReq = makeSignedProxyRequest(
+          "/apps/lens-advisor/catalog",
+          shopA.domain,
+          {},
+          { unsigned: true },
+        );
+        const unsignedRes = await loader(createLoaderArgs(unsignedReq));
+        expect(unsignedRes.status).toBe(401);
 
-      expect(getCatalogSpy).not.toHaveBeenCalled();
-      expect(getSettingsSpy).not.toHaveBeenCalled();
-      expect(mocks.getPlanStatus).not.toHaveBeenCalled();
+        expect(shopSpy.spy).toHaveBeenCalledTimes(0);
+        expect(getCatalogSpy).toHaveBeenCalledTimes(0);
+        expect(getSettingsSpy).toHaveBeenCalledTimes(0);
+        expect(mocks.getPlanStatus).toHaveBeenCalledTimes(0);
+
+        // 2. Forged request
+        const forgedReq = makeSignedProxyRequest(
+          "/apps/lens-advisor/catalog",
+          shopA.domain,
+          {},
+          { forged: true },
+        );
+        const forgedRes = await loader(createLoaderArgs(forgedReq));
+        expect(forgedRes.status).toBe(401);
+
+        expect(shopSpy.spy).toHaveBeenCalledTimes(0);
+        expect(getCatalogSpy).toHaveBeenCalledTimes(0);
+        expect(getSettingsSpy).toHaveBeenCalledTimes(0);
+        expect(mocks.getPlanStatus).toHaveBeenCalledTimes(0);
+      } finally {
+        shopSpy.restore();
+        getCatalogSpy.mockRestore();
+        getSettingsSpy.mockRestore();
+      }
     });
 
     it("Cache-Control header is private, max-age=60", async () => {
