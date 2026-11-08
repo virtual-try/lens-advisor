@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { PgBoss, SendOptions } from "pg-boss";
+import { PrismaClient } from "@prisma/client";
 import { getTestDatabaseUrl } from "../config.server";
 import { createPgBoss } from "../container/queue.server";
 import { type Queue, createQueue } from "./queue";
@@ -25,6 +26,43 @@ export function requireTestDatabaseUrl(): string {
 
 export function uniqueSchema(): string {
   return `t_queue_${randomUUID().replaceAll("-", "")}`;
+}
+
+export async function dropTestSchema(schema: string): Promise<void> {
+  if (!/^[a-zA-Z0-9_]+$/.test(schema)) {
+    throw new Error(`Refusing to drop unexpected schema name "${schema}"`);
+  }
+  const prisma = new PrismaClient({
+    datasources: {
+      db: {
+        url: requireTestDatabaseUrl(),
+      },
+    },
+  });
+  try {
+    await prisma.$executeRawUnsafe(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+export async function testSchemaExists(schema: string): Promise<boolean> {
+  const prisma = new PrismaClient({
+    datasources: {
+      db: {
+        url: requireTestDatabaseUrl(),
+      },
+    },
+  });
+  try {
+    const rows = await prisma.$queryRawUnsafe<unknown[]>(
+      "SELECT 1 FROM information_schema.schemata WHERE schema_name = $1",
+      schema
+    );
+    return rows.length > 0;
+  } finally {
+    await prisma.$disconnect();
+  }
 }
 
 /**

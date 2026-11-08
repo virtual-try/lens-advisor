@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { PgBoss } from "pg-boss";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Queue } from "./queue";
-import { requireTestDatabaseUrl, uniqueSchema } from "./test-support";
+import { dropTestSchema, requireTestDatabaseUrl, testSchemaExists, uniqueSchema } from "./test-support";
 import { runWorker } from "./worker";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -32,20 +32,26 @@ describe("worker startup error handling (R4-F2)", () => {
     const schema = uniqueSchema();
     const databaseUrl = requireTestDatabaseUrl();
 
-    await expect(
-      runWorker([
-        "--schema",
-        schema,
-        "--database-url",
-        databaseUrl,
-        "--features-dir",
-        FIXTURES_DIR,
-      ])
-    ).rejects.toThrow("simulated queue registration failure");
+    try {
+      await expect(
+        runWorker([
+          "--schema",
+          schema,
+          "--database-url",
+          databaseUrl,
+          "--features-dir",
+          FIXTURES_DIR,
+        ])
+      ).rejects.toThrow("simulated queue registration failure");
 
-    expect(stopSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ graceful: true, timeout: 10_000 })
-    );
+      expect(stopSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ graceful: true, timeout: 10_000 })
+      );
+    } finally {
+      await dropTestSchema(schema);
+    }
+
+    expect(await testSchemaExists(schema)).toBe(false);
   });
 
   it("stops pg-boss with graceful timeout when handler registration fails during startup", async () => {
@@ -57,20 +63,26 @@ describe("worker startup error handling (R4-F2)", () => {
     const schema = uniqueSchema();
     const databaseUrl = requireTestDatabaseUrl();
 
-    await expect(
-      runWorker([
-        "--schema",
-        schema,
-        "--database-url",
-        databaseUrl,
-        "--features-dir",
-        FIXTURES_DIR,
-      ])
-    ).rejects.toThrow("simulated handler registration failure");
+    try {
+      await expect(
+        runWorker([
+          "--schema",
+          schema,
+          "--database-url",
+          databaseUrl,
+          "--features-dir",
+          FIXTURES_DIR,
+        ])
+      ).rejects.toThrow("simulated handler registration failure");
 
-    expect(stopSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ graceful: true, timeout: 10_000 })
-    );
+      expect(stopSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ graceful: true, timeout: 10_000 })
+      );
+    } finally {
+      await dropTestSchema(schema);
+    }
+
+    expect(await testSchemaExists(schema)).toBe(false);
   });
 
   it("fails worker startup when job discovery throws a filesystem error other than ENOENT (R5-F4)", async () => {
@@ -82,15 +94,19 @@ describe("worker startup error handling (R4-F2)", () => {
     const schema = uniqueSchema();
     const databaseUrl = requireTestDatabaseUrl();
 
-    await expect(
-      runWorker([
-        "--schema",
-        schema,
-        "--database-url",
-        databaseUrl,
-        "--features-dir",
-        FIXTURES_DIR,
-      ])
-    ).rejects.toThrow("EACCES: permission denied");
+    try {
+      await expect(
+        runWorker([
+          "--schema",
+          schema,
+          "--database-url",
+          databaseUrl,
+          "--features-dir",
+          FIXTURES_DIR,
+        ])
+      ).rejects.toThrow("EACCES: permission denied");
+    } finally {
+      await dropTestSchema(schema);
+    }
   });
 });

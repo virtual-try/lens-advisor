@@ -3,7 +3,7 @@ import type { PgBoss } from "pg-boss";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { createPgBoss } from "../container/queue.server";
-import { JobPayloadValidationError, clearJobRegistry, defineJob } from "./define-job";
+import { JobDefinitionError, JobPayloadValidationError, clearJobRegistry, defineJob } from "./define-job";
 import { Queue } from "./queue";
 import { enqueueTestRaw, requireTestDatabaseUrl, uniqueSchema, waitFor, withTestQueue } from "./test-support";
 
@@ -663,6 +663,46 @@ describe("Queue on a real Postgres", () => {
       const jobId = await queue.enqueue(name, { orderId: 42 }, { singletonKey: "valid-1" });
       expect(jobId).toEqual(expect.any(String));
       expect(await queue.findJobs(name)).toHaveLength(1);
+    });
+  });
+
+  it("rejects fractional and negative retryDelay and retryLimit on enqueue (R8-F1)", async () => {
+    await withTestQueue(async (queue) => {
+      const name = jobName("fractional-retry-enq");
+      const definition = defineJob({
+        name,
+        schema: z.object({ orderId: z.string() }),
+        handler: () => undefined,
+      });
+      await queue.register(definition);
+
+      // Fractional retryDelay (0.5) is rejected
+      await expect(
+        queue.enqueue(name, { orderId: "ord-1" }, { retryDelay: 0.5, singletonKey: "retry-delay-1" })
+      ).rejects.toThrowError(JobDefinitionError);
+
+      // Negative retryDelay (-1) is rejected
+      await expect(
+        queue.enqueue(name, { orderId: "ord-2" }, { retryDelay: -1, singletonKey: "retry-delay-2" })
+      ).rejects.toThrowError(JobDefinitionError);
+
+      // Fractional retryLimit (0.5) is rejected
+      await expect(
+        queue.enqueue(name, { orderId: "ord-3" }, { retryLimit: 0.5, singletonKey: "retry-limit-1" })
+      ).rejects.toThrowError(JobDefinitionError);
+
+      // Negative retryLimit (-1) is rejected
+      await expect(
+        queue.enqueue(name, { orderId: "ord-4" }, { retryLimit: -1, singletonKey: "retry-limit-2" })
+      ).rejects.toThrowError(JobDefinitionError);
+
+      // Valid non-negative integer overrides succeed
+      const jobId = await queue.enqueue(
+        name,
+        { orderId: "ord-valid" },
+        { retryLimit: 3, retryDelay: 5, singletonKey: "retry-valid-1" }
+      );
+      expect(jobId).toEqual(expect.any(String));
     });
   });
 });

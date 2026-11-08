@@ -680,4 +680,63 @@ describe("defineJob payload guard (INV-2)", () => {
     // Finite number succeeds
     expect(validateJobPayload(definition, { orderId: 42 })).toEqual({ orderId: 42 });
   });
+
+  it("rejects fractional and negative retryDelay and retryLimit at registration (R8-F1)", () => {
+    // Fractional retryDelay (0.5) is rejected
+    expect(() =>
+      defineJob({
+        name: "test.fractional-delay",
+        schema: z.object({ orderId: z.string() }),
+        retry: { retryDelay: 0.5 },
+        handler: () => undefined,
+      })
+    ).toThrowError(/retryDelay must be a non-negative integer/);
+
+    // Negative retryDelay (-1) is rejected
+    expect(() =>
+      defineJob({
+        name: "test.negative-delay",
+        schema: z.object({ orderId: z.string() }),
+        retry: { retryDelay: -1 },
+        handler: () => undefined,
+      })
+    ).toThrowError(/retryDelay must be a non-negative integer/);
+
+    // Fractional retryLimit (0.5) is rejected
+    expect(() =>
+      defineJob({
+        name: "test.fractional-limit",
+        schema: z.object({ orderId: z.string() }),
+        retry: { retryLimit: 0.5 },
+        handler: () => undefined,
+      })
+    ).toThrowError(/retryLimit must be a non-negative integer/);
+
+    // Negative retryLimit (-1) is rejected
+    expect(() =>
+      defineJob({
+        name: "test.negative-limit",
+        schema: z.object({ orderId: z.string() }),
+        retry: { retryLimit: -1 },
+        handler: () => undefined,
+      })
+    ).toThrowError(/retryLimit must be a non-negative integer/);
+
+    // Valid non-negative integers succeed
+    const validDef = defineJob({
+      name: "test.valid-retry-integers",
+      schema: z.object({ orderId: z.string() }),
+      retry: { retryLimit: 5, retryDelay: 10, retryBackoff: true },
+      handler: () => undefined,
+    });
+    expect(validDef.retry).toEqual({ retryLimit: 5, retryDelay: 10, retryBackoff: true });
+
+    const zeroDef = defineJob({
+      name: "test.zero-retry-integers",
+      schema: z.object({ orderId: z.string() }),
+      retry: { retryLimit: 0, retryDelay: 0 },
+      handler: () => undefined,
+    });
+    expect(zeroDef.retry).toEqual({ retryLimit: 0, retryDelay: 0, retryBackoff: false });
+  });
 });

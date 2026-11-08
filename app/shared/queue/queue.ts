@@ -13,9 +13,10 @@ import {
   deadLetterQueueName,
   getJobDefinition,
   validateJobPayload,
+  validateRetryOptions,
 } from "./define-job";
 
-export { JobDefinitionError, JobPayloadValidationError };
+export { JobDefinitionError, JobPayloadValidationError, validateRetryOptions };
 
 export interface QueueOptions {
   /** pg-boss schema. Defaults to `pgboss` (ARCHITECTURE.md#data-model). */
@@ -184,6 +185,8 @@ export class Queue {
         `Unknown job "${name}"; import the feature's jobs.server.ts before enqueuing`
       );
     }
+
+    validateRetryOptions(options);
 
     const parsed = validateJobPayload(definition, payload);
     await this.register(definition);

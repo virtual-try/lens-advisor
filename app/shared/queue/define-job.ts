@@ -314,7 +314,25 @@ function assertNode(
   );
 }
 
+export function validateRetryOptions(retry: RetryOptions): void {
+  if (
+    retry.retryLimit !== undefined &&
+    (!Number.isInteger(retry.retryLimit) || retry.retryLimit < 0)
+  ) {
+    throw new JobDefinitionError("retryLimit must be a non-negative integer");
+  }
+  if (
+    retry.retryDelay !== undefined &&
+    (!Number.isInteger(retry.retryDelay) || retry.retryDelay < 0)
+  ) {
+    throw new JobDefinitionError("retryDelay must be a non-negative integer");
+  }
+}
+
 function normaliseRetry(retry: RetryOptions | undefined): JobDefinition["retry"] {
+  if (retry) {
+    validateRetryOptions(retry);
+  }
   const retryLimit = retry?.retryLimit ?? DEFAULT_RETRY.retryLimit;
   const retryDelay = retry?.retryDelay ?? DEFAULT_RETRY.retryDelay;
   const retryBackoff = retry?.retryBackoff ?? DEFAULT_RETRY.retryBackoff;
@@ -322,8 +340,8 @@ function normaliseRetry(retry: RetryOptions | undefined): JobDefinition["retry"]
   if (!Number.isInteger(retryLimit) || retryLimit < 0) {
     throw new JobDefinitionError("retryLimit must be a non-negative integer");
   }
-  if (typeof retryDelay !== "number" || !Number.isFinite(retryDelay) || retryDelay < 0) {
-    throw new JobDefinitionError("retryDelay must be a non-negative number of seconds");
+  if (!Number.isInteger(retryDelay) || retryDelay < 0) {
+    throw new JobDefinitionError("retryDelay must be a non-negative integer");
   }
 
   return Object.freeze({ retryLimit, retryDelay, retryBackoff });
