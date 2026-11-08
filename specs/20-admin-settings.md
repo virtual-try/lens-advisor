@@ -1,6 +1,6 @@
 # Spec 20 — Admin: settings page
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 09, Spec 15
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —
@@ -96,7 +96,7 @@ Real, used now: 15, 09. Tests: `testConfig()` loader/action calls. Stubbed: none
   - `pnpm build` → exit 0
   - `rg 'style=|className=|<style' app/routes/app.settings.tsx` → exit 1 (0 matches, INV-7 clean)
   - `git diff --check` → exit 0 (clean, no trailing whitespace)
-- **2026-11-08** — Evidence (orchestro spec verify, tree 7fa8a5f1): install pass · typecheck pass · lint pass · build pass · test pass 372/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 1ed77811): install pass · typecheck pass · lint pass · build pass · test pass 607/0/0
 - **2026-11-08** — Fix round R1 accepted findings addressed by coder agy-2:
   - R1-F1 [BLOCKER]: Driven privacy confirmation flow through the toggle (user event opens modal, cancel resets toggle, confirm enables and submits). Sabotage: emptied toggle's open handler -> test failed with `AssertionError: expected false to be true` on `confirmModal?.hasAttribute("open")`. Restored.
   - R1-F2 [BLOCKER]: Replaced all vacuous `toBeDefined()` assertions on `querySelector` results with presence assertions (`not.toBeNull()`, `toBeTruthy()`) plus attribute/text checks.
