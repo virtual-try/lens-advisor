@@ -1324,12 +1324,12 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
       // dispatchJob has no production worker handler (R1-F2)
       expect(dispatchJob.handler).toBeUndefined();
 
-      // Discovering jobs does not register a no-op worker handler for dispatchJob (R1-F2)
+      // Discovering jobs registers spec 30's worker handler for dispatchJob
       const { discoverJobs } = await import("../../shared/queue/discovery.server");
       const discovered = await discoverJobs();
       const discoveredDispatch = discovered.find((d) => d.name === DISPATCH_JOB_NAME);
       expect(discoveredDispatch).toBeDefined();
-      expect(discoveredDispatch?.handler).toBeUndefined();
+      expect(typeof discoveredDispatch?.handler).toBe("function");
 
       const validIntakePayload = {
         shopDomain: "shop.myshopify.com",

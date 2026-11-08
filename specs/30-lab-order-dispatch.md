@@ -67,12 +67,44 @@ test DB). Stubbed: none.
 
 ## Done when
 
-- [ ] `pnpm vitest run app/features/lab-dispatch` passes: every Examples row is a case. [unit]
-- [ ] INV-1: every repository query is tested with two shops. [unit]
-- [ ] INV-2: a logger spy across the failure rows finds no Rx value. [unit]
-- [ ] INV-8: the concurrent-delivery test sends exactly one email. [unit]
+- [x] `pnpm vitest run app/features/lab-dispatch` passes: every Examples row is a case. [unit]
+- [x] INV-1: every repository query is tested with two shops. [unit]
+- [x] INV-2: a logger spy across the failure rows finds no Rx value. [unit]
+- [x] INV-8: the concurrent-delivery test sends exactly one email. [unit]
 - [ ] A real dispatch reaches a test inbox with the PDF attached. [requires: Resend API key + verified domain, S3 bucket with KMS key]
-- [ ] `pnpm test` passes with 0 failures. [unit]
-- [ ] `specs/inventory/30-lab-order-dispatch.md` lists `loadTicketData`, the handler and `resend`. [static]
-- [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
-- [ ] `pnpm build` passes. [static]
+- [x] `pnpm test` passes with 0 failures. [unit]
+- [x] `specs/inventory/30-lab-order-dispatch.md` lists `loadTicketData`, the handler and `resend`. [static]
+- [x] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
+- [x] `pnpm build` passes. [static]
+
+## Log
+
+- **2026-11-08** — Spec 30 implemented by coder agy-3 (engine agy) in worktree `spec-30` on branch `spec/30-lab-order-dispatch`. No git writes (lead commits).
+- **2026-11-08** — Real dispatch to test inbox box left unticked per Ruling R7: requires live Resend account with verified domain and AWS S3 bucket with KMS key provided by owner.
+- **2026-11-08** — Repository `app/features/lab-dispatch/lab-dispatch.repository.server.ts`:
+  - `transitionToSending`: executes a single atomic `UPDATE ... WHERE status IN ('PENDING', 'FAILED')` and increments attempts (Self-check 1). Validates returned count: concurrent workers get `transitioned: false` and exit without sending email (INV-8).
+  - `markSent`, `markFailed`, `resetLabOrderStatus`, `getLabOrder`, `getPrescription`, `getLens`, `getOptionValues`, `getAddOns`: all take `shopId` as the first argument and strictly filter by it (INV-1).
+  - `getLens`, `getOptionValues`, and `getAddOns` omit `archivedAt: null` filtering so archived lenses and options remain readable on old orders (Self-check 3).
+- **2026-11-08** — Ticket Loader `app/features/lab-dispatch/load-ticket-data.server.ts`:
+  - `loadTicketData`: loads LabOrder, catalog lens/options/add-ons, and decrypts prescription ciphertext using AES-256-GCM with context AAD `${shopId}:${prescriptionId}` (INV-2).
+  - Throws data-free `RxDecryptError` (`RX_DECRYPT_FAILED`) on ciphertext tampering or AAD mismatch; never exposes Rx data in error message or stack.
+  - Constructs `TicketData` with option selections for lab-code compilation (Spec 12/24).
+- **2026-11-08** — Service & Job `app/features/lab-dispatch/dispatch.service.server.ts` & `jobs.server.ts`:
+  - `processDispatch`: orchestrates status SENDING transition -> shop settings lab emails check (`NO_LAB_EMAIL`, permanent, no retry) -> `loadTicketData` (`RX_DECRYPT_FAILED`, retried) -> render ticket per `ticketFormat` (PDF, CSV, BOTH) and upload to S3 (`STORAGE_FAILED`, retried) -> download uploaded prescription files if source is UPLOAD (`STORAGE_FAILED`, retried) -> `Mailer.send` with `idempotencyKey = labOrder.id + ':' + attempts` (`MAIL_FAILED`, retried) -> update to `SENT` with `providerId`, `ticketKeys`, `sentAt`.
+  - `resend`: validates tenancy (INV-1), resets order status to `PENDING`, clears `lastErrorCode`, and re-enqueues `lab-orders.dispatch`.
+  - `dispatchJob`: registers the executable worker handler for `lab-orders.dispatch` with retry 5 and exponential backoff (`retryLimit: 5`, `retryDelay: 2`, `retryBackoff: true`).
+- **2026-11-08** — Extension to `app/shared/queue/define-job.ts`:
+  - Added `if (existing.handler && !definition.handler) return;` so that producer-less and consumer-bearing definitions can be discovered in either filesystem order without duplicate job definition errors.
+  - Updated `app/features/lab-orders/intake.test.ts` line 1332 to assert discovered dispatch job now possesses the worker handler registered by spec 30.
+- **2026-11-08** — Inventory fragment `specs/inventory/30-lab-order-dispatch.md`:
+  - Documented `load-ticket-data`, `dispatch-handler`, `dispatch-service`, and `lab-dispatch-repository`.
+- **2026-11-08** — Sabotage:
+  - Bypassed `result.count === 0` in `transitionToSending` (`if (false && result.count === 0)`) -> Self-check 1 test went red (`expected true to be false` in "returns false when already SENDING or SENT"). Restored -> green.
+- **2026-11-08** — Gates verified:
+  - `pnpm vitest run app/features/lab-dispatch`: 1 test file, 16/16 passed.
+  - `pnpm test`: 52 test files, 832/832 passed, 0 failures.
+  - `pnpm typecheck`: exit 0.
+  - `pnpm lint`: exit 0 (0 errors, 0 warnings).
+  - `pnpm build`: exit 0.
+  - `git diff --check`: clean.
+- **2026-11-08** — Evidence (orchestro spec verify, tree ed831229): install pass · typecheck pass · lint pass · build pass · test pass 832/0/0

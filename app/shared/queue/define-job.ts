@@ -394,6 +394,9 @@ export function registerJob(definition: AnyJobDefinition): void {
       registry.set(definition.name, definition);
       return;
     }
+    if (existing.handler && !definition.handler) {
+      return;
+    }
     throw new JobDefinitionError(`Duplicate job definition for "${definition.name}"`);
   }
   registry.set(definition.name, definition);
