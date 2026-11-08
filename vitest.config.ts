@@ -20,6 +20,23 @@ export default defineConfig({
           environment: "node",
         },
       },
+      {
+        test: {
+          name: "configurator",
+          include: ["packages/configurator/**/*.test.ts"],
+          environment: "jsdom",
+          setupFiles: ["packages/configurator/src/test/setup.ts"],
+        },
+      },
+      {
+        test: {
+          name: "db",
+          include: ["test/**/*.test.ts"],
+          environment: "node",
+          testTimeout: 120_000,
+          hookTimeout: 120_000,
+        },
+      },
     ],
   },
 });

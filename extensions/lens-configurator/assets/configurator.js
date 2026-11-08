@@ -1,0 +1,1 @@
+var LensAdvisorConfigurator=(function(e){"use strict";const n="lens-configurator";class t extends HTMLElement{}return customElements.get(n)||customElements.define(n,t),e.LENS_CONFIGURATOR_TAG=n,Object.defineProperty(e,Symbol.toStringTag,{value:"Module"}),e})({});
