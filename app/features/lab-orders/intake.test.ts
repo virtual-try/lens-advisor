@@ -225,7 +225,7 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
       expect(fakeQueue.enqueue).toHaveBeenCalledTimes(1);
       expect(fakeQueue.enqueue).toHaveBeenCalledWith(
         DISPATCH_JOB_NAME,
-        { labOrderId: labOrder.id },
+        { shopId: shopA.shopId, labOrderId: labOrder.id },
         { singletonKey: labOrder.id },
       );
 
@@ -364,12 +364,12 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
       expect(fakeQueue.enqueue).toHaveBeenCalledTimes(2);
       expect(fakeQueue.enqueue).toHaveBeenCalledWith(
         DISPATCH_JOB_NAME,
-        { labOrderId: orderB1!.id },
+        { shopId: shopA.shopId, labOrderId: orderB1!.id },
         { singletonKey: orderB1!.id },
       );
       expect(fakeQueue.enqueue).toHaveBeenCalledWith(
         DISPATCH_JOB_NAME,
-        { labOrderId: orderB2!.id },
+        { shopId: shopA.shopId, labOrderId: orderB2!.id },
         { singletonKey: orderB2!.id },
       );
     });
@@ -510,7 +510,7 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
         // Verify real pg-boss has exactly 1 dispatch job for this labOrderId
         const dispatchJobsInPgBoss = await realQueue.findJobs(DISPATCH_JOB_NAME);
         expect(dispatchJobsInPgBoss).toHaveLength(1);
-        expect(dispatchJobsInPgBoss[0].data).toEqual({ labOrderId: initialLabOrderId });
+        expect(dispatchJobsInPgBoss[0].data).toEqual({ shopId: shopA.shopId, labOrderId: initialLabOrderId });
 
         authWebhookSpy.mockRestore();
         getQueueSpy.mockRestore();
@@ -600,7 +600,7 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
       expect(fakeQueue.enqueue).toHaveBeenCalledTimes(1);
       expect(fakeQueue.enqueue).toHaveBeenCalledWith(
         DISPATCH_JOB_NAME,
-        { labOrderId: labOrder.id },
+        { shopId: shopA.shopId, labOrderId: labOrder.id },
         { singletonKey: labOrder.id },
       );
     });
@@ -1345,7 +1345,16 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
         }).success,
       ).toBe(false);
 
+      // dispatchJob requires shopId and labOrderId (Spec 37, INV-1)
+      expect(
+        dispatchJobPayloadSchema.safeParse({ labOrderId: "order_123" }).success,
+      ).toBe(false);
+      expect(
+        dispatchJobPayloadSchema.safeParse({ shopId: "shop_123" }).success,
+      ).toBe(false);
+
       const validDispatchPayload = {
+        shopId: "shop_123",
         labOrderId: "order_123",
       };
       expect(dispatchJobPayloadSchema.parse(validDispatchPayload)).toEqual(validDispatchPayload);

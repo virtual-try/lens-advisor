@@ -332,7 +332,10 @@ test.describe("Spec 33 Flows 11 & 12: Orders intake and lab dispatch (compliance
       const dispatchJobs = mockQueue.findJobs(DISPATCH_JOB_NAME);
       expect(dispatchJobs.length).toBe(1);
       const dispatchJobEntry = dispatchJobs[0];
-      expect(dispatchJobEntry.payload).toEqual({ labOrderId: failedOrder.id });
+      expect(dispatchJobEntry.payload).toEqual({
+        shopId,
+        labOrderId: failedOrder.id,
+      });
 
       // 6. Execute real dispatch handler with captured job payload (no manual handler calls)
       const beforeDispatch = new Date();

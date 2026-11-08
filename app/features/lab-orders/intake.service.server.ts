@@ -517,11 +517,11 @@ export class IntakeService {
 
       labOrders.push(labOrder);
 
-      // Enqueue lab-orders.dispatch job only if the order is in PENDING status (R1-F3)
+      // Enqueue lab-orders.dispatch job only if the order is in PENDING status (R1-F3, Spec 37 INV-1)
       if (labOrder.status === "PENDING") {
         await queue.enqueue(
           DISPATCH_JOB_NAME,
-          { labOrderId: labOrder.id },
+          { shopId: shop.id, labOrderId: labOrder.id },
           { singletonKey: labOrder.id },
         );
       }
