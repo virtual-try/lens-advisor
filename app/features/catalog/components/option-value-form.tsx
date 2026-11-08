@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { minorUnitDigits } from "../../../../packages/rx-core/src/pricing/index.js";
 
 export interface OptionValueFormData {
   id?: string;
@@ -54,11 +55,34 @@ export function OptionValueForm({
   const [swatch, setSwatch] = useState(initialData?.swatch ?? "");
 
   const hasBothCodes = Boolean(token.trim() && overrideCode.trim());
-  const showBoth = hasBothCodes || Boolean(errors.ONE_CODE_SOURCE || errors.overrideCode === "ONE_CODE_SOURCE");
+  const showBoth =
+    hasBothCodes ||
+    Boolean(errors.ONE_CODE_SOURCE || errors.overrideCode === "ONE_CODE_SOURCE");
+
+  const digits = minorUnitDigits(currency) ?? 2;
+  const KNOWN_ERROR_KEYS = new Set([
+    "ONE_CODE_SOURCE",
+    "MONEY_PRECISION",
+    "NEGATIVE_PRICE",
+    "REQUIRED",
+    "label",
+    "priceDelta",
+    "token",
+    "overrideCode",
+    "swatch",
+  ]);
+  const unlistedError =
+    errors.form ||
+    Object.entries(errors).find(([k]) => !KNOWN_ERROR_KEYS.has(k))?.[1];
 
   return (
     <form onSubmit={onSubmit} method="post">
       <s-stack direction="block" gap="base">
+        {unlistedError && (
+          <s-banner tone="critical" heading="Action failed">
+            <s-paragraph>{unlistedError}</s-paragraph>
+          </s-banner>
+        )}
         {errors.ONE_CODE_SOURCE && (
           <s-banner tone="critical" heading="Code source conflict">
             <s-paragraph>
@@ -69,7 +93,10 @@ export function OptionValueForm({
         {errors.MONEY_PRECISION && (
           <s-banner tone="critical" heading="Invalid price precision">
             <s-paragraph>
-              Maximum 2 decimal places allowed for {currency}.
+              {typeof errors.MONEY_PRECISION === "string" &&
+              errors.MONEY_PRECISION !== "MONEY_PRECISION"
+                ? errors.MONEY_PRECISION
+                : `Maximum ${digits} decimal places allowed for ${currency}.`}
             </s-paragraph>
           </s-banner>
         )}
@@ -127,7 +154,7 @@ export function OptionValueForm({
           <s-choice value="none">None</s-choice>
         </s-choice-list>
 
-        {(codeType === "token" || showBoth) && (
+        {(codeType === "token" || showBoth || Boolean(errors.token)) && (
           <s-text-field
             label="Lab-code token"
             name="token"

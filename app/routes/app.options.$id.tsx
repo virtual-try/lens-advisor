@@ -34,6 +34,7 @@ import {
   validateInput,
 } from "../features/catalog/schema";
 import {
+  minorUnitDigits,
   parseMoneyText,
   toShopifyDecimal,
 } from "../../packages/rx-core/src/pricing/index.js";
@@ -130,7 +131,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     const payload = validateInput(optionValueActionSchema, rawData);
-    const intent = typeof payload.intent === "string" ? payload.intent : "save";
+    const intent = payload.intent ?? "save";
 
     // Intent: Delete / Archive
     if (intent === "delete" || intent === "archive") {
@@ -196,9 +197,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         const parsed = parseMoneyText(priceStr, currency);
         if (!parsed.ok) {
           if (parsed.error === "MONEY_PRECISION") {
+            const digits = minorUnitDigits(currency) ?? 2;
             return errorResponse(
               new BadRequestError(
-                `Maximum 2 decimal places allowed for ${currency}`,
+                `Maximum ${digits} decimal places allowed for ${currency}`,
                 "MONEY_PRECISION",
                 [{ path: "priceDelta", code: "MONEY_PRECISION" }],
               ),
@@ -228,10 +230,37 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     let tokenValue: string | null = null;
     let overrideCode: string | null = null;
 
-    if (typeof payload.token === "string" && payload.token.trim()) {
-      const parts = payload.token.trim().split("=");
-      tokenKey = parts[0]?.trim() || null;
-      tokenValue = parts.slice(1).join("=").trim() || null;
+    const rawTokenString = typeof payload.token === "string" ? payload.token.trim() : null;
+    const rawOverrideString = typeof payload.overrideCode === "string" ? payload.overrideCode.trim() : null;
+
+    if (rawTokenString && rawOverrideString) {
+      return errorResponse(
+        new BadRequestError(
+          "Choose either a lab-code token or an override code, not both",
+          "ONE_CODE_SOURCE",
+          [
+            { path: "overrideCode", code: "ONE_CODE_SOURCE" },
+            { path: "token", code: "ONE_CODE_SOURCE" },
+          ],
+        ),
+      );
+    }
+
+    if (rawTokenString) {
+      const eqIdx = rawTokenString.indexOf("=");
+      const key = eqIdx !== -1 ? rawTokenString.slice(0, eqIdx).trim() : "";
+      const val = eqIdx !== -1 ? rawTokenString.slice(eqIdx + 1).trim() : "";
+      if (eqIdx === -1 || !key || !val) {
+        return errorResponse(
+          new BadRequestError(
+            "Lab-code token must be in key=VALUE format",
+            "MALFORMED_TOKEN",
+            [{ path: "token", code: "MALFORMED_TOKEN" }],
+          ),
+        );
+      }
+      tokenKey = key;
+      tokenValue = val;
     }
     if (typeof payload.tokenKey === "string" && payload.tokenKey.trim()) {
       tokenKey = payload.tokenKey.trim();
@@ -239,8 +268,18 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     if (typeof payload.tokenValue === "string" && payload.tokenValue.trim()) {
       tokenValue = payload.tokenValue.trim();
     }
-    if (typeof payload.overrideCode === "string" && payload.overrideCode.trim()) {
-      overrideCode = payload.overrideCode.trim();
+    if ((tokenKey && !tokenValue) || (!tokenKey && tokenValue)) {
+      return errorResponse(
+        new BadRequestError(
+          "Lab-code token must be in key=VALUE format",
+          "MALFORMED_TOKEN",
+          [{ path: "token", code: "MALFORMED_TOKEN" }],
+        ),
+      );
+    }
+
+    if (rawOverrideString) {
+      overrideCode = rawOverrideString;
     }
 
     if (payload.token === "" || payload.token === null) {
@@ -252,7 +291,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     // Code source exclusivity check
-    const hasToken = Boolean(tokenKey || tokenValue);
+    const hasToken = Boolean(tokenKey && tokenValue);
     const hasOverride = Boolean(overrideCode);
     if (hasToken && hasOverride) {
       return errorResponse(
@@ -398,6 +437,9 @@ export default function OptionValueRoute() {
   const fieldErrors: Record<string, string> = {};
   if (actionError) {
     fieldErrors[actionError.code] = actionError.message;
+    if (actionError.code === "NAME_NOT_UNIQUE" && !fieldErrors.label) {
+      fieldErrors.label = actionError.message;
+    }
     if (actionError.fields) {
       for (const field of actionError.fields) {
         fieldErrors[field.path] = actionError.message || field.code;

@@ -34,6 +34,7 @@ import {
   validateInput,
 } from "../features/catalog/schema";
 import {
+  minorUnitDigits,
   parseMoneyText,
   toShopifyDecimal,
 } from "../../packages/rx-core/src/pricing/index.js";
@@ -112,7 +113,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     const payload = validateInput(addOnActionSchema, rawData);
-    const intent = typeof payload.intent === "string" ? payload.intent : "save";
+    const intent = payload.intent ?? "save";
 
     // Intent: Delete / Archive
     if (intent === "delete" || intent === "archive") {
@@ -177,9 +178,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         const parsed = parseMoneyText(priceStr, currency);
         if (!parsed.ok) {
           if (parsed.error === "MONEY_PRECISION") {
+            const digits = minorUnitDigits(currency) ?? 2;
             return errorResponse(
               new BadRequestError(
-                `Maximum 2 decimal places allowed for ${currency}`,
+                `Maximum ${digits} decimal places allowed for ${currency}`,
                 "MONEY_PRECISION",
                 [{ path: "price", code: "MONEY_PRECISION" }],
               ),
@@ -284,6 +286,9 @@ export default function AddOnRoute() {
   const fieldErrors: Record<string, string> = {};
   if (actionError) {
     fieldErrors[actionError.code] = actionError.message;
+    if (actionError.code === "NAME_NOT_UNIQUE" && !fieldErrors.name) {
+      fieldErrors.name = actionError.message;
+    }
     if (actionError.fields) {
       for (const field of actionError.fields) {
         fieldErrors[field.path] = actionError.message || field.code;
@@ -291,6 +296,17 @@ export default function AddOnRoute() {
       }
     }
   }
+
+  const digits = minorUnitDigits(currency) ?? 2;
+  const KNOWN_ERROR_KEYS = new Set([
+    "REQUIRED",
+    "NEGATIVE_PRICE",
+    "MONEY_PRECISION",
+    "name",
+    "price",
+  ]);
+  const unlistedError =
+    Object.entries(fieldErrors).find(([k]) => !KNOWN_ERROR_KEYS.has(k))?.[1];
 
   return (
     <s-page heading={addOn ? `Edit: ${addOn.name}` : "New add-on"}>
@@ -300,6 +316,11 @@ export default function AddOnRoute() {
       <s-section heading="Add-on details">
         <form method="post">
           <s-stack direction="block" gap="base">
+            {unlistedError && (
+              <s-banner tone="critical" heading="Action failed">
+                <s-paragraph>{unlistedError}</s-paragraph>
+              </s-banner>
+            )}
             {fieldErrors.REQUIRED && (
               <s-banner tone="critical" heading="Missing required fields">
                 <s-paragraph>Please fill in all required fields.</s-paragraph>
@@ -312,7 +333,12 @@ export default function AddOnRoute() {
             )}
             {fieldErrors.MONEY_PRECISION && (
               <s-banner tone="critical" heading="Invalid price precision">
-                <s-paragraph>Maximum 2 decimal places allowed.</s-paragraph>
+                <s-paragraph>
+                  {typeof fieldErrors.MONEY_PRECISION === "string" &&
+                  fieldErrors.MONEY_PRECISION !== "MONEY_PRECISION"
+                    ? fieldErrors.MONEY_PRECISION
+                    : `Maximum ${digits} decimal places allowed for ${currency}.`}
+                </s-paragraph>
               </s-banner>
             )}
 

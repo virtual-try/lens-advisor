@@ -472,7 +472,11 @@ export const retrySyncActionSchema = z.object({
 });
 
 export const optionValueActionSchema = z.object({
-  intent: z.string().optional(),
+  intent: z
+    .enum(["save", "delete", "archive"], {
+      errorMap: () => ({ message: "UNKNOWN_INTENT" }),
+    })
+    .optional(),
   label: z.string().trim().optional(),
   priceDeltaMinor: z
     .number({ invalid_type_error: "Price delta must be an integer" })
@@ -490,7 +494,11 @@ export const optionValueActionSchema = z.object({
 });
 
 export const addOnActionSchema = z.object({
-  intent: z.string().optional(),
+  intent: z
+    .enum(["save", "delete", "archive"], {
+      errorMap: () => ({ message: "UNKNOWN_INTENT" }),
+    })
+    .optional(),
   name: z.string().trim().optional(),
   priceMinor: z
     .number({ invalid_type_error: "Price must be an integer" })

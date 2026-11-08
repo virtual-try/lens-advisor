@@ -90,4 +90,4 @@ Real, used now: 14, 17, 09. Tests: `testConfig()` loader/action calls, fake admi
     - `pnpm lint` -> exit 0 (0 errors, 0 warnings)
     - `pnpm build` -> exit 0
     - `git diff --check` -> exit 0
-- **2026-11-08** — Evidence (orchestro spec verify, tree efb42677): install pass · typecheck pass · lint pass · build pass · test pass 695/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 1bb46f59): install pass · typecheck pass · lint pass · build pass · test pass 701/0/0

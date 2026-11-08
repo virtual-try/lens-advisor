@@ -4,7 +4,13 @@ import type {
   HeadersFunction,
   LoaderFunctionArgs,
 } from "react-router";
-import { data, useLoaderData, useNavigation, useRouteError } from "react-router";
+import {
+  data,
+  useActionData,
+  useLoaderData,
+  useNavigation,
+  useRouteError,
+} from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
 
@@ -252,6 +258,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 export default function AdminOptionsRoute() {
   const { groups, addOns } = useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>();
   const [newGroupName, setNewGroupName] = useState("");
   const [newGroupKind, setNewGroupKind] = useState<"MATERIAL" | "TINT_TYPE" | "COLOR">("MATERIAL");
 
@@ -262,6 +269,22 @@ export default function AdminOptionsRoute() {
   } catch {
     isSubmitting = false;
   }
+
+  const actionError = (
+    actionData as
+      | {
+          error?: {
+            code: string;
+            message: string;
+            fields?: Array<{ path: string; code: string }>;
+          };
+        }
+      | undefined
+  )?.error;
+
+  const handleFormSubmitClick = (e: { currentTarget: unknown }) => {
+    ((e.currentTarget as HTMLElement)?.closest("form") as HTMLFormElement | null)?.requestSubmit?.();
+  };
 
   const addModalRef = useRef<HTMLElementTagNameMap["s-modal"] | null>(null);
   const deleteModalRef = useRef<HTMLElementTagNameMap["s-modal"] | null>(null);
@@ -311,6 +334,20 @@ export default function AdminOptionsRoute() {
       </s-button>
 
       <s-stack direction="block" gap="base">
+        {actionError && (
+          <s-banner
+            tone="critical"
+            heading={
+              actionError.code === "SHOPIFY_ARCHIVE_FAILED"
+                ? "Shopify archive failed"
+                : actionError.code === "SYNC_FAILED"
+                  ? "Shopify sync failed"
+                  : "Action failed"
+            }
+          >
+            <s-paragraph>{actionError.message || actionError.code}</s-paragraph>
+          </s-banner>
+        )}
         {/* Section 1: Material & index */}
         <s-section heading="Material & index">
           {materialGroups.length === 0 ? (
@@ -341,7 +378,7 @@ export default function AdminOptionsRoute() {
                           name="ids"
                           value={JSON.stringify(getReorderedIds(materialGroups, gIndex, -1))}
                         />
-                        <s-button type="submit" disabled={gIndex === 0 || isSubmitting}>
+                        <s-button type="submit" disabled={gIndex === 0 || isSubmitting} onClick={handleFormSubmitClick}>
                           Move up
                         </s-button>
                       </form>
@@ -355,6 +392,7 @@ export default function AdminOptionsRoute() {
                         <s-button
                           type="submit"
                           disabled={gIndex === materialGroups.length - 1 || isSubmitting}
+                          onClick={handleFormSubmitClick}
                         >
                           Move down
                         </s-button>
@@ -402,7 +440,7 @@ export default function AdminOptionsRoute() {
                                     <input type="hidden" name="intent" value="retry_sync" />
                                     <input type="hidden" name="entity" value="optionValue" />
                                     <input type="hidden" name="id" value={val.id} />
-                                    <s-button type="submit" variant="tertiary" disabled={isSubmitting}>
+                                    <s-button type="submit" variant="tertiary" disabled={isSubmitting} onClick={handleFormSubmitClick}>
                                       Retry
                                     </s-button>
                                   </form>
@@ -419,7 +457,7 @@ export default function AdminOptionsRoute() {
                                   <input type="hidden" name="intent" value="retry_sync" />
                                   <input type="hidden" name="entity" value="optionValue" />
                                   <input type="hidden" name="id" value={val.id} />
-                                  <s-button type="submit" variant="tertiary" disabled={isSubmitting}>
+                                  <s-button type="submit" variant="tertiary" disabled={isSubmitting} onClick={handleFormSubmitClick}>
                                     Retry
                                   </s-button>
                                 </form>
@@ -433,7 +471,7 @@ export default function AdminOptionsRoute() {
                                 name="ids"
                                 value={JSON.stringify(getReorderedIds(group.values, vIndex, -1))}
                               />
-                              <s-button type="submit" disabled={vIndex === 0 || isSubmitting}>
+                              <s-button type="submit" disabled={vIndex === 0 || isSubmitting} onClick={handleFormSubmitClick}>
                                 Move up
                               </s-button>
                             </form>
@@ -448,6 +486,7 @@ export default function AdminOptionsRoute() {
                               <s-button
                                 type="submit"
                                 disabled={vIndex === group.values.length - 1 || isSubmitting}
+                                onClick={handleFormSubmitClick}
                               >
                                 Move down
                               </s-button>
@@ -512,7 +551,7 @@ export default function AdminOptionsRoute() {
                           name="ids"
                           value={JSON.stringify(getReorderedIds(tintAndColorGroups, gIndex, -1))}
                         />
-                        <s-button type="submit" disabled={gIndex === 0 || isSubmitting}>
+                        <s-button type="submit" disabled={gIndex === 0 || isSubmitting} onClick={handleFormSubmitClick}>
                           Move up
                         </s-button>
                       </form>
@@ -526,6 +565,7 @@ export default function AdminOptionsRoute() {
                         <s-button
                           type="submit"
                           disabled={gIndex === tintAndColorGroups.length - 1 || isSubmitting}
+                          onClick={handleFormSubmitClick}
                         >
                           Move down
                         </s-button>
@@ -576,7 +616,7 @@ export default function AdminOptionsRoute() {
                                     <input type="hidden" name="intent" value="retry_sync" />
                                     <input type="hidden" name="entity" value="optionValue" />
                                     <input type="hidden" name="id" value={val.id} />
-                                    <s-button type="submit" variant="tertiary" disabled={isSubmitting}>
+                                    <s-button type="submit" variant="tertiary" disabled={isSubmitting} onClick={handleFormSubmitClick}>
                                       Retry
                                     </s-button>
                                   </form>
@@ -593,7 +633,7 @@ export default function AdminOptionsRoute() {
                                   <input type="hidden" name="intent" value="retry_sync" />
                                   <input type="hidden" name="entity" value="optionValue" />
                                   <input type="hidden" name="id" value={val.id} />
-                                  <s-button type="submit" variant="tertiary" disabled={isSubmitting}>
+                                  <s-button type="submit" variant="tertiary" disabled={isSubmitting} onClick={handleFormSubmitClick}>
                                     Retry
                                   </s-button>
                                 </form>
@@ -607,7 +647,7 @@ export default function AdminOptionsRoute() {
                                 name="ids"
                                 value={JSON.stringify(getReorderedIds(group.values, vIndex, -1))}
                               />
-                              <s-button type="submit" disabled={vIndex === 0 || isSubmitting}>
+                              <s-button type="submit" disabled={vIndex === 0 || isSubmitting} onClick={handleFormSubmitClick}>
                                 Move up
                               </s-button>
                             </form>
@@ -622,6 +662,7 @@ export default function AdminOptionsRoute() {
                               <s-button
                                 type="submit"
                                 disabled={vIndex === group.values.length - 1 || isSubmitting}
+                                onClick={handleFormSubmitClick}
                               >
                                 Move down
                               </s-button>
@@ -687,7 +728,7 @@ export default function AdminOptionsRoute() {
                           <input type="hidden" name="intent" value="retry_sync" />
                           <input type="hidden" name="entity" value="addOn" />
                           <input type="hidden" name="id" value={addOn.id} />
-                          <s-button type="submit" variant="tertiary" disabled={isSubmitting}>
+                          <s-button type="submit" variant="tertiary" disabled={isSubmitting} onClick={handleFormSubmitClick}>
                             Retry
                           </s-button>
                         </form>
@@ -700,7 +741,7 @@ export default function AdminOptionsRoute() {
                         name="ids"
                         value={JSON.stringify(getReorderedIds(addOns, aIndex, -1))}
                       />
-                      <s-button type="submit" disabled={aIndex === 0 || isSubmitting}>
+                      <s-button type="submit" disabled={aIndex === 0 || isSubmitting} onClick={handleFormSubmitClick}>
                         Move up
                       </s-button>
                     </form>
@@ -714,6 +755,7 @@ export default function AdminOptionsRoute() {
                       <s-button
                         type="submit"
                         disabled={aIndex === addOns.length - 1 || isSubmitting}
+                        onClick={handleFormSubmitClick}
                       >
                         Move down
                       </s-button>
@@ -776,6 +818,7 @@ export default function AdminOptionsRoute() {
                 variant="primary"
                 loading={isSubmitting}
                 disabled={isSubmitting}
+                onClick={handleFormSubmitClick}
               >
                 Create group
               </s-button>
@@ -816,6 +859,7 @@ export default function AdminOptionsRoute() {
               tone="critical"
               loading={isSubmitting}
               disabled={isSubmitting}
+              onClick={handleFormSubmitClick}
             >
               Confirm delete
             </s-button>
