@@ -6,6 +6,7 @@ import type {
   Selection,
 } from "../../../rx-core/src/index.js";
 import type { ApiClient } from "../shared/api.js";
+import type { ProductData } from "../shared/types.js";
 
 export type ConfiguratorStatus = "idle" | "loading" | "ready" | "error" | "empty";
 
@@ -25,6 +26,8 @@ export interface StepProps {
   state: ConfiguratorState;
   dispatch: (action: ConfiguratorAction) => void;
   api: ApiClient;
+  mount?: HTMLElement | null;
+  product?: ProductData | null;
 }
 
 export interface StepModule {
