@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { createPgBoss } from "../container/queue.server";
-import { clearJobRegistry, defineJob } from "./define-job";
+import { JobPayloadValidationError, clearJobRegistry, defineJob } from "./define-job";
 import { Queue } from "./queue";
 import { enqueueTestRaw, requireTestDatabaseUrl, uniqueSchema, waitFor, withTestQueue } from "./test-support";
 
@@ -84,6 +84,35 @@ describe("Queue on a real Postgres", () => {
     });
   });
 
+  it("handler throws twice, retryLimit 3: runs 3 times, succeeds (Examples, R5-F2)", async () => {
+    await withTestQueue(async (queue) => {
+      const name = jobName("retry-exact-3");
+      let attempts = 0;
+      const definition = defineJob({
+        name,
+        schema: z.object({ orderId: z.string() }),
+        retry: { retryLimit: 3, retryDelay: 0 },
+        handler: async () => {
+          attempts += 1;
+          if (attempts <= 2) throw new Error("transient failure");
+        },
+      });
+
+      await queue.work(definition);
+      await queue.enqueue(name, { orderId: "order-retry-exact" }, { singletonKey: "order-retry-exact" });
+
+      const completed = await waitFor(
+        async () => (await queue.findJobs(name))[0],
+        (job) => job.state === "completed"
+      );
+
+      expect(attempts).toBe(3);
+      expect(completed.state).toBe("completed");
+      expect(completed.retryCount).toBe(2);
+      expect(await queue.findJobs(`${name}.dead`)).toHaveLength(0);
+    });
+  });
+
   it("moves a job that exhausts its retries to <name>.dead", async () => {
     await withTestQueue(async (queue) => {
       const name = jobName("dead");
@@ -155,6 +184,81 @@ describe("Queue on a real Postgres", () => {
       expect(handlerCalled).toBe(false);
       expect(deadLetter.data).toEqual({ rxText: "SPH -2.25" });
       expect(deadLetter.sourceName).toBe(name);
+    });
+  });
+
+  it("sanitizes validation errors on enqueue and receive so plaintext Rx values never leak (R5-F1)", async () => {
+    await withTestQueue(async (queue) => {
+      const name = jobName("rx-sanitized");
+      let handlerCalled = false;
+      const definition = defineJob({
+        name,
+        schema: z.object({
+          mode: z.enum(["SINGLE_VISION", "PROGRESSIVE"]),
+        }),
+        retry: { retryLimit: 0, retryDelay: 0 },
+        handler: () => {
+          handlerCalled = true;
+        },
+      });
+      await queue.register(definition);
+
+      // 1. Enqueue validation failure path:
+      // Must throw a sanitized error with only job name, issue paths, and Zod issue codes;
+      // never the received value, Zod's message text, or the ZodError as cause.
+      let enqueueError: unknown;
+      try {
+        await queue.enqueue(name, { mode: "SPH -2.25" });
+      } catch (err) {
+        enqueueError = err;
+      }
+
+      expect(enqueueError).toBeInstanceOf(JobPayloadValidationError);
+      const enqErr = enqueueError as JobPayloadValidationError;
+      expect(enqErr.jobName).toBe(name);
+      expect(enqErr.issues).toEqual([{ path: ["mode"], code: "invalid_enum_value" }]);
+      expect(enqErr.message).toContain(name);
+      expect(enqErr.message).toContain("mode");
+      expect(enqErr.message).toContain("invalid_enum_value");
+      expect(enqErr.message).not.toContain("SPH -2.25");
+      expect(enqErr.message).not.toContain("Expected");
+      expect(enqErr.cause).toBeUndefined();
+      expect(enqErr.stack).not.toContain("SPH -2.25");
+      expect(JSON.stringify(enqErr)).not.toContain("SPH -2.25");
+      expect(await queue.findJobs(name)).toHaveLength(0);
+
+      // 2. Receive validation failure path:
+      // Insert raw invalid payload directly into pg-boss; worker validates on receive.
+      // The job fails and moves to <name>.dead, and the failure stored by pg-boss
+      // in pgboss.job output must never contain the plaintext Rx value.
+      await queue.work(definition);
+      await enqueueTestRaw(
+        queue,
+        name,
+        { mode: "SPH -2.25" },
+        { singletonKey: "raw-rx-mode" }
+      );
+
+      const deadLetter = await waitFor(
+        async () => (await queue.findJobs(`${name}.dead`))[0],
+        () => true
+      );
+
+      expect(handlerCalled).toBe(false);
+      expect(deadLetter.sourceName).toBe(name);
+
+      // Retrieve the failed job record from pg-boss to inspect its stored failure output
+      const jobs = await queue.findJobs(name);
+      const failedJob = jobs.find((j) => j.state === "failed");
+      expect(failedJob).toBeDefined();
+      expect(failedJob?.output).toBeDefined();
+
+      const failureJson = JSON.stringify(failedJob?.output);
+      expect(failureJson).not.toContain("SPH -2.25");
+      expect(failureJson).not.toContain("Expected");
+      expect(failureJson).toContain(name);
+      expect(failureJson).toContain("mode");
+      expect(failureJson).toContain("invalid_enum_value");
     });
   });
 

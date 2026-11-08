@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { JobDefinitionError, defineJob, validateJobPayload } from "./define-job";
+import {
+  JobDefinitionError,
+  JobPayloadValidationError,
+  defineJob,
+  validateJobPayload,
+} from "./define-job";
 
 describe("defineJob payload guard (INV-2)", () => {
   it("rejects a plain string field such as rxText at registration", () => {
@@ -470,5 +475,35 @@ describe("defineJob payload guard (INV-2)", () => {
         handler: () => undefined,
       })
     ).not.toThrow();
+  });
+
+  it("throws sanitized JobPayloadValidationError without plaintext Rx values on validation failure (R5-F1)", () => {
+    const definition = defineJob({
+      name: "test.mode-validation",
+      schema: z.object({
+        mode: z.enum(["SINGLE_VISION", "PROGRESSIVE"]),
+      }),
+      handler: () => undefined,
+    });
+
+    let caughtError: unknown;
+    try {
+      validateJobPayload(definition, { mode: "SPH -2.25" });
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toBeInstanceOf(JobPayloadValidationError);
+    const err = caughtError as JobPayloadValidationError;
+    expect(err.jobName).toBe("test.mode-validation");
+    expect(err.issues).toEqual([{ path: ["mode"], code: "invalid_enum_value" }]);
+    expect(err.message).toContain("test.mode-validation");
+    expect(err.message).toContain("mode");
+    expect(err.message).toContain("invalid_enum_value");
+    expect(err.message).not.toContain("SPH -2.25");
+    expect(err.message).not.toContain("Expected");
+    expect(err.cause).toBeUndefined();
+    expect(err.stack).not.toContain("SPH -2.25");
+    expect(JSON.stringify(err)).not.toContain("SPH -2.25");
   });
 });

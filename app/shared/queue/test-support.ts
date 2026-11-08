@@ -7,7 +7,7 @@ import { createPgBoss } from "../container/queue.server";
 import { type Queue, createQueue } from "./queue";
 
 /**
- * Vitest does not copy `.env` into `process.env`; load it once for DB-backed
+ * Vitest does not copy `.env` into environment variables; load it once for DB-backed
  * tests so the documented `pnpm test` command works on a fresh checkout.
  */
 function loadLocalEnv(): void {

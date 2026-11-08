@@ -6,18 +6,16 @@ import { requireTestDatabaseUrl } from "../queue/test-support";
 import { getQueue, resetQueueForTest } from "./queue.server";
 
 describe("getQueue initialization error handling (R4-F3)", () => {
-  const originalDatabaseUrl = process.env.DATABASE_URL;
-
   beforeEach(async () => {
-    process.env.DATABASE_URL = requireTestDatabaseUrl();
+    vi.stubEnv("DATABASE_URL", requireTestDatabaseUrl());
     resetConfigCache();
     await resetQueueForTest();
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
     await resetQueueForTest();
-    process.env.DATABASE_URL = originalDatabaseUrl;
     resetConfigCache();
   });
 

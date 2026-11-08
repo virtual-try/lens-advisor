@@ -9,10 +9,13 @@ import type {
 import {
   type AnyJobDefinition,
   JobDefinitionError,
+  JobPayloadValidationError,
   deadLetterQueueName,
   getJobDefinition,
   validateJobPayload,
 } from "./define-job";
+
+export { JobDefinitionError, JobPayloadValidationError };
 
 export interface QueueOptions {
   /** pg-boss schema. Defaults to `pgboss` (ARCHITECTURE.md#data-model). */

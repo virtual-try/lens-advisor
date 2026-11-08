@@ -53,6 +53,41 @@ export class JobDefinitionError extends Error {
   }
 }
 
+export interface SanitizedValidationIssue {
+  readonly path: readonly (string | number)[];
+  readonly code: string;
+}
+
+/**
+ * Sanitized validation error carrying only job name, issue paths, and Zod issue codes.
+ * Never exposes the received values, Zod message text, or raw ZodError as cause (INV-2).
+ */
+export class JobPayloadValidationError extends JobDefinitionError {
+  readonly jobName: string;
+  readonly issues: readonly SanitizedValidationIssue[];
+
+  constructor(jobName: string, issues: readonly SanitizedValidationIssue[]) {
+    const summary = issues
+      .map((issue) => `${issue.path.length === 0 ? "payload" : issue.path.join(".")}: ${issue.code}`)
+      .join(", ");
+    super(`Job "${jobName}" payload validation failed: ${summary}`);
+    this.name = "JobPayloadValidationError";
+    this.jobName = jobName;
+    this.issues = issues;
+    // Explicitly guarantee no cause property is set
+    delete (this as { cause?: unknown }).cause;
+  }
+
+  toJSON(): Record<string, unknown> {
+    return {
+      name: this.name,
+      message: this.message,
+      jobName: this.jobName,
+      issues: this.issues,
+    };
+  }
+}
+
 const JOB_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
 const ID_FIELD_PATTERN = /(?:Id|Ids|Key|Keys)$/;
 
@@ -384,9 +419,16 @@ export function validateJobPayload(
   definition: AnyJobDefinition,
   payload: unknown
 ): unknown {
-  const parsed = definition.schema.parse(payload);
+  const result = definition.schema.safeParse(payload);
+  if (!result.success) {
+    const issues: SanitizedValidationIssue[] = result.error.issues.map((issue) => ({
+      path: issue.path,
+      code: issue.code,
+    }));
+    throw new JobPayloadValidationError(definition.name, issues);
+  }
   assertNoUnknownKeys(definition.schema, payload, []);
-  return parsed;
+  return result.data;
 }
 
 function assertNoUnknownKeys(

@@ -18,7 +18,7 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | 09 | [Plan gate (Shopify managed pricing)](./09-plan-gate.md) | Done | 01 | Standard | — | PR #15 |
 | 10 | [Rx parser and validation](./10-rx-parser-validation.md) | Done | 03 | Standard | — | PR #19 |
 | 11 | [Rx limits engine](./11-rx-limits-engine.md) | Done | 03 | Standard | — | PR #23 |
-| 12 | [Lab code compiler](./12-lab-code-compiler.md) | Not started | 03 | Standard | — |  |
+| 12 | [Lab code compiler](./12-lab-code-compiler.md) | Done | 03 | Standard | — | PR #28 |
 | 13 | [Price calculation](./13-pricing.md) | Done | 03 | Standard | — | PR #30 |
 | 14 | [Catalog repository and service](./14-catalog-service.md) | Not started | 02, 03 | Standard | — |  |
 | 15 | [Shop settings repository and service](./15-shop-settings-service.md) | Done | 02, 03 | Standard | — | PR #32 |
@@ -73,3 +73,4 @@ Not started · In progress · Blocked · Done
 - **2026-11-07** — Spec 15 merged (PR #32).
 - **2026-11-07** — Spec 05 merged (PR #24).
 - **2026-11-07** — Spec 07 merged (PR #35).
+- **2026-11-08** — Spec 12 merged (PR #28).

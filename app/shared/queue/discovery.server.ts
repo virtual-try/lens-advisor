@@ -17,7 +17,7 @@ export async function discoverJobs(
   featuresDir: string = defaultFeaturesDir()
 ): Promise<AnyJobDefinition[]> {
   const entries = await readdir(featuresDir, { withFileTypes: true }).catch((error: unknown) => {
-    if (isMissingDirectory(error)) return [];
+    if (isMissingFileOrDirectory(error)) return [];
     throw error;
   });
 
@@ -38,12 +38,13 @@ async function fileExists(file: string): Promise<boolean> {
   try {
     await access(file);
     return true;
-  } catch {
-    return false;
+  } catch (error: unknown) {
+    if (isMissingFileOrDirectory(error)) return false;
+    throw error;
   }
 }
 
-function isMissingDirectory(error: unknown): boolean {
+function isMissingFileOrDirectory(error: unknown): boolean {
   return (
     typeof error === "object" &&
     error !== null &&
