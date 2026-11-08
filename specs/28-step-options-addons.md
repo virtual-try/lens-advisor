@@ -108,4 +108,4 @@ Real, used now: 16, 13. Tests: fixture catalog. Stubbed: none.
   - `pnpm lint`: exit 0 (`--max-warnings 0`).
   - `pnpm build`: exit 0 (`loader.js` 1314 B <= 10 KB limit, `configurator.js` 116588 B).
   - `git diff --check`: clean (exit 0).
-- **2026-11-08** — Evidence (orchestro spec verify, tree f5c66418): install pass · typecheck pass · lint pass · build pass · test pass 1004/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree ca5a723e): install pass · typecheck pass · lint pass · build pass · test pass 1010/0/0

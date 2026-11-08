@@ -136,6 +136,7 @@ export class LensConfiguratorElement extends HTMLElement {
         proxyBase,
         isOpen: true,
         triggerElement: this.triggerButton,
+        mountElement: mount,
         onClose: () => {
           this.close();
         },

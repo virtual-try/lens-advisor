@@ -63,6 +63,7 @@ export interface ConfiguratorAppProps {
   isOpen?: boolean;
   onClose?: () => void;
   triggerElement?: HTMLElement | null;
+  mountElement?: HTMLElement | null;
 }
 
 export function ConfiguratorApp({
@@ -73,6 +74,7 @@ export function ConfiguratorApp({
   isOpen = true,
   onClose,
   triggerElement,
+  mountElement,
 }: ConfiguratorAppProps): JSX.Element | null {
   const safeProduct = useMemo(() => {
     return parseProductData(product);
@@ -418,6 +420,7 @@ export function ConfiguratorApp({
                 activeStep={activeStep}
                 canGoBack={canGoBack}
                 isComplete={isCurrentComplete}
+                mount={mountElement}
                 onBack={handleBack}
                 onContinue={handleContinue}
               />

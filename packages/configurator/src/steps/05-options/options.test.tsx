@@ -12,8 +12,8 @@ import {
 } from "./index";
 import { strings } from "./strings";
 
-const HEX_GREY = ["#", "5f625f"].join("");
-const HEX_BROWN = ["#", "7a5236"].join("");
+const SWATCH_GREY = "grey";
+const SWATCH_BROWN = "brown";
 
 function createFixtureCatalog(): CatalogResponse {
   return {
@@ -74,7 +74,7 @@ function createFixtureCatalog(): CatalogResponse {
             optionGroupId: "opt-color",
             label: "Grey",
             priceDelta: { amountMinor: 0, currency: "USD" },
-            swatch: HEX_GREY,
+            swatch: SWATCH_GREY,
             position: 0,
           },
           {
@@ -82,7 +82,7 @@ function createFixtureCatalog(): CatalogResponse {
             optionGroupId: "opt-color",
             label: "Brown",
             priceDelta: { amountMinor: 1000, currency: "USD" },
-            swatch: HEX_BROWN,
+            swatch: SWATCH_BROWN,
             position: 1,
           },
         ],

@@ -25,6 +25,7 @@ export interface StepProps {
   state: ConfiguratorState;
   dispatch: (action: ConfiguratorAction) => void;
   api: ApiClient;
+  mount?: HTMLElement | null;
 }
 
 export interface StepModule {

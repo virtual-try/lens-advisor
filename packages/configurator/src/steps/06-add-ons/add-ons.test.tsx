@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render } from "@testing-library/preact";
 import type { CatalogResponse } from "../../../../rx-core/src/index.js";
 import { priceSelection } from "../../../../rx-core/src/pricing/index.js";
+import { PriceSummary } from "../../price-summary/PriceSummary";
 import { createApiClient } from "../../shared/api";
 import { configuratorReducer, createInitialState } from "../../shell/reducer";
 import type { ConfiguratorState } from "../../shell/types";
@@ -96,6 +97,19 @@ describe("AddOnsStep (Step 6)", () => {
     for (const checkbox of checkboxes) {
       expect(checkbox.checked).toBe(false);
     }
+    // R1-F3: assert dispatch is not called on mount
+    expect(dispatch).not.toHaveBeenCalled();
+
+    // R1-F3: render against real configuratorReducer state seeded from createInitialState plus the catalog
+    let realState: ConfiguratorState = {
+      ...createInitialState("frame-1"),
+      catalog,
+    };
+    const realDispatch = (action: Parameters<typeof configuratorReducer>[1]) => {
+      realState = configuratorReducer(realState, action);
+    };
+    render(<AddOnsStep state={realState} dispatch={realDispatch} api={api} />);
+    expect(realState.selection.addOnIds).toEqual([]);
   });
 
   it("Row 3: tick then untick case (+$15) -> total returns to previous value (toggle)", () => {
@@ -127,6 +141,12 @@ describe("AddOnsStep (Step 6)", () => {
       <AddOnsStep state={state} dispatch={dispatch} api={api} />,
     );
 
+    // R1-F5: render PriceSummary with reducer state and assert $200.00
+    const summaryView = render(
+      <PriceSummary state={state} framePrice={framePrice} variant="compact" />,
+    );
+    expect(summaryView.container.textContent).toContain("$200.00");
+
     // 1. Tick the hard case (+$15.00)
     const caseCheckbox = container.querySelector<HTMLInputElement>(
       'input[value="addon-case"]',
@@ -140,6 +160,12 @@ describe("AddOnsStep (Step 6)", () => {
     expect(state.selection.addOnIds).toEqual(["addon-case"]);
     const tickedBreakdown = priceSelection(state.selection, catalog, framePrice);
     expect(tickedBreakdown.total.amountMinor).toBe(21500); // $215.00
+
+    // R1-F5: assert displayed total updates to $215.00
+    summaryView.rerender(
+      <PriceSummary state={state} framePrice={framePrice} variant="compact" />,
+    );
+    expect(summaryView.container.textContent).toContain("$215.00");
 
     // Rerender with updated state
     rerender(<AddOnsStep state={state} dispatch={dispatch} api={api} />);
@@ -157,6 +183,12 @@ describe("AddOnsStep (Step 6)", () => {
     expect(state.selection.addOnIds).toEqual([]);
     const untickedBreakdown = priceSelection(state.selection, catalog, framePrice);
     expect(untickedBreakdown.total.amountMinor).toBe(20000); // Total returned to previous value!
+
+    // R1-F5: assert displayed total returns to $200.00
+    summaryView.rerender(
+      <PriceSummary state={state} framePrice={framePrice} variant="compact" />,
+    );
+    expect(summaryView.container.textContent).toContain("$200.00");
   });
 
   it("is an optional step (always complete)", () => {

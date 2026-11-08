@@ -5,7 +5,7 @@ import { formatMoney } from "../shared/format";
 import type { ApiClient } from "../shared/api";
 import type { ConfiguratorAction, ConfiguratorState } from "../shell/types";
 import priceSummaryCss from "./price-summary.css?inline";
-import { resolveFramePrice } from "./resolve-frame-price";
+import { findCatalogCurrency, resolveFramePrice } from "./resolve-frame-price";
 import { strings } from "./strings";
 
 export interface PriceSummaryProps {
@@ -16,6 +16,7 @@ export interface PriceSummaryProps {
   framePrice?: Money;
   selection?: Selection;
   catalog?: CatalogResponse;
+  mount?: HTMLElement | null;
 }
 
 export function PriceSummary({
@@ -24,6 +25,7 @@ export function PriceSummary({
   framePrice: explicitFramePrice,
   selection: explicitSelection,
   catalog: explicitCatalog,
+  mount,
 }: PriceSummaryProps): JSX.Element | null {
   const selection = explicitSelection ?? state?.selection;
   const catalog = explicitCatalog ?? state?.catalog;
@@ -32,21 +34,42 @@ export function PriceSummary({
     return null;
   }
 
+  // Catch the expected "no lens selected" case: return null
+  if (!selection.lensId) {
+    return null;
+  }
+
   const framePrice = resolveFramePrice({
     explicitFramePrice,
     state,
     catalog,
+    mount,
   });
+
+  const catalogCurrency = findCatalogCurrency(catalog);
+  const fallbackCurrency = framePrice?.currency || catalogCurrency;
 
   let breakdown: PriceBreakdown;
   try {
-    breakdown = priceSelection(selection, catalog, framePrice);
+    breakdown = priceSelection(
+      selection,
+      catalog,
+      framePrice ?? { amountMinor: 0, currency: fallbackCurrency },
+    );
   } catch {
-    return null;
+    return (
+      <div class="la-price-summary la-price-summary--error" role="alert">
+        <style>{priceSummaryCss}</style>
+        <span class="la-price-summary__error-message">{strings.pricingError}</span>
+      </div>
+    );
   }
 
   const { lines, total } = breakdown;
-  const formattedTotal = formatMoney(total.amountMinor, total.currency);
+  const hasFramePrice = framePrice !== null;
+  const formattedTotal = hasFramePrice
+    ? formatMoney(total.amountMinor, total.currency)
+    : null;
 
   if (variant === "expanded") {
     return (
@@ -55,6 +78,21 @@ export function PriceSummary({
         <div class="la-price-summary__title">{strings.breakdownTitle}</div>
         <ul class="la-price-summary__list">
           {lines.map((line, idx) => {
+            const isFrame = line.role === "frame";
+            if (isFrame && !hasFramePrice) {
+              return (
+                <li
+                  key={`${line.role}-${line.label}-${idx}`}
+                  class="la-price-summary__item"
+                >
+                  <span class="la-price-summary__item-label">{line.label}</span>
+                  <span class="la-price-summary__item-amount la-price-summary__unavailable">
+                    {strings.framePriceUnavailable}
+                  </span>
+                </li>
+              );
+            }
+
             const isZero = line.amount.amountMinor === 0;
             const formatted = isZero
               ? strings.included
@@ -71,18 +109,27 @@ export function PriceSummary({
           })}
         </ul>
         <div class="la-price-summary__total">
-          <span class="la-price-summary__total-label">{strings.total}</span>
-          <strong class="la-price-summary__total-amount">{formattedTotal}</strong>
+          {hasFramePrice ? (
+            <>
+              <span class="la-price-summary__total-label">{strings.total}</span>
+              <strong class="la-price-summary__total-amount">{formattedTotal}</strong>
+            </>
+          ) : (
+            <span class="la-price-summary__unavailable">{strings.framePriceUnavailable}</span>
+          )}
         </div>
       </div>
     );
   }
 
+  // Compact variant: if frame price unavailable, hide frame line and show unavailable state instead of total
+  const visibleLines = hasFramePrice ? lines : lines.filter((l) => l.role !== "frame");
+
   return (
     <div class="la-price-summary la-price-summary--compact">
       <style>{priceSummaryCss}</style>
       <span class="la-total__parts">
-        {lines.map((line, idx) => {
+        {visibleLines.map((line, idx) => {
           const isZero = line.amount.amountMinor === 0;
           const formatted = isZero
             ? strings.included
@@ -104,8 +151,14 @@ export function PriceSummary({
         })}
       </span>
       <span class="la-total__amount" aria-live="polite" aria-atomic="true">
-        <span class="la-total__label">{strings.total}</span>
-        <strong>{formattedTotal}</strong>
+        {hasFramePrice ? (
+          <>
+            <span class="la-total__label">{strings.total}</span>
+            <strong>{formattedTotal}</strong>
+          </>
+        ) : (
+          <span class="la-price-summary__unavailable">{strings.framePriceUnavailable}</span>
+        )}
       </span>
     </div>
   );

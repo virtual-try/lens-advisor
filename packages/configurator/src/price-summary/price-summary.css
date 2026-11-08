@@ -106,3 +106,15 @@
 .la-price-summary__total-amount {
   font-variant-numeric: var(--la-font-numeric);
 }
+
+.la-price-summary__unavailable {
+  color: var(--la-muted);
+  font-size: var(--la-text-sm);
+  font-weight: var(--la-weight-regular);
+}
+
+.la-price-summary--error {
+  color: var(--la-accent-deep);
+  font-size: var(--la-text-sm);
+  padding: var(--la-space-2) 0;
+}

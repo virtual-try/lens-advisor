@@ -10,6 +10,7 @@ export interface FooterProps {
   activeStep?: StepDefinition;
   canGoBack: boolean;
   isComplete: boolean;
+  mount?: HTMLElement | null;
   onBack: () => void;
   onContinue: () => void;
 }
@@ -21,6 +22,7 @@ export function Footer({
   activeStep,
   canGoBack,
   isComplete,
+  mount,
   onBack,
   onContinue,
 }: FooterProps): JSX.Element {
@@ -30,7 +32,12 @@ export function Footer({
     <footer class="la-footer">
       <div class="la-total">
         {SummaryComponent && (
-          <SummaryComponent state={state} dispatch={dispatch} api={api} />
+          <SummaryComponent
+            state={state}
+            dispatch={dispatch}
+            api={api}
+            mount={mount}
+          />
         )}
       </div>
       <div class="la-footer__actions">

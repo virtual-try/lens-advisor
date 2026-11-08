@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import { render } from "@testing-library/preact";
 import type { CatalogResponse, Selection } from "../../../rx-core/src/index.js";
 import { PriceSummary } from "./PriceSummary";
+import { resolveFramePrice } from "./resolve-frame-price";
 import { strings } from "./strings";
 
 function createFixtureCatalog(currency = "USD"): CatalogResponse {
+  const isZeroOrThree = currency === "JPY" || currency === "KWD";
   return {
     lensGroups: [
       {
@@ -18,7 +20,7 @@ function createFixtureCatalog(currency = "USD"): CatalogResponse {
             groupId: "group-standard",
             name: "Standard 1.50",
             description: "CR-39 material",
-            price: { amountMinor: currency === "JPY" ? 800 : 8000, currency },
+            price: { amountMinor: isZeroOrThree ? 800 : 8000, currency },
             limits: {
               sphMin: -600,
               sphMax: 400,
@@ -44,7 +46,7 @@ function createFixtureCatalog(currency = "USD"): CatalogResponse {
             id: "val-167",
             optionGroupId: "opt-material",
             label: "1.67 High Index",
-            priceDelta: { amountMinor: currency === "JPY" ? 350 : 3500, currency },
+            priceDelta: { amountMinor: isZeroOrThree ? 350 : 3500, currency },
             position: 0,
           },
         ],
@@ -66,7 +68,7 @@ function createFixtureCatalog(currency = "USD"): CatalogResponse {
             id: "val-solid",
             optionGroupId: "opt-tint",
             label: "Solid",
-            priceDelta: { amountMinor: currency === "JPY" ? 250 : 2500, currency },
+            priceDelta: { amountMinor: isZeroOrThree ? 250 : 2500, currency },
             position: 1,
           },
         ],
@@ -76,7 +78,7 @@ function createFixtureCatalog(currency = "USD"): CatalogResponse {
       {
         id: "addon-case",
         name: "Hard Case",
-        price: { amountMinor: currency === "JPY" ? 150 : 1500, currency },
+        price: { amountMinor: isZeroOrThree ? 150 : 1500, currency },
         shopifyVariantId: "var-case",
         position: 0,
       },
@@ -219,11 +221,190 @@ describe("PriceSummary", () => {
     expect(c2.innerHTML).toBe("");
   });
 
-  it("resolves frame price from DOM data-frame attribute when not passed in props", () => {
-    const section = document.createElement("section");
-    section.setAttribute("data-frame", "129");
-    section.setAttribute("data-currency", "USD");
-    document.body.appendChild(section);
+  it("resolves frame price from integer priceMinor in data-product-json for USD, JPY and KWD (R1-F1)", () => {
+    // 1. USD: 12000 minor units ($120.00) + 8000 lens ($80.00) = $200.00
+    const mountUsd = document.createElement("div");
+    mountUsd.setAttribute("data-la-mount", "");
+    mountUsd.setAttribute("data-la-state", "open");
+    mountUsd.setAttribute(
+      "data-product-json",
+      JSON.stringify({
+        productId: "prod-usd",
+        priceMinor: 12000,
+        currency: "USD",
+      }),
+    );
+    document.body.appendChild(mountUsd);
+
+    try {
+      const catalogUsd = createFixtureCatalog("USD");
+      const selectionUsd: Selection = {
+        frameVariantId: "frame-1",
+        rxType: "SINGLE_VISION",
+        lensId: "lens-standard",
+        optionValueIds: [],
+        addOnIds: [],
+      };
+
+      const resolvedUsd = resolveFramePrice({
+        catalog: catalogUsd,
+        mount: mountUsd,
+      });
+      expect(resolvedUsd).toEqual({ amountMinor: 12000, currency: "USD" });
+
+      const { container: cUsd } = render(
+        <PriceSummary catalog={catalogUsd} selection={selectionUsd} mount={mountUsd} />,
+      );
+      expect(cUsd.textContent).toContain("$120.00");
+      expect(cUsd.textContent).toContain("$200.00");
+    } finally {
+      document.body.removeChild(mountUsd);
+    }
+
+    // 2. JPY: 1500 minor units (¥1,500, zero decimals - NOT multiplied by 100)
+    const mountJpy = document.createElement("div");
+    mountJpy.setAttribute("data-la-mount", "");
+    mountJpy.setAttribute("data-la-state", "open");
+    mountJpy.setAttribute(
+      "data-product-json",
+      JSON.stringify({
+        productId: "prod-jpy",
+        priceMinor: 1500,
+        currency: "JPY",
+      }),
+    );
+    document.body.appendChild(mountJpy);
+
+    try {
+      const catalogJpy = createFixtureCatalog("JPY");
+      const selectionJpy: Selection = {
+        frameVariantId: "frame-jpy",
+        rxType: "SINGLE_VISION",
+        lensId: "lens-standard", // 800 JPY
+        optionValueIds: [],
+        addOnIds: [],
+      };
+
+      const resolvedJpy = resolveFramePrice({
+        catalog: catalogJpy,
+        mount: mountJpy,
+      });
+      expect(resolvedJpy).toEqual({ amountMinor: 1500, currency: "JPY" });
+
+      const { container: cJpy } = render(
+        <PriceSummary catalog={catalogJpy} selection={selectionJpy} mount={mountJpy} />,
+      );
+      expect(cJpy.textContent).toContain("¥1,500");
+      // Total: 1500 + 800 = 2300 JPY (¥2,300, not ¥150,000!)
+      expect(cJpy.textContent).toContain("¥2,300");
+      expect(cJpy.textContent).not.toContain("150,000");
+    } finally {
+      document.body.removeChild(mountJpy);
+    }
+
+    // 3. KWD: 1500 minor units (1.500 KWD, 3 decimals)
+    const mountKwd = document.createElement("div");
+    mountKwd.setAttribute("data-la-mount", "");
+    mountKwd.setAttribute("data-la-state", "open");
+    mountKwd.setAttribute(
+      "data-product-json",
+      JSON.stringify({
+        productId: "prod-kwd",
+        priceMinor: 1500,
+        currency: "KWD",
+      }),
+    );
+    document.body.appendChild(mountKwd);
+
+    try {
+      const catalogKwd = createFixtureCatalog("KWD");
+      const selectionKwd: Selection = {
+        frameVariantId: "frame-kwd",
+        rxType: "SINGLE_VISION",
+        lensId: "lens-standard", // 800 minor units
+        optionValueIds: [],
+        addOnIds: [],
+      };
+
+      const resolvedKwd = resolveFramePrice({
+        catalog: catalogKwd,
+        mount: mountKwd,
+      });
+      expect(resolvedKwd).toEqual({ amountMinor: 1500, currency: "KWD" });
+
+      const { container: cKwd } = render(
+        <PriceSummary catalog={catalogKwd} selection={selectionKwd} mount={mountKwd} />,
+      );
+      // 1500 KWD minor units formats as 1.500, total 2300 formats as 2.300
+      expect(cKwd.textContent).toContain("1.500");
+      expect(cKwd.textContent).toContain("2.300");
+    } finally {
+      document.body.removeChild(mountKwd);
+    }
+  });
+
+  it("renders explicit 'frame price unavailable' state without total when frame price cannot be resolved (R1-F2)", () => {
+    const catalog = createFixtureCatalog("USD");
+    const selection: Selection = {
+      frameVariantId: "frame-1",
+      rxType: "SINGLE_VISION",
+      lensId: "lens-standard", // 8000 cents ($80.00)
+      optionValueIds: [],
+      addOnIds: [],
+    };
+
+    // Compact variant
+    const { container: compactContainer } = render(
+      <PriceSummary
+        catalog={catalog}
+        selection={selection}
+        framePrice={undefined}
+        variant="compact"
+      />,
+    );
+
+    // Frame price unavailable text displayed
+    expect(compactContainer.textContent).toContain(strings.framePriceUnavailable);
+    // Never displays an understated total of $80.00 or $0.00
+    expect(compactContainer.textContent).not.toContain("$80.00 Total");
+    expect(compactContainer.querySelector(".la-total__amount strong")).toBeNull();
+    // Lens line ($80.00) is shown in the parts
+    expect(compactContainer.textContent).toContain("Standard 1.50");
+    expect(compactContainer.textContent).toContain("$80.00");
+
+    // Expanded variant
+    const { container: expandedContainer } = render(
+      <PriceSummary
+        catalog={catalog}
+        selection={selection}
+        framePrice={undefined}
+        variant="expanded"
+      />,
+    );
+
+    expect(expandedContainer.textContent).toContain(strings.framePriceUnavailable);
+    expect(expandedContainer.querySelector(".la-price-summary__total-amount")).toBeNull();
+  });
+
+  it("scopes DOM resolution to the active mount, ignoring other mounts on the page (R1-F2)", () => {
+    // Mount 1 is inactive (no data-la-state="open") with $50 price
+    const mount1 = document.createElement("div");
+    mount1.setAttribute("data-la-mount", "");
+    mount1.setAttribute(
+      "data-product-json",
+      JSON.stringify({ productId: "prod-1", priceMinor: 5000, currency: "USD" }),
+    );
+    document.body.appendChild(mount1);
+
+    // Mount 2 is active (data-la-state="open") with $120 price
+    const mount2 = document.createElement("div");
+    mount2.setAttribute("data-la-mount", "");
+    mount2.setAttribute("data-la-state", "open");
+    mount2.setAttribute(
+      "data-product-json",
+      JSON.stringify({ productId: "prod-2", priceMinor: 12000, currency: "USD" }),
+    );
+    document.body.appendChild(mount2);
 
     try {
       const catalog = createFixtureCatalog("USD");
@@ -235,15 +416,66 @@ describe("PriceSummary", () => {
         addOnIds: [],
       };
 
-      const { container } = render(
-        <PriceSummary catalog={catalog} selection={selection} variant="compact" />,
-      );
+      // When passed mount2 directly, resolves to $120
+      const resolvedFromProp = resolveFramePrice({ catalog, mount: mount2 });
+      expect(resolvedFromProp).toEqual({ amountMinor: 12000, currency: "USD" });
 
-      // Frame 129 + lens 80 = 209
-      expect(container.textContent).toContain("$129.00");
-      expect(container.textContent).toContain("$209.00");
+      // When resolved from DOM without explicit mount prop, finds active mount2 (not mount1)
+      const resolvedFromDom = resolveFramePrice({ catalog });
+      expect(resolvedFromDom).toEqual({ amountMinor: 12000, currency: "USD" });
+
+      // Renders with mount2: frame $120.00 + lens $80.00 = $200.00 (not $130.00)
+      const { container } = render(
+        <PriceSummary catalog={catalog} selection={selection} mount={mount2} />,
+      );
+      expect(container.textContent).toContain("$120.00");
+      expect(container.textContent).toContain("$200.00");
+      expect(container.textContent).not.toContain("$50.00");
+      expect(container.textContent).not.toContain("$130.00");
     } finally {
-      document.body.removeChild(section);
+      document.body.removeChild(mount1);
+      document.body.removeChild(mount2);
     }
+  });
+
+  it("catches expected 'no lens selected' case by returning null (R1-F7)", () => {
+    const catalog = createFixtureCatalog("USD");
+    const selection: Selection = {
+      frameVariantId: "frame-1",
+      rxType: "SINGLE_VISION",
+      lensId: undefined, // No lens selected yet
+      optionValueIds: [],
+      addOnIds: [],
+    };
+
+    const { container } = render(
+      <PriceSummary catalog={catalog} selection={selection} framePrice={{ amountMinor: 12000, currency: "USD" }} />,
+    );
+    expect(container.innerHTML).toBe("");
+  });
+
+  it("surfaces pricing error state when priceSelection throws an error (R1-F7)", () => {
+    const catalog = createFixtureCatalog("USD");
+    // Invalid selection with non-existent lens ID triggers PricingError(UNKNOWN_ITEM)
+    const selection: Selection = {
+      frameVariantId: "frame-1",
+      rxType: "SINGLE_VISION",
+      lensId: "unknown-lens-id-999",
+      optionValueIds: [],
+      addOnIds: [],
+    };
+
+    const { container } = render(
+      <PriceSummary
+        catalog={catalog}
+        selection={selection}
+        framePrice={{ amountMinor: 12000, currency: "USD" }}
+      />,
+    );
+
+    const errorEl = container.querySelector(".la-price-summary--error");
+    expect(errorEl).not.toBeNull();
+    expect(errorEl?.getAttribute("role")).toBe("alert");
+    expect(container.textContent).toContain(strings.pricingError);
   });
 });
