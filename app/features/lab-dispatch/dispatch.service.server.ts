@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client";
+import type { LabOrder, PrismaClient } from "@prisma/client";
 import type { FieldCipher } from "../../shared/crypto/field-cipher.server";
 import { getCipher } from "../../shared/container/cipher.server";
 import { getMailer } from "../../shared/container/mailer.server";
@@ -24,12 +24,26 @@ import {
   markSent,
   resetLabOrderStatus,
   transitionToSending,
+  SENDING_STALE_TIMEOUT_MS,
   type LabDispatchErrorCode,
 } from "./lab-dispatch.repository.server";
 import { loadTicketData, RxDecryptError } from "./load-ticket-data.server";
 
 export const UPLOAD_DOWNLOAD_TIMEOUT_MS = 15_000; // 15s timeout for S3 presigned downloads (R1-F12)
 export const UPLOAD_MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB size cap for S3 uploads (R1-F12)
+export const DELAY_MARGIN_MS = 5_000; // 5s margin beyond lease expiry (R3-F1)
+
+export function getDelayedDispatchParams(
+  labOrderId: string,
+  leaseStart: Date,
+  staleTimeoutMs = SENDING_STALE_TIMEOUT_MS,
+  marginMs = DELAY_MARGIN_MS,
+): { startAfter: Date; singletonKey: string } {
+  const leaseExpiry = new Date(leaseStart.getTime() + staleTimeoutMs);
+  const startAfter = new Date(leaseExpiry.getTime() + marginMs);
+  const singletonKey = `${labOrderId}:delayed:${leaseStart.getTime()}`;
+  return { startAfter, singletonKey };
+}
 
 export class DispatchInProgressError extends AppError {
   constructor(message = "Dispatch is already in progress") {
@@ -64,6 +78,7 @@ export interface DispatchServiceDeps {
   logger?: DispatchLogger;
   queue?: Pick<Queue, "enqueue">;
   fetch?: typeof fetch;
+  now?: () => Date;
 }
 
 export interface DispatchResult {
@@ -92,6 +107,32 @@ function detectContentType(filename: string): string {
   }
 }
 
+async function enqueueDelayedDispatch(
+  labOrderId: string,
+  leaseStart: Date,
+  deps: DispatchServiceDeps,
+  logger: DispatchLogger,
+  shopId: string,
+): Promise<void> {
+  const { startAfter, singletonKey } = getDelayedDispatchParams(labOrderId, leaseStart);
+  try {
+    const queue = deps.queue ?? (await getQueue());
+    await queue.enqueue(
+      DISPATCH_JOB_NAME,
+      { labOrderId },
+      { startAfter, singletonKey },
+    );
+    logger.info("lab_dispatch.delayed_enqueued", {
+      shopId,
+      labOrderId,
+      startAfter: startAfter.toISOString(),
+      singletonKey,
+    });
+  } catch {
+    logger.error("lab_dispatch.delayed_enqueue_failed", { shopId, labOrderId });
+  }
+}
+
 /**
  * Executes lab order dispatch flow (Spec 30 Scope):
  * 1. Status SENDING (atomic conditional update from PENDING/FAILED or stale SENDING lease, INV-8, R1-F2, R1-F9)
@@ -115,9 +156,16 @@ export async function processDispatch(
   const objectStore = deps.objectStore ?? getObjectStore();
   const mailer = deps.mailer ?? getMailer();
   const logger = deps.logger ?? defaultDispatchLogger;
+  const now = deps.now ? deps.now() : new Date();
 
   // 1. Status SENDING: atomic conditional update from PENDING/FAILED or stale SENDING (INV-8, Self-check 1, R1-F2, R1-F9)
-  const { transitioned, attempts } = await transitionToSending(shopId, labOrderId, db);
+  const { transitioned, attempts } = await transitionToSending(
+    shopId,
+    labOrderId,
+    db,
+    SENDING_STALE_TIMEOUT_MS,
+    now,
+  );
   if (!transitioned) {
     const existing = await getLabOrder(shopId, labOrderId, db);
     if (!existing) {
@@ -129,13 +177,36 @@ export async function processDispatch(
       return { status: "SKIPPED", reason: "already_sent" };
     }
     if (existing.status === "SENDING") {
-      // R2-F4: Fresh SENDING row must throw retryable error so pg-boss retries with backoff
+      // R2-F4 & R3-F1: Fresh SENDING lease met. Enqueue delayed dispatch for lease expiry plus margin
+      // so the stale lease can be reclaimed after expiration without burning retries.
       logger.info("lab_dispatch.in_progress", { shopId, labOrderId });
+      await enqueueDelayedDispatch(labOrderId, existing.updatedAt, deps, logger, shopId);
       throw new DispatchInProgressError(`Dispatch for order ${labOrderId} is currently in progress`);
     }
     logger.info("lab_dispatch.skipped", { shopId, labOrderId, reason: "not_transitioned" });
     return { status: "SKIPPED", reason: "not_transitioned" };
   }
+
+  let failureRecorded = false;
+  // R3-F4: Helper to record failure; returns false if worker lost lease (markFailed returned null)
+  const recordFailure = async (errorCode: LabDispatchErrorCode): Promise<boolean> => {
+    try {
+      const failed = await markFailed(shopId, labOrderId, errorCode, db);
+      if (!failed) {
+        logger.warn("lab_dispatch.lost_lease", {
+          shopId,
+          labOrderId,
+          reason: "mark_failed_lost_lease",
+          errorCode,
+        });
+        return false;
+      }
+      failureRecorded = true;
+      return true;
+    } catch {
+      return true;
+    }
+  };
 
   let sendResult: SendMailResult | undefined;
   // R1-F2: Wrap the entire body after transition so a row never sticks in SENDING
@@ -145,14 +216,16 @@ export async function processDispatch(
     try {
       settings = await getSettings(shopId, db);
     } catch (err: unknown) {
-      await markFailed(shopId, labOrderId, "LOAD_FAILED", db);
+      const retained = await recordFailure("LOAD_FAILED");
+      if (!retained) return { status: "SKIPPED", reason: "lost_lease" };
       logger.error("lab_dispatch.settings_failed", { shopId, labOrderId, attempts });
       throw err;
     }
 
     const labEmails = settings.labEmail ?? [];
     if (labEmails.length === 0) {
-      await markFailed(shopId, labOrderId, "NO_LAB_EMAIL", db);
+      const retained = await recordFailure("NO_LAB_EMAIL");
+      if (!retained) return { status: "SKIPPED", reason: "lost_lease" };
       logger.warn("lab_dispatch.no_lab_email", { shopId, labOrderId, attempts });
       // Permanent failure: DO NOT rethrow, no retry
       return { status: "FAILED", lastErrorCode: "NO_LAB_EMAIL" };
@@ -168,11 +241,13 @@ export async function processDispatch(
         (typeof err === "object" && err !== null && (err as { code?: string }).code === "RX_DECRYPT_FAILED") ||
         (typeof err === "object" && err !== null && (err as { name?: string }).name === "DecryptError")
       ) {
-        await markFailed(shopId, labOrderId, "RX_DECRYPT_FAILED", db);
+        const retained = await recordFailure("RX_DECRYPT_FAILED");
+        if (!retained) return { status: "SKIPPED", reason: "lost_lease" };
         logger.error("lab_dispatch.rx_decrypt_failed", { shopId, labOrderId, attempts });
         throw new Error("RX_DECRYPT_FAILED");
       }
-      await markFailed(shopId, labOrderId, "LOAD_FAILED", db);
+      const retained = await recordFailure("LOAD_FAILED");
+      if (!retained) return { status: "SKIPPED", reason: "lost_lease" };
       logger.error("lab_dispatch.load_failed", { shopId, labOrderId, attempts });
       throw err;
     }
@@ -193,7 +268,8 @@ export async function processDispatch(
         csvBuffer = renderCsv(ticketData);
       }
     } catch (err: unknown) {
-      await markFailed(shopId, labOrderId, "TICKET_RENDER_FAILED", db);
+      const retained = await recordFailure("TICKET_RENDER_FAILED");
+      if (!retained) return { status: "SKIPPED", reason: "lost_lease" };
       logger.error("lab_dispatch.render_failed", { shopId, labOrderId, attempts });
       throw err;
     }
@@ -229,7 +305,8 @@ export async function processDispatch(
         });
       }
     } catch (err: unknown) {
-      await markFailed(shopId, labOrderId, "STORAGE_FAILED", db);
+      const retained = await recordFailure("STORAGE_FAILED");
+      if (!retained) return { status: "SKIPPED", reason: "lost_lease" };
       logger.error("lab_dispatch.storage_failed", { shopId, labOrderId, attempts });
       throw err;
     }
@@ -240,7 +317,8 @@ export async function processDispatch(
       try {
         labOrder = await getLabOrder(shopId, labOrderId, db);
       } catch (err: unknown) {
-        await markFailed(shopId, labOrderId, "LOAD_FAILED", db);
+        const retained = await recordFailure("LOAD_FAILED");
+        if (!retained) return { status: "SKIPPED", reason: "lost_lease" };
         logger.error("lab_dispatch.load_failed", { shopId, labOrderId, attempts });
         throw err;
       }
@@ -250,7 +328,8 @@ export async function processDispatch(
         try {
           prescription = await getPrescription(shopId, labOrder.prescriptionId, db);
         } catch (err: unknown) {
-          await markFailed(shopId, labOrderId, "LOAD_FAILED", db);
+          const retained = await recordFailure("LOAD_FAILED");
+          if (!retained) return { status: "SKIPPED", reason: "lost_lease" };
           logger.error("lab_dispatch.load_failed", { shopId, labOrderId, attempts });
           throw err;
         }
@@ -317,7 +396,8 @@ export async function processDispatch(
                 contentType,
               });
             } catch (err: unknown) {
-              await markFailed(shopId, labOrderId, "STORAGE_FAILED", db);
+              const retained = await recordFailure("STORAGE_FAILED");
+              if (!retained) return { status: "SKIPPED", reason: "lost_lease" };
               logger.error("lab_dispatch.storage_failed", { shopId, labOrderId, attempts });
               throw err;
             }
@@ -337,28 +417,41 @@ export async function processDispatch(
         idempotencyKey,
       });
     } catch (err: unknown) {
-      await markFailed(shopId, labOrderId, "MAIL_FAILED", db);
+      const retained = await recordFailure("MAIL_FAILED");
+      if (!retained) return { status: "SKIPPED", reason: "lost_lease" };
       logger.error("lab_dispatch.mail_failed", { shopId, labOrderId, attempts });
       throw err;
     }
 
     // 7. SENT + providerId, sentAt
-    // R2-F3: Once Mailer.send has succeeded, a markSent failure must NOT mark FAILED or increment attempts.
-    // Leave the row SENDING so the retry reclaims it after the lease with the same attempts and idempotency key.
+    // R2-F3, R3-F1, R3-F4: Once Mailer.send has succeeded, a markSent failure must NOT mark FAILED or increment attempts.
+    // Leave the row SENDING and enqueue delayed dispatch so it reclaims after lease with same attempts and idempotency key.
+    let sentOrder: LabOrder | null = null;
     try {
-      await markSent(
+      sentOrder = await markSent(
         shopId,
         labOrderId,
         {
           providerId: sendResult.providerId,
           ticketKeys,
-          sentAt: new Date(),
+          sentAt: now,
         },
         db,
       );
     } catch (err: unknown) {
       logger.error("lab_dispatch.mark_sent_failed", { shopId, labOrderId, attempts });
+      await enqueueDelayedDispatch(labOrderId, now, deps, logger, shopId);
       throw err;
+    }
+
+    // R3-F4: If markSent returns null (count 0, e.g. lost lease / slow worker), return SKIPPED, never SENT
+    if (!sentOrder) {
+      logger.warn("lab_dispatch.lost_lease", {
+        shopId,
+        labOrderId,
+        reason: "mark_sent_lost_lease",
+      });
+      return { status: "SKIPPED", reason: "lost_lease" };
     }
 
     logger.info("lab_dispatch.sent", {
@@ -374,11 +467,20 @@ export async function processDispatch(
       providerId: sendResult.providerId,
     };
   } catch (err: unknown) {
-    // R1-F2 & R2-F3: Safety net marks FAILED only if email was not yet sent.
+    // R1-F2 & R2-F3: Safety net marks FAILED only if email was not yet sent and failure not yet recorded.
     // If email was already sent (sendResult defined), leave row in SENDING so retry reclaims with same attempts.
-    if (!sendResult) {
+    if (!sendResult && !failureRecorded) {
       try {
-        await markFailed(shopId, labOrderId, "LOAD_FAILED", db);
+        const failed = await markFailed(shopId, labOrderId, "LOAD_FAILED", db);
+        if (!failed) {
+          logger.warn("lab_dispatch.lost_lease", {
+            shopId,
+            labOrderId,
+            reason: "mark_failed_lost_lease",
+            errorCode: "LOAD_FAILED",
+          });
+          return { status: "SKIPPED", reason: "lost_lease" };
+        }
       } catch {
         // secondary DB failure ignored
       }

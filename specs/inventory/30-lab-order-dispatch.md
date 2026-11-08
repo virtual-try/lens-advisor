@@ -15,21 +15,21 @@
 - Registers the worker handler for `lab-orders.dispatch` with pg-boss (`retryLimit: 5`, `retryDelay: 2`, `retryBackoff: true`).
 - Validates job payload `{ labOrderId: string }` via `dispatchJobPayloadSchema` (INV-2, R1-F4).
 - Resolves owning shop by id through repository function `getLabOrderShopId`, then scopes all subsequent reads and writes strictly by that shopId (INV-1, R1-F4).
-- Invokes `processDispatch` to execute the ticket generation, S3 storage, and Resend email pipeline.
+- Invokes `processDispatch` to execute the ticket generation, S3 storage, and Resend email pipeline; completes without burning retries if meeting a fresh SENDING lease (R3-F1).
 **Use instead of:** Unregistered or stubbed dispatch background jobs.
 **Added by:** spec 30.
 
 ### `dispatch-service`
 `app/features/lab-dispatch/dispatch.service.server.ts` — `processDispatch` and `resend`:
 - `processDispatch(shopId, labOrderId, deps)`: Orchestrates the dispatch lifecycle:
-  1. Transitions order status to SENDING via atomic conditional update; reclaims stale SENDING rows older than 15 min reusing existing attempts (R1-F2, R1-F9).
-  2. Wraps the entire body after transition so any throw calls `markFailed` before rethrowing; rows never stick in SENDING (R1-F2).
+  1. Transitions order status to SENDING via atomic conditional update; reclaims stale SENDING rows older than 15 min reusing existing attempts (R1-F2, R1-F9). If meeting a fresh SENDING lease, enqueues delayed dispatch with startAfter = lease expiry + DELAY_MARGIN_MS (5s) (R3-F1).
+  2. Wraps the entire body after transition so any throw calls `markFailed` before rethrowing; rows never stick in SENDING (R1-F2). If markFailed returns null (lost lease / slow worker), logs and returns SKIPPED (R3-F4).
   3. Resolves lab emails from `getSettings` (Spec 15); fails permanently with `NO_LAB_EMAIL` if missing (no retry).
   4. Loads and decrypts ticket data (`loadTicketData`); fails with `RX_DECRYPT_FAILED` on tamper/schema errors (retried), or `LOAD_FAILED` on missing rows (R1-F7).
   5. Renders ticket per `ticketFormat` (`PDF`, `CSV`, or `BOTH`); fails with `TICKET_RENDER_FAILED` on renderer errors (R1-F7) and stores in S3 under `shops/<shopId>/tickets/<labOrderId>.<ext>` using `putObject` (Spec 06).
   6. Downloads uploaded prescription files from S3 via presigned URLs bounded by timeout (15s) and size cap (10MB) (R1-F12).
   7. Sends email to lab addresses via `Mailer.send` with `idempotencyKey = labOrderId + ':' + attempts` (Spec 07); fails with `MAIL_FAILED` on provider error (retried).
-  8. Updates order status to `SENT` with `providerId`, `ticketKeys`, and `sentAt`.
+  8. Updates order status to `SENT` with `providerId`, `ticketKeys`, and `sentAt`. If markSent throws after send, enqueues delayed dispatch for lease expiry + margin so retry reclaims after lease with same idempotency key (R3-F1). If markSent returns null (lost lease / slow worker), logs and returns SKIPPED, never SENT (R3-F4).
 - `resend(shopId, labOrderId, deps)`: Validates order tenancy (INV-1), conditionally resets order status to `PENDING` (clearing `lastErrorCode`), and re-enqueues `lab-orders.dispatch`. Refuses `PENDING` or `SENDING` with `ConflictError` (R1-F5). Used by Spec 32 admin interface.
 **Use instead of:** Inline dispatch workflows in webhook routes or admin UI loaders.
 **Added by:** spec 30.

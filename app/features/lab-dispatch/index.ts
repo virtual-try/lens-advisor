@@ -24,6 +24,8 @@ export {
   defaultDispatchLogger,
   processDispatch,
   resend,
+  DELAY_MARGIN_MS,
+  getDelayedDispatchParams,
   UPLOAD_DOWNLOAD_TIMEOUT_MS,
   UPLOAD_MAX_FILE_SIZE_BYTES,
   type DispatchLogger,

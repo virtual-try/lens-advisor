@@ -99,7 +99,7 @@ test DB). Stubbed: none.
 - **2026-11-08** — Inventory fragment `specs/inventory/30-lab-order-dispatch.md`:
   - Documented `load-ticket-data`, `dispatch-handler`, `dispatch-service`, and `lab-dispatch-repository`.
 - **2026-11-08** — Sabotage:
-  - Bypassed `result.count === 0` in `transitionToSending` (`if (false && result.count === 0)`) -> Self-check 1 test went red (`expected true to be false` in "returns false when already SENDING or SENT"). Restored -> green.
+  - Bypassed `if (!rows || rows.length === 0)` in `transitionToSending` (`if (false && (!rows || rows.length === 0))`) -> `TypeError: Cannot read properties of undefined (reading 'attempts')` at `rows[0].attempts` across 4 tests (Self-check 1, INV-1, row 3 (INV-8), and R2-F4). Restored -> green.
 - **2026-11-08** — Review round R1 fixes (coder agy-3):
   - Fixed R1-F1: Removed all `as any` casts and `eslint-disable-next-line` comments. Typed `queue` as `Pick<Queue, "enqueue">` in `DispatchServiceDeps` and test fakeQueue; typed `db` as `PrismaClient`. Gates restored without suppression.
   - Fixed R1-F2: Wrapped all steps after `transitionToSending` in `processDispatch` in try/catch to record `FAILED` with accurate code before rethrow, preventing stuck `SENDING` rows. Added `updatedAt` to `LabOrder` in `prisma/schema.prisma` and `20261107120000_init/migration.sql`, and implemented stale lease reclamation (`SENDING_STALE_TIMEOUT_MS = 15 * 60 * 1000`) in `transitionToSending` reusing existing `attempts`. Added tests for `markSent` throwing and stale-SENDING reclaim.
@@ -124,11 +124,18 @@ test DB). Stubbed: none.
   - Fixed R2-F8: Removed unused `s3Reader` test hook from `DispatchServiceDeps` and production download branch.
   - Fixed R2-F9: Changed `transitionToSending` to pass a single JS Date parameter (`now`) for both `"updatedAt" = ${now}` write and stale cutoff `"updatedAt" <= ${staleCutoff}`, eliminating DB session time zone skew on timestamp without time zone. Tested parameter passing.
   - Fixed R2-F11: Removed duplicate `expect(handled).toBe(false)` assertion in `app/shared/queue/define-job.test.ts`. Refreshed Spec 30 Log counts and transitionToSending description.
+- **2026-11-08** — Review round R3 fixes (coder agy-3):
+  - Fixed R3-F1: When `markSent` fails after email send, or when a worker meets a fresh `SENDING` lease, enqueue a delayed dispatch job for `labOrderId` with `startAfter = lease expiry + DELAY_MARGIN_MS` (5s) and `singletonKey = ${labOrderId}:delayed:${leaseWindowStart}`. Worker handler catches `DispatchInProgressError` on fresh lease and completes cleanly without burning retries. After lease expiry, the delayed job reclaims the stale lease and completes `SENT` using the same attempts and idempotency key. Tested with injected clock and fakeQueue across the full retry and recovery cadence. Extended `EnqueueOptions` in `app/shared/queue/queue.ts` to support `startAfter`.
+  - Fixed R3-F2: Added dedicated Row 6 test in `dispatch.test.ts` for "labOrderId of shop B in job for shop A -> returns SKIPPED/order_not_found, nothing written, no email, logs ids only (INV-1)". Verified no email sent, no S3 writes, shop B's row unchanged, nothing written in shop A, and log metadata carries IDs only.
+  - Fixed R3-F3: Updated `resetLabOrderStatus` cross-shop isolation test in `dispatch.test.ts` to seed shop B's row as `FAILED` with `lastErrorCode: "MAIL_FAILED"`. Asserted `resetLabOrderStatus(shopA.id, orderBFailed.id)` returns `null` and shop B's row remains `FAILED` with its `lastErrorCode` intact.
+  - Fixed R3-F4: Handled return values of `markSent` and `markFailed`. If `markSent` returns `null` (count 0, lost lease / slow worker), logs `lab_dispatch.lost_lease` and returns `{ status: "SKIPPED", reason: "lost_lease" }`, never `SENT`. If `markFailed` returns `null` (count 0), logs and returns `{ status: "SKIPPED", reason: "lost_lease" }`. Tested both cases in `dispatch.test.ts`.
+  - Fixed R3-F5: Confirmed that no database has been deployed yet (pre-release, spec 23 precedent). State that in the Log. Before release the migrations are squashed or baselined, a release step tracked under D4.
+  - Fixed R3-F6: Redid sabotage against the `UPDATE ... RETURNING` `rows.length` check (`if (!rows || rows.length === 0)`) in `transitionToSending`; updated the Log's Sabotage entry with the red/green verification.
 - **2026-11-08** — Gates verified:
-  - `pnpm vitest run app/features/lab-dispatch`: 1 test file, 29/29 passed.
-  - `pnpm test`: 52 test files, 846/846 passed, 0 failures.
+  - `pnpm vitest run app/features/lab-dispatch`: 1 test file, 33/33 passed.
+  - `pnpm test`: 52 test files, 850/850 passed, 0 failures.
   - `pnpm typecheck`: exit 0.
   - `pnpm lint`: exit 0 (0 errors, 0 warnings).
   - `pnpm build`: exit 0.
   - `git diff --check`: clean.
-- **2026-11-08** — Evidence (orchestro spec verify, tree e4fd2527): install pass · typecheck pass · lint pass · build pass · test pass 846/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree cd82ed52): install pass · typecheck pass · lint pass · build pass · test pass 850/0/0

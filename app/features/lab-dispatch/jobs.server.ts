@@ -6,6 +6,7 @@ import {
   type DispatchJobPayload,
 } from "../lab-orders/constants";
 import {
+  DispatchInProgressError,
   processDispatch,
   type DispatchServiceDeps,
 } from "./dispatch.service.server";
@@ -31,7 +32,16 @@ export function createDispatchHandler(deps: DispatchServiceDeps = {}) {
       return;
     }
 
-    await processDispatch(targetShopId, payload.labOrderId, deps);
+    try {
+      await processDispatch(targetShopId, payload.labOrderId, deps);
+    } catch (err: unknown) {
+      if (err instanceof DispatchInProgressError) {
+        // R3-F1: Worker met fresh SENDING lease. Delayed dispatch was enqueued
+        // with startAfter = lease expiry + margin. Complete without burning retries.
+        return;
+      }
+      throw err;
+    }
   };
 }
 

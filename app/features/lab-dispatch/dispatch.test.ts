@@ -29,6 +29,8 @@ import {
   resend,
   resetLabOrderStatus,
   transitionToSending,
+  DELAY_MARGIN_MS,
+  SENDING_STALE_TIMEOUT_MS,
   type DispatchLogger,
 } from "./index";
 
@@ -601,7 +603,84 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
       expect(updated?.lastErrorCode).toBe("NO_LAB_EMAIL");
     });
 
-    it("row 6: production handler with { labOrderId } resolves owning shop via repository and dispatches (R1-F4)", async () => {
+    it("row 6: labOrderId of shop B in job for shop A -> returns SKIPPED/order_not_found, nothing written, no email, logs ids only (INV-1, R3-F2)", async () => {
+      const shopA = await seedShop("shop-a-row6.example.test");
+      const shopB = await seedShop("shop-b-row6.example.test");
+      const catalogB = await seedCatalog(shopB.id);
+      const cipher = getCipher();
+
+      const rxRowB = await prisma.prescription.create({
+        data: {
+          id: "rx-shop-b-row6",
+          shopId: shopB.id,
+          rxType: "SINGLE_VISION",
+          source: "MANUAL",
+          cipher: cipher.encrypt(sensitiveRx, `${shopB.id}:rx-shop-b-row6`),
+        },
+      });
+
+      const orderB = await prisma.labOrder.create({
+        data: {
+          shopId: shopB.id,
+          shopifyOrderId: "1006-b",
+          orderName: "#1006-b",
+          bundleId: "bundle-row6-b",
+          prescriptionId: rxRowB.id,
+          lensId: catalogB.lens.id,
+          frameTitle: "Shop B Row 6 Frame",
+          status: "PENDING",
+        },
+      });
+
+      const { mailer, sentEmails } = createFakeMailer();
+      const { objectStore, storedObjects } = createFakeObjectStore();
+      const { logger, calls } = createCapturingLogger();
+
+      // Dispatch job for shop A with shop B's labOrderId
+      const result = await processDispatch(shopA.id, orderB.id, {
+        db: prisma,
+        cipher,
+        objectStore,
+        mailer,
+        logger,
+      });
+
+      // 1. result SKIPPED / order_not_found
+      expect(result.status).toBe("SKIPPED");
+      expect(result.reason).toBe("order_not_found");
+
+      // 2. No email sent
+      expect(sentEmails).toHaveLength(0);
+
+      // 3. No storage writes
+      expect(storedObjects.size).toBe(0);
+
+      // 4. Shop B's row is completely unchanged
+      const orderBCheck = await prisma.labOrder.findUnique({ where: { id: orderB.id } });
+      expect(orderBCheck?.status).toBe("PENDING");
+      expect(orderBCheck?.attempts).toBe(0);
+      expect(orderBCheck?.lastErrorCode).toBeNull();
+      expect(orderBCheck?.providerId).toBeNull();
+
+      // 5. Nothing was written for shop A
+      const shopAOrders = await prisma.labOrder.findMany({ where: { shopId: shopA.id } });
+      expect(shopAOrders).toHaveLength(0);
+
+      // 6. Log carries ids only
+      const skipLog = calls.find((e) => e.event === "lab_dispatch.skipped");
+      expect(skipLog).toBeDefined();
+      expect(skipLog?.meta).toEqual({
+        shopId: shopA.id,
+        labOrderId: orderB.id,
+        reason: "order_not_found",
+      });
+      const serializedLog = JSON.stringify(skipLog);
+      expect(serializedLog).not.toContain("SPH");
+      expect(serializedLog).not.toContain("CYL");
+      expect(serializedLog).not.toContain("AXIS");
+    });
+
+    it("row 6-prod: production handler with { labOrderId } resolves owning shop via repository and dispatches (R1-F4)", async () => {
       const shop = await seedShop("shop-r1f4-found.example.test");
       const catalog = await seedCatalog(shop.id);
       const cipher = getCipher();
@@ -646,7 +725,7 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
       expect(sentOrder?.status).toBe("SENT");
     });
 
-    it("row 6b: production handler with non-existent { labOrderId } logs warning with id only and does not throw (R1-F4)", async () => {
+    it("row 6b-prod: production handler with non-existent { labOrderId } logs warning with id only and does not throw (R1-F4)", async () => {
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       const handler = createDispatchHandler({ db: prisma });
 
@@ -832,9 +911,25 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
       expect(orderBSendingCheck?.providerId).toBeNull();
       expect(orderBSendingCheck?.lastErrorCode).toBeNull();
 
-      // 9. resetLabOrderStatus cross-shop isolation
-      const resetCross = await resetLabOrderStatus(shopA.id, orderB.id, "PENDING", prisma);
+      // 9. resetLabOrderStatus cross-shop isolation (R3-F3): seed shop B row as FAILED with lastErrorCode
+      const orderBFailed = await prisma.labOrder.create({
+        data: {
+          shopId: shopB.id,
+          shopifyOrderId: "2001-failed",
+          orderName: "#2001-B-FAILED",
+          bundleId: "bundle-2001-b-failed",
+          prescriptionId: rxB.id,
+          lensId: catalogB.lens.id,
+          frameTitle: "Frame B Failed",
+          status: "FAILED",
+          lastErrorCode: "MAIL_FAILED",
+        },
+      });
+      const resetCross = await resetLabOrderStatus(shopA.id, orderBFailed.id, "PENDING", prisma);
       expect(resetCross).toBeNull();
+      const orderBFailedCheck = await getLabOrder(shopB.id, orderBFailed.id, prisma);
+      expect(orderBFailedCheck?.status).toBe("FAILED");
+      expect(orderBFailedCheck?.lastErrorCode).toBe("MAIL_FAILED");
 
       // 10. loadTicketData cross-shop isolation
       await expect(loadTicketData(shopA.id, orderB.id, { db: prisma, cipher })).rejects.toThrow(NotFoundError);
@@ -1148,6 +1243,7 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
 
       const { mailer, sentEmails } = createFakeMailer();
       const { objectStore } = createFakeObjectStore();
+      const fakeQueue = { enqueue: vi.fn() };
 
       const repoModule = await import("./lab-dispatch.repository.server");
       const markSentSpy = vi.spyOn(repoModule, "markSent").mockRejectedValueOnce(new Error("Database crash in markSent"));
@@ -1159,10 +1255,21 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
           cipher,
           objectStore,
           mailer,
+          queue: fakeQueue,
         }),
       ).rejects.toThrow("Database crash in markSent");
 
       markSentSpy.mockRestore();
+
+      // R3-F1: Verify delayed dispatch job was enqueued with lease expiry + margin
+      expect(fakeQueue.enqueue).toHaveBeenCalledWith(
+        DISPATCH_JOB_NAME,
+        { labOrderId: order.id },
+        expect.objectContaining({
+          singletonKey: expect.stringContaining(`${order.id}:delayed:`),
+          startAfter: expect.any(Date),
+        }),
+      );
 
       // Verify row is NOT marked FAILED; it is left in SENDING with attempts = 1
       const intermediate = await prisma.labOrder.findUnique({ where: { id: order.id } });
@@ -1196,6 +1303,241 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
       expect(finalOrder?.status).toBe("SENT");
       expect(finalOrder?.attempts).toBe(1);
       expect(finalOrder?.providerId).toBeDefined();
+    });
+
+    it("R3-F1: delayed dispatch recovery after markSent failure: worker meeting fresh SENDING lease completes without burning retries, and delayed job reclaims after lease expiry with same idempotency key", async () => {
+      const shop = await seedShop("shop-r3f1-recovery.example.test");
+      const catalog = await seedCatalog(shop.id);
+      const cipher = getCipher();
+
+      const rxRow = await prisma.prescription.create({
+        data: {
+          id: "rx-r3f1-recovery",
+          shopId: shop.id,
+          rxType: "SINGLE_VISION",
+          source: "MANUAL",
+          cipher: cipher.encrypt(sensitiveRx, `${shop.id}:rx-r3f1-recovery`),
+        },
+      });
+
+      const order = await prisma.labOrder.create({
+        data: {
+          shopId: shop.id,
+          shopifyOrderId: "1008-r3f1",
+          orderName: "#1008-r3f1",
+          bundleId: "bundle-r3f1-recovery",
+          prescriptionId: rxRow.id,
+          lensId: catalog.lens.id,
+          frameTitle: "R3F1 Recovery Frame",
+          status: "PENDING",
+        },
+      });
+
+      const { mailer, sentEmails } = createFakeMailer();
+      const { objectStore } = createFakeObjectStore();
+      const fakeQueue = { enqueue: vi.fn().mockResolvedValue("job-delayed-1") };
+
+      // Injected clock starting at T0
+      let currentTime = new Date("2026-11-08T12:00:00.000Z");
+      const clock = () => currentTime;
+
+      const repoModule = await import("./lab-dispatch.repository.server");
+      const markSentSpy = vi.spyOn(repoModule, "markSent").mockRejectedValueOnce(new Error("Transient connection reset in markSent"));
+
+      // 1. Initial worker execution at T0: mailer sends, but markSent throws
+      const handler = createDispatchHandler({
+        db: prisma,
+        cipher,
+        objectStore,
+        mailer,
+        queue: fakeQueue,
+        now: clock,
+      });
+
+      // markSent failure rethrows from processDispatch and handler rethrows for initial failure
+      await expect(handler({ labOrderId: order.id })).rejects.toThrow("Transient connection reset in markSent");
+      markSentSpy.mockRestore();
+
+      // Row is left in SENDING with attempts = 1, lastErrorCode = null
+      const rowAfterCrash = await prisma.labOrder.findUnique({ where: { id: order.id } });
+      expect(rowAfterCrash?.status).toBe("SENDING");
+      expect(rowAfterCrash?.attempts).toBe(1);
+      expect(rowAfterCrash?.lastErrorCode).toBeNull();
+      expect(sentEmails).toHaveLength(1);
+      expect(sentEmails[0].idempotencyKey).toBe(`${order.id}:1`);
+
+      // Verify delayed dispatch job was enqueued with startAfter = lease expiry + margin and singletonKey
+      const expectedLeaseExpiry = new Date(currentTime.getTime() + SENDING_STALE_TIMEOUT_MS);
+      const expectedStartAfter = new Date(expectedLeaseExpiry.getTime() + DELAY_MARGIN_MS);
+      const expectedSingletonKey = `${order.id}:delayed:${currentTime.getTime()}`;
+
+      expect(fakeQueue.enqueue).toHaveBeenCalledWith(
+        DISPATCH_JOB_NAME,
+        { labOrderId: order.id },
+        {
+          startAfter: expectedStartAfter,
+          singletonKey: expectedSingletonKey,
+        },
+      );
+
+      // 2. pg-boss retries with backoff (e.g. 2s, 4s, 8s, etc.).
+      // Advance clock by 2 seconds: retry lands inside the 15-minute lease!
+      currentTime = new Date(currentTime.getTime() + 2_000);
+
+      // Worker meets a fresh SENDING lease: MUST complete cleanly without burning retries!
+      await expect(handler({ labOrderId: order.id })).resolves.toBeUndefined();
+
+      // Row is still SENDING, attempts is still 1, no second email sent during retry
+      const rowDuringRetry = await prisma.labOrder.findUnique({ where: { id: order.id } });
+      expect(rowDuringRetry?.status).toBe("SENDING");
+      expect(rowDuringRetry?.attempts).toBe(1);
+      expect(sentEmails).toHaveLength(1);
+
+      // 3. Clock advances to startAfter (lease expiry + margin has passed)
+      currentTime = new Date(expectedStartAfter.getTime() + 1_000);
+
+      // Delayed job executes after lease expiration: reclaims stale row and dispatches
+      await handler({ labOrderId: order.id });
+
+      // Row is now SENT, attempts preserved at 1, sentEmails has 2 sends with identical idempotencyKey
+      const finalRow = await prisma.labOrder.findUnique({ where: { id: order.id } });
+      expect(finalRow?.status).toBe("SENT");
+      expect(finalRow?.attempts).toBe(1);
+      expect(finalRow?.providerId).toBeDefined();
+
+      expect(sentEmails).toHaveLength(2);
+      expect(sentEmails[0].idempotencyKey).toBe(`${order.id}:1`);
+      expect(sentEmails[1].idempotencyKey).toBe(`${order.id}:1`);
+    });
+
+    it("R3-F4: if markSent returns null (lost lease / slow worker), logs lost lease and returns SKIPPED, never SENT", async () => {
+      const shop = await seedShop("shop-r3f4-marksent-null.example.test");
+      const catalog = await seedCatalog(shop.id);
+      const cipher = getCipher();
+
+      const rxRow = await prisma.prescription.create({
+        data: {
+          id: "rx-r3f4-ms-null",
+          shopId: shop.id,
+          rxType: "SINGLE_VISION",
+          source: "MANUAL",
+          cipher: cipher.encrypt(sensitiveRx, `${shop.id}:rx-r3f4-ms-null`),
+        },
+      });
+
+      const order = await prisma.labOrder.create({
+        data: {
+          shopId: shop.id,
+          shopifyOrderId: "1009-r3f4",
+          orderName: "#1009-r3f4",
+          bundleId: "bundle-r3f4-ms-null",
+          prescriptionId: rxRow.id,
+          lensId: catalog.lens.id,
+          frameTitle: "MarkSent Null Frame",
+          status: "PENDING",
+        },
+      });
+
+      const { mailer } = createFakeMailer();
+      const { objectStore } = createFakeObjectStore();
+      const { logger, calls } = createCapturingLogger();
+
+      // Spy on markSent to simulate a slow worker whose lease was reclaimed (count = 0, returns null)
+      const repoModule = await import("./lab-dispatch.repository.server");
+      const markSentSpy = vi.spyOn(repoModule, "markSent").mockResolvedValueOnce(null);
+
+      const result = await processDispatch(shop.id, order.id, {
+        db: prisma,
+        cipher,
+        objectStore,
+        mailer,
+        logger,
+      });
+
+      markSentSpy.mockRestore();
+
+      // Must return SKIPPED with reason lost_lease, NEVER SENT
+      expect(result.status).toBe("SKIPPED");
+      expect(result.status).not.toBe("SENT");
+      expect(result.reason).toBe("lost_lease");
+
+      // Verify logger logged lost_lease
+      const lostLog = calls.find((e) => e.event === "lab_dispatch.lost_lease");
+      expect(lostLog).toBeDefined();
+      expect(lostLog?.meta).toMatchObject({
+        shopId: shop.id,
+        labOrderId: order.id,
+        reason: "mark_sent_lost_lease",
+      });
+    });
+
+    it("R3-F4: if markFailed returns null (lost lease / slow worker), logs lost lease and returns SKIPPED", async () => {
+      const shop = await seedShop("shop-r3f4-markfailed-null.example.test");
+      const catalog = await seedCatalog(shop.id);
+      const cipher = getCipher();
+
+      const rxRow = await prisma.prescription.create({
+        data: {
+          id: "rx-r3f4-mf-null",
+          shopId: shop.id,
+          rxType: "SINGLE_VISION",
+          source: "MANUAL",
+          cipher: cipher.encrypt(sensitiveRx, `${shop.id}:rx-r3f4-mf-null`),
+        },
+      });
+
+      const order = await prisma.labOrder.create({
+        data: {
+          shopId: shop.id,
+          shopifyOrderId: "1010-r3f4",
+          orderName: "#1010-r3f4",
+          bundleId: "bundle-r3f4-mf-null",
+          prescriptionId: rxRow.id,
+          lensId: catalog.lens.id,
+          frameTitle: "MarkFailed Null Frame",
+          status: "PENDING",
+        },
+      });
+
+      const { mailer } = createFakeMailer();
+      const failingStore = {
+        bucket: "test-bucket",
+        kmsKeyId: "test-kms",
+        putObject: vi.fn().mockRejectedValue(new Error("S3 503 Service Unavailable")),
+        presignUpload: vi.fn(),
+        presignDownload: vi.fn(),
+        headObject: vi.fn(),
+        objectExists: vi.fn(),
+        deletePrefix: vi.fn(),
+      };
+      const { logger, calls } = createCapturingLogger();
+
+      // Spy on markFailed to simulate lost lease (count = 0, returns null)
+      const repoModule = await import("./lab-dispatch.repository.server");
+      const markFailedSpy = vi.spyOn(repoModule, "markFailed").mockResolvedValueOnce(null);
+
+      const result = await processDispatch(shop.id, order.id, {
+        db: prisma,
+        cipher,
+        objectStore: failingStore,
+        mailer,
+        logger,
+      });
+
+      markFailedSpy.mockRestore();
+
+      // Must return SKIPPED with reason lost_lease
+      expect(result.status).toBe("SKIPPED");
+      expect(result.reason).toBe("lost_lease");
+
+      // Verify logger logged lost_lease
+      const lostLog = calls.find((e) => e.event === "lab_dispatch.lost_lease");
+      expect(lostLog).toBeDefined();
+      expect(lostLog?.meta).toMatchObject({
+        shopId: shop.id,
+        labOrderId: order.id,
+        reason: "mark_failed_lost_lease",
+      });
     });
 
     it("R1-F2: stale SENDING row (updatedAt older than 15 min) is reclaimed and reuses same attempts value", async () => {
@@ -1855,9 +2197,19 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
         processDispatch(shop.id, orderSending.id, { db: prisma, cipher }),
       ).rejects.toThrow(DispatchInProgressError);
 
-      // Calling worker handler must throw so pg-boss retries with backoff
-      const handler = createDispatchHandler({ db: prisma, cipher });
-      await expect(handler({ labOrderId: orderSending.id })).rejects.toThrow(DispatchInProgressError);
+      // R3-F1: Calling worker handler when meeting a fresh SENDING lease enqueues delayed job
+      // and completes without burning retries (does not throw DispatchInProgressError)
+      const fakeQueue = { enqueue: vi.fn() };
+      const handler = createDispatchHandler({ db: prisma, cipher, queue: fakeQueue });
+      await expect(handler({ labOrderId: orderSending.id })).resolves.toBeUndefined();
+      expect(fakeQueue.enqueue).toHaveBeenCalledWith(
+        DISPATCH_JOB_NAME,
+        { labOrderId: orderSending.id },
+        expect.objectContaining({
+          singletonKey: expect.stringContaining(`${orderSending.id}:delayed:`),
+          startAfter: expect.any(Date),
+        }),
+      );
 
       // 2. Already SENT order returns SKIPPED
       const orderSent = await prisma.labOrder.create({
