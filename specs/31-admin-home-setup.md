@@ -1,6 +1,6 @@
 # Spec 31 — Admin home and setup checklist
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 09, Spec 14, Spec 15
 **Model:** Light — `claude-haiku-5-5` · `gpt-6-luna` · `gemini-3.5-flash-lite`
 **Issue:** —
@@ -87,7 +87,7 @@ Real, used now: 09, 14, 15. Tests: `testConfig()` loader call on a real test DB.
     - `pnpm lint` (`eslint . --max-warnings 0`) -> exit 0
     - `pnpm build` -> exit 0
     - `git diff --check` -> exit 0
-- **2026-11-08** — Evidence (orchestro spec verify, tree 70c61f40): install pass · typecheck pass · lint pass · build pass · test pass 573/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree ffe236e0): install pass · typecheck pass · lint pass · build pass · test pass 781/0/0
 - **2026-11-08** — Review R1 fixes by agy-5 (findings R1-F1, R1-F3):
   - R1-F1: Added route-level component tests in `app/routes/app._index.test.tsx` verifying `ErrorBoundary` behavior when the route loader throws (thrown `Response` with error data and empty response falling back to `'Handling response'`), as well as the happy-path `Index` component rendering with loader data and route loader delegation.
   - R1-F3: Removed duplicate `<s-heading>` from the "You're live" section in `app/features/home/home-view.tsx` so "You're live" is rendered solely through `<s-section heading="You're live">`. Updated assertions in `app/features/home/home.test.tsx` and added an explicit R1-F3 test asserting no nested `<s-heading>` is rendered.
