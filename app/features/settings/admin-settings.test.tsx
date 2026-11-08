@@ -614,6 +614,157 @@ describe("Spec 20 — Admin Settings Route (Server)", () => {
     }, DB_TIMEOUT_MS);
   });
 
+  describe("Lab email boundary limits (R5-F1)", () => {
+    it("accepts exactly 10 lab email addresses and saves them", async () => {
+      const domain = "ten-emails.myshopify.com";
+      const shopId = await createShop(domain);
+      mocks.currentShop = domain;
+
+      const tenEmails = Array.from(
+        { length: 10 },
+        (_, i) => `lab${i + 1}@example.com`,
+      );
+      const formData = new FormData();
+      formData.append("labEmail", tenEmails.join("\n"));
+
+      const request = new Request("https://app.test/app/settings", {
+        method: "POST",
+        body: formData,
+      });
+
+      const response = await action(createActionArgs(request));
+      const { status, data: result } = await unwrapResponse<{
+        ok: boolean;
+        settings?: { labEmail: string[] };
+      }>(response);
+
+      expect(status).toBe(200);
+      expect(result.ok).toBe(true);
+      expect(result.settings?.labEmail).toHaveLength(10);
+      expect(result.settings?.labEmail).toEqual(tenEmails);
+
+      const saved = await getSettings(shopId, getTestPrisma());
+      expect(saved.labEmail).toHaveLength(10);
+      expect(saved.labEmail).toEqual(tenEmails);
+    }, DB_TIMEOUT_MS);
+
+    it("rejects 11 lab email addresses with 400 TOO_MANY_LAB_EMAILS and writes nothing (form data)", async () => {
+      const domain = "eleven-emails-form.myshopify.com";
+      const shopId = await createShop(domain);
+      mocks.currentShop = domain;
+
+      const elevenEmails = Array.from(
+        { length: 11 },
+        (_, i) => `lab${i + 1}@example.com`,
+      );
+      const formData = new FormData();
+      formData.append("labEmail", elevenEmails.join("\n"));
+
+      const request = new Request("https://app.test/app/settings", {
+        method: "POST",
+        body: formData,
+      });
+
+      const response = await action(createActionArgs(request));
+      const { status, data: result } =
+        await unwrapResponse<ErrorResponseBody>(response);
+
+      expect(status).toBe(400);
+      expect(result.error.code).toBe("TOO_MANY_LAB_EMAILS");
+      expect(result.error.fields).toEqual([
+        { path: "labEmail", code: "TOO_MANY_LAB_EMAILS" },
+      ]);
+
+      const saved = await getSettings(shopId, getTestPrisma());
+      expect(saved.labEmail).toEqual([]);
+    }, DB_TIMEOUT_MS);
+
+    it("rejects 11 lab email addresses with 400 TOO_MANY_LAB_EMAILS and writes nothing (JSON array)", async () => {
+      const domain = "eleven-emails-json.myshopify.com";
+      const shopId = await createShop(domain);
+      mocks.currentShop = domain;
+
+      const elevenEmails = Array.from(
+        { length: 11 },
+        (_, i) => `lab${i + 1}@example.com`,
+      );
+      const request = new Request("https://app.test/app/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ labEmail: elevenEmails }),
+      });
+
+      const response = await action(createActionArgs(request));
+      const { status, data: result } =
+        await unwrapResponse<ErrorResponseBody>(response);
+
+      expect(status).toBe(400);
+      expect(result.error.code).toBe("TOO_MANY_LAB_EMAILS");
+      expect(result.error.fields).toEqual([
+        { path: "labEmail", code: "TOO_MANY_LAB_EMAILS" },
+      ]);
+
+      const saved = await getSettings(shopId, getTestPrisma());
+      expect(saved.labEmail).toEqual([]);
+    }, DB_TIMEOUT_MS);
+
+    it("rejects over-length lab email field (> 2,000 chars) with 400 FIELD_TOO_LONG and writes nothing (string)", async () => {
+      const domain = "over-length-email-string.myshopify.com";
+      const shopId = await createShop(domain);
+      mocks.currentShop = domain;
+
+      // 2,001 character field
+      const longInput = "a".repeat(2001);
+      const formData = new FormData();
+      formData.append("labEmail", longInput);
+
+      const request = new Request("https://app.test/app/settings", {
+        method: "POST",
+        body: formData,
+      });
+
+      const response = await action(createActionArgs(request));
+      const { status, data: result } =
+        await unwrapResponse<ErrorResponseBody>(response);
+
+      expect(status).toBe(400);
+      expect(result.error.code).toBe("FIELD_TOO_LONG");
+      expect(result.error.fields).toEqual([
+        { path: "labEmail", code: "FIELD_TOO_LONG" },
+      ]);
+
+      const saved = await getSettings(shopId, getTestPrisma());
+      expect(saved.labEmail).toEqual([]);
+    }, DB_TIMEOUT_MS);
+
+    it("rejects over-length lab email field (> 2,000 chars total) with 400 FIELD_TOO_LONG and writes nothing (array)", async () => {
+      const domain = "over-length-email-array.myshopify.com";
+      const shopId = await createShop(domain);
+      mocks.currentShop = domain;
+
+      // Array whose total string length is 2,001 characters
+      const arrayInput = ["a".repeat(1000), "b".repeat(1001)];
+      const request = new Request("https://app.test/app/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ labEmail: arrayInput }),
+      });
+
+      const response = await action(createActionArgs(request));
+      const { status, data: result } =
+        await unwrapResponse<ErrorResponseBody>(response);
+
+      expect(status).toBe(400);
+      expect(result.error.code).toBe("FIELD_TOO_LONG");
+      expect(result.error.fields).toEqual([
+        { path: "labEmail", code: "FIELD_TOO_LONG" },
+      ]);
+
+      const saved = await getSettings(shopId, getTestPrisma());
+      expect(saved.labEmail).toEqual([]);
+    }, DB_TIMEOUT_MS);
+  });
+
   describe("Loader", () => {
     it("loads current settings, plan status, and pricing URL", async () => {
       const domain = "loader-test.myshopify.com";
@@ -836,6 +987,82 @@ describe("Spec 20 — Admin Settings Component (UI)", () => {
     const textArea = container.querySelector('s-text-area[name="labEmail"]');
     expect(textArea?.getAttribute("error")).toBe(
       "Enter a valid lab email address.",
+    );
+  });
+
+  it("displays inline TOO_MANY_LAB_EMAILS error banner and field error when returned by action (R5-F1)", () => {
+    vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue(defaultLoaderData);
+    vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+      data: {
+        error: {
+          code: "TOO_MANY_LAB_EMAILS",
+          message: "At most 10 lab email addresses are allowed.",
+          fields: [{ path: "labEmail", code: "TOO_MANY_LAB_EMAILS" }],
+        },
+      },
+      state: "idle",
+      Form: ({
+        children,
+        ...props
+      }: React.PropsWithChildren<Record<string, unknown>>) => (
+        <form {...props}>{children}</form>
+      ),
+      submit: vi.fn(),
+      load: vi.fn(),
+    } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+    const { container } = render(<SettingsRoute />);
+
+    const banner = container.querySelector(
+      's-banner[heading="Invalid lab email address"]',
+    );
+    expect(banner).not.toBeNull();
+    expect(banner?.getAttribute("tone")).toBe("critical");
+    expect(
+      screen.getByText("At most 10 lab email addresses are allowed."),
+    ).not.toBeNull();
+
+    const textArea = container.querySelector('s-text-area[name="labEmail"]');
+    expect(textArea?.getAttribute("error")).toBe(
+      "At most 10 lab email addresses are allowed.",
+    );
+  });
+
+  it("displays inline FIELD_TOO_LONG error banner and field error when returned by action (R5-F1)", () => {
+    vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue(defaultLoaderData);
+    vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+      data: {
+        error: {
+          code: "FIELD_TOO_LONG",
+          message: "Lab email field cannot exceed 2,000 characters.",
+          fields: [{ path: "labEmail", code: "FIELD_TOO_LONG" }],
+        },
+      },
+      state: "idle",
+      Form: ({
+        children,
+        ...props
+      }: React.PropsWithChildren<Record<string, unknown>>) => (
+        <form {...props}>{children}</form>
+      ),
+      submit: vi.fn(),
+      load: vi.fn(),
+    } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+    const { container } = render(<SettingsRoute />);
+
+    const banner = container.querySelector(
+      's-banner[heading="Invalid lab email address"]',
+    );
+    expect(banner).not.toBeNull();
+    expect(banner?.getAttribute("tone")).toBe("critical");
+    expect(
+      screen.getByText("Lab email field cannot exceed 2,000 characters."),
+    ).not.toBeNull();
+
+    const textArea = container.querySelector('s-text-area[name="labEmail"]');
+    expect(textArea?.getAttribute("error")).toBe(
+      "Lab email field cannot exceed 2,000 characters.",
     );
   });
 

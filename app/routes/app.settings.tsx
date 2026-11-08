@@ -91,6 +91,9 @@ const booleanFieldSchema = z
     return parseBooleanInput(val)!;
   });
 
+export const LAB_EMAIL_MAX_CHARS = 2000;
+export const LAB_EMAIL_MAX_COUNT = 10;
+
 const ticketFormatSchema = z.enum(TICKET_FORMATS, {
   errorMap: () => ({ message: "INVALID_TICKET_FORMAT" }),
 });
@@ -215,8 +218,37 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (parsed.labEmail !== undefined) {
     const rawEmails = parsed.labEmail;
+    const rawLength =
+      typeof rawEmails === "string"
+        ? rawEmails.length
+        : rawEmails.reduce(
+            (acc, s) => acc + (typeof s === "string" ? s.length : 0),
+            0,
+          );
+
+    if (rawLength > LAB_EMAIL_MAX_CHARS) {
+      return errorResponse(
+        new BadRequestError(
+          `Lab email field cannot exceed ${LAB_EMAIL_MAX_CHARS} characters.`,
+          "FIELD_TOO_LONG",
+          [{ path: "labEmail", code: "FIELD_TOO_LONG" }],
+        ),
+      );
+    }
+
+    if (Array.isArray(rawEmails) && rawEmails.length > LAB_EMAIL_MAX_COUNT) {
+      return errorResponse(
+        new BadRequestError(
+          `At most ${LAB_EMAIL_MAX_COUNT} lab email addresses are allowed.`,
+          "TOO_MANY_LAB_EMAILS",
+          [{ path: "labEmail", code: "TOO_MANY_LAB_EMAILS" }],
+        ),
+      );
+    }
+
+    let emailList: string[];
     if (Array.isArray(rawEmails)) {
-      patch.labEmail = rawEmails.flatMap((item) =>
+      emailList = rawEmails.flatMap((item) =>
         typeof item === "string"
           ? item
               .split(/[\n,]+/)
@@ -224,19 +256,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               .filter(Boolean)
           : [],
       );
-    } else if (typeof rawEmails === "string") {
+    } else {
       const trimmed = rawEmails.trim();
       if (trimmed.length === 0) {
-        patch.labEmail = [];
+        emailList = [];
       } else if (trimmed.includes(",") || trimmed.includes("\n")) {
-        patch.labEmail = trimmed
+        emailList = trimmed
           .split(/[\n,]+/)
           .map((s) => s.trim())
           .filter(Boolean);
       } else {
-        patch.labEmail = [trimmed];
+        emailList = [trimmed];
       }
     }
+
+    if (emailList.length > LAB_EMAIL_MAX_COUNT) {
+      return errorResponse(
+        new BadRequestError(
+          `At most ${LAB_EMAIL_MAX_COUNT} lab email addresses are allowed.`,
+          "TOO_MANY_LAB_EMAILS",
+          [{ path: "labEmail", code: "TOO_MANY_LAB_EMAILS" }],
+        ),
+      );
+    }
+
+    patch.labEmail = emailList;
   }
 
   // INV-3: Privacy toggle cannot be turned on without the confirmation field
@@ -375,11 +419,19 @@ export default function SettingsRoute() {
   const emailField = fieldErrors?.find(
     (f) => f.path === "labEmail" || f.path.startsWith("labEmail."),
   );
-  const emailError = emailField
-    ? emailField.code === "EMAIL"
-      ? "Enter a valid lab email address."
-      : emailField.code
-    : undefined;
+  const emailCode = emailField?.code ?? actionError?.code;
+  const emailError =
+    emailField ||
+    actionError?.code === "TOO_MANY_LAB_EMAILS" ||
+    actionError?.code === "FIELD_TOO_LONG"
+      ? emailCode === "EMAIL"
+        ? "Enter a valid lab email address."
+        : emailCode === "TOO_MANY_LAB_EMAILS"
+          ? "At most 10 lab email addresses are allowed."
+          : emailCode === "FIELD_TOO_LONG"
+            ? "Lab email field cannot exceed 2,000 characters."
+            : actionError?.message || emailCode
+      : undefined;
 
   const rxInputError = fieldErrors?.some(
     (f) =>
