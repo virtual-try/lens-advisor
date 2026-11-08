@@ -24,3 +24,13 @@
 `e2e/helpers/seed.ts` — `seedShop`, `seedLensGroup`, `seedLens`, `seedOptionGroup`, `seedAddOn`, `seedSettings`. Seed helpers invoking service layers (specs 14, 15, 17) rather than direct SQL.
 **Use instead of:** raw SQL seeding in end-to-end suites.
 **Added by:** spec 33.
+
+### `e2e-cart-url`
+`e2e/helpers/cart-url.ts` — `buildCartUrl(pageUrlOrOrigin, path)`. Resolves absolute cart URLs against the current page URL or base URL for Playwright storefront request contexts.
+**Use instead of:** hardcoded relative endpoints in `page.request` calls.
+**Added by:** spec 33.
+
+### `e2e-queue-mock`
+`e2e/helpers/queue-mock.ts` — `createMockQueue()`, `setupQueueMock()`, `teardownQueueMock()`. In-memory queue seam adapter capturing enqueued jobs without touching pg-boss or the database.
+**Use instead of:** live pg-boss queue polling during server e2e tests.
+**Added by:** spec 33.

@@ -3,14 +3,28 @@ import { test, expect } from "@playwright/test";
 import { getSharedTestDb } from "../helpers/shared-db";
 import type { TestDb } from "../../test/db";
 import { action as ordersCreateWebhookAction } from "../../app/routes/webhooks.orders.create";
-import { action as labOrderDetailAction } from "../../app/routes/app.lab-orders.$id";
-import { createIntakeService } from "../../app/features/lab-orders/intake.service.server";
-import { createDispatchHandler } from "../../app/features/lab-dispatch/jobs.server";
+import { loader as labOrdersListLoader } from "../../app/routes/app.lab-orders._index";
+import {
+  action as labOrderDetailAction,
+  loader as labOrderDetailLoader,
+} from "../../app/routes/app.lab-orders.$id";
+import {
+  intakeJob,
+  type IntakeJobPayload,
+  INTAKE_JOB_NAME,
+} from "../../app/features/lab-orders/jobs.server";
+import {
+  dispatchJob,
+  type DispatchJobPayload,
+  DISPATCH_JOB_NAME,
+} from "../../app/features/lab-dispatch/jobs.server";
+import { buildTicketKey } from "../../app/shared/storage/object-store.server";
 import { createPrescriptionsService } from "../../app/features/prescriptions/prescriptions.service.server";
 import {
   createActionArgs,
   createAdminUrl,
   createAuthHeaders,
+  createLoaderArgs,
   createSignedWebhookRequest,
   unwrapData,
 } from "../helpers/shopify-auth";
@@ -26,6 +40,7 @@ import {
   setupStorageAndMailerMocks,
   teardownStorageAndMailerMocks,
 } from "../helpers/storage-mail-mock";
+import { setupQueueMock, teardownQueueMock } from "../helpers/queue-mock";
 import { seedLens, seedLensGroup, seedSettings, seedShop } from "../helpers/seed";
 
 test.describe("Spec 33 Flows 11 & 12: Orders intake and lab dispatch (compliance-webhooks, admin-lab-orders)", () => {
@@ -118,54 +133,66 @@ test.describe("Spec 33 Flows 11 & 12: Orders intake and lab dispatch (compliance
       },
     });
 
-    // 5. Send signed orders/create webhook
-    const webhookReq = createSignedWebhookRequest(
-      "/webhooks/orders/create",
-      "orders/create",
-      domain,
-      { id: shopifyOrderId, admin_graphql_api_id: `gid://shopify/Order/${shopifyOrderId}` }
-    );
-    const webhookRes = await ordersCreateWebhookAction(createActionArgs(webhookReq));
-    expect(webhookRes.status).toBe(200);
+    const mockQueue = setupQueueMock();
+    try {
+      // 5. Send signed orders/create webhook
+      const webhookReq = createSignedWebhookRequest(
+        "/webhooks/orders/create",
+        "orders/create",
+        domain,
+        { id: shopifyOrderId, admin_graphql_api_id: `gid://shopify/Order/${shopifyOrderId}` }
+      );
+      const webhookRes = await ordersCreateWebhookAction(createActionArgs(webhookReq));
+      expect(webhookRes.status).toBe(200);
 
-    // 6. Execute intake service
-    const intakeService = createIntakeService({ db: db.prisma });
-    const intakeResult = await intakeService.processOrderIntake(domain, shopifyOrderId);
-    expect(intakeResult.ok).toBe(true);
-    expect(intakeResult.labOrders.length).toBe(1);
+      // 6. Assert webhook enqueued intake job; capture its payload
+      const intakeJobs = mockQueue.findJobs(INTAKE_JOB_NAME);
+      expect(intakeJobs.length).toBe(1);
+      const intakePayload = intakeJobs[0].payload as IntakeJobPayload;
+      expect(intakePayload.shopDomain).toBe(domain);
+      expect(intakePayload.shopifyOrderId).toBe(shopifyOrderId);
 
-    const createdLabOrder = intakeResult.labOrders[0];
-    expect(createdLabOrder.shopifyOrderId).toBe(shopifyOrderId);
+      // 7. Execute real intake handler with captured payload
+      const jobContext = {
+        jobId: "mock-intake-job",
+        retryCount: 0,
+        signal: new AbortController().signal,
+      };
+      await intakeJob.handler(intakePayload, jobContext);
 
-    // 7. Execute dispatch handler
-    const dispatchHandler = createDispatchHandler({
-      db: db.prisma,
-      objectStore: mockStore,
-      mailer: mockMailer,
-    });
-    await dispatchHandler({ labOrderId: createdLabOrder.id });
+      // 8. Assert intake job enqueued dispatch job; capture its payload
+      const dispatchJobs = mockQueue.findJobs(DISPATCH_JOB_NAME);
+      expect(dispatchJobs.length).toBe(1);
+      const dispatchPayload = dispatchJobs[0].payload as DispatchJobPayload;
+      expect(dispatchPayload.labOrderId).toBeTruthy();
 
-    // 8. Assert DB status is SENT
-    const updatedLabOrder = await db.prisma.labOrder.findUnique({
-      where: { id: createdLabOrder.id },
-    });
-    expect(updatedLabOrder).not.toBeNull();
-    expect(updatedLabOrder?.status).toBe("SENT");
-    expect(updatedLabOrder?.sentAt).not.toBeNull();
+      // 9. Execute real dispatch handler with captured payload
+      await dispatchJob.handler(dispatchPayload, {
+        ...jobContext,
+        jobId: "mock-dispatch-job",
+      });
 
-    // 9. Assert ticket PDF exists in object storage
-    const ticketKey = `shops/${shopId}/tickets/${createdLabOrder.id}/ticket.pdf`;
-    expect(mockStore.storedObjects.has(ticketKey)).toBe(true);
+      // 10. Assert DB status is SENT
+      const updatedLabOrder = await db.prisma.labOrder.findUnique({
+        where: { id: dispatchPayload.labOrderId },
+      });
+      expect(updatedLabOrder).not.toBeNull();
+      expect(updatedLabOrder?.status).toBe("SENT");
+      expect(updatedLabOrder?.sentAt).not.toBeNull();
 
-    // 10. Assert dispatch email was sent with PDF attachment
-    expect(mockMailer.sentMails.length).toBeGreaterThan(0);
-    const sent = mockMailer.sentMails.find((m) =>
-      Array.isArray(m.to)
-        ? m.to.includes("lab@optical-lab.example")
-        : m.to === "lab@optical-lab.example"
-    );
-    expect(sent).toBeDefined();
-    expect(sent?.attachments?.some((a) => a.filename.endsWith(".pdf"))).toBe(true);
+      // 11. Assert ticket PDF exists in object storage
+      const ticketKey = buildTicketKey(shopId, dispatchPayload.labOrderId, "pdf");
+      expect(mockStore.storedObjects.has(ticketKey)).toBe(true);
+
+      // 12. Assert dispatch email was sent with PDF attachment
+      expect(mockMailer.sentMails.length).toBe(1);
+      const mail = mockMailer.sentMails[0];
+      expect(mail.to).toEqual(["lab@optical-lab.example"]);
+      expect(mail.attachments?.length).toBe(1);
+      expect(mail.attachments?.[0].filename).toBe(`ticket-${dispatchPayload.labOrderId}.pdf`);
+    } finally {
+      teardownQueueMock();
+    }
   });
 
   test("Flow 12: Resend failed lab order -> resets to PENDING, transitions to SENT with timestamp", async () => {
@@ -221,47 +248,77 @@ test.describe("Spec 33 Flows 11 & 12: Orders intake and lab dispatch (compliance
       },
     });
 
-    // Call admin action with intent: "resend"
-    const req = new Request(createAdminUrl(`/app/lab-orders/${failedOrder.id}`, domain), {
-      method: "POST",
-      headers: {
-        ...createAuthHeaders(domain),
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: "intent=resend",
-    });
-    const res = await labOrderDetailAction(
-      createActionArgs(req, { id: failedOrder.id })
-    );
+    const mockQueue = setupQueueMock();
+    try {
+      // 1. Exercise list path: load lab orders list
+      const listReq = new Request(createAdminUrl("/app/lab-orders", domain), {
+        headers: createAuthHeaders(domain),
+      });
+      const listRes = await labOrdersListLoader(createLoaderArgs(listReq));
+      const listData = await unwrapData<{ orders: Array<{ id: string; status: string }> }>(listRes);
+      expect(listData.orders.some((o) => o.id === failedOrder.id)).toBe(true);
 
-    const actionData = await unwrapData<{ ok: boolean; resent?: boolean }>(res);
-    expect(actionData.ok).toBe(true);
+      // 2. Exercise detail path: open lab order detail
+      const detailReq = new Request(
+        createAdminUrl(`/app/lab-orders/${failedOrder.id}`, domain),
+        { headers: createAuthHeaders(domain) }
+      );
+      const detailRes = await labOrderDetailLoader(
+        createLoaderArgs(detailReq, { id: failedOrder.id })
+      );
+      const detailData = await unwrapData<{ order: { id: string; status: string } }>(detailRes);
+      expect(detailData.order.id).toBe(failedOrder.id);
+      expect(detailData.order.status).toBe("FAILED");
 
-    // Verify order transitioned to PENDING in DB
-    const pendingOrder = await db.prisma.labOrder.findUnique({
-      where: { id: failedOrder.id },
-    });
-    expect(pendingOrder).not.toBeNull();
-    expect(pendingOrder?.status).toBe("PENDING");
+      // 3. Trigger Resend via admin detail action
+      const req = new Request(createAdminUrl(`/app/lab-orders/${failedOrder.id}`, domain), {
+        method: "POST",
+        headers: {
+          ...createAuthHeaders(domain),
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: "intent=resend",
+      });
+      const res = await labOrderDetailAction(
+        createActionArgs(req, { id: failedOrder.id })
+      );
 
-    // Execute dispatch handler
-    const beforeDispatch = new Date();
-    const dispatchHandler = createDispatchHandler({
-      db: db.prisma,
-      objectStore: mockStore,
-      mailer: mockMailer,
-    });
-    await dispatchHandler({ labOrderId: failedOrder.id });
+      const actionData = await unwrapData<{ ok: boolean; resent?: boolean }>(res);
+      expect(actionData.ok).toBe(true);
 
-    // Verify order transitioned to SENT with new timestamp
-    const sentOrder = await db.prisma.labOrder.findUnique({
-      where: { id: failedOrder.id },
-    });
-    expect(sentOrder).not.toBeNull();
-    expect(sentOrder?.status).toBe("SENT");
-    expect(sentOrder?.sentAt).not.toBeNull();
-    expect(new Date(sentOrder!.sentAt!).getTime()).toBeGreaterThanOrEqual(
-      beforeDispatch.getTime() - 1000
-    );
+      // 4. Verify order transitioned to PENDING in DB
+      const pendingOrder = await db.prisma.labOrder.findUnique({
+        where: { id: failedOrder.id },
+      });
+      expect(pendingOrder).not.toBeNull();
+      expect(pendingOrder?.status).toBe("PENDING");
+
+      // 5. Assert exactly one dispatch job was captured
+      const dispatchJobs = mockQueue.findJobs(DISPATCH_JOB_NAME);
+      expect(dispatchJobs.length).toBe(1);
+      const dispatchJobEntry = dispatchJobs[0];
+      expect(dispatchJobEntry.payload).toEqual({ labOrderId: failedOrder.id });
+
+      // 6. Execute real dispatch handler with captured job payload (no manual handler calls)
+      const beforeDispatch = new Date();
+      await dispatchJob.handler(dispatchJobEntry.payload as DispatchJobPayload, {
+        jobId: "mock-resend-dispatch",
+        retryCount: 0,
+        signal: new AbortController().signal,
+      });
+
+      // 7. Verify order transitioned to SENT with new timestamp
+      const sentOrder = await db.prisma.labOrder.findUnique({
+        where: { id: failedOrder.id },
+      });
+      expect(sentOrder).not.toBeNull();
+      expect(sentOrder?.status).toBe("SENT");
+      expect(sentOrder?.sentAt).not.toBeNull();
+      expect(new Date(sentOrder!.sentAt!).getTime()).toBeGreaterThanOrEqual(
+        beforeDispatch.getTime() - 1000
+      );
+    } finally {
+      teardownQueueMock();
+    }
   });
 });

@@ -29,6 +29,7 @@ export default defineConfig({
         ...devices["Desktop Chrome"],
         channel: "chromium",
         headless: true,
+        baseURL: process.env.E2E_STORE_URL,
       },
     },
   ],

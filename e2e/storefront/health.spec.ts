@@ -12,16 +12,21 @@ test.describe("Storefront health check (Step 2)", () => {
 
     await page.goto(storeUrl);
 
-    // If store is password protected, enter password
+    // If store is password protected, authenticate with web-first assertions
     if (page.url().includes("/password") && password) {
       const passwordInput = page.locator('input[type="password"]');
-      if (await passwordInput.isVisible()) {
-        await passwordInput.fill(password);
-        await page.locator('button[type="submit"]').click();
-        await page.waitForLoadState("networkidle");
-      }
+      await passwordInput.fill(password);
+      await page.locator('button[type="submit"]').click();
+      await expect(passwordInput).not.toBeVisible();
     }
 
-    expect(await page.title()).toBeTruthy();
+    // Require a product-specific element and the Select lenses control to be visible
+    const productElement = page
+      .locator('h1, .product__title, form[action*="/cart/add"], [data-la-mount]')
+      .first();
+    await expect(productElement).toBeVisible();
+
+    const selectLensesBtn = page.getByRole("button", { name: /select lenses/i });
+    await expect(selectLensesBtn).toBeVisible();
   });
 });

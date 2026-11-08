@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { buildCartUrl } from "../helpers/cart-url";
 
 const STORE_REQUIREMENTS =
   "requires: Shopify dev store with app installed and block placed, E2E_STORE_URL/PASSWORD, running app URL";
@@ -110,7 +111,7 @@ test.describe("Storefront Configurator Flows (Spec 33 Flows 6–9)", () => {
     await addToCartBtn.click();
 
     // 9. Verify /cart.js response contains frame and nested child lines
-    const cartRes = await page.request.get("/cart.js");
+    const cartRes = await page.request.get(buildCartUrl(page.url()));
     expect(cartRes.ok()).toBe(true);
     const cartJson = await cartRes.json();
     expect(cartJson.items.length).toBeGreaterThanOrEqual(4);
@@ -276,7 +277,7 @@ test.describe("Storefront Configurator Flows (Spec 33 Flows 6–9)", () => {
     await expect(addToCartBtn).toBeVisible();
     await addToCartBtn.click();
 
-    const cartRes = await page.request.get("/cart.js");
+    const cartRes = await page.request.get(buildCartUrl(page.url()));
     expect(cartRes.ok()).toBe(true);
     const cartJson = await cartRes.json();
 
@@ -364,7 +365,7 @@ test.describe("Storefront Configurator Flows (Spec 33 Flows 6–9)", () => {
     await page.getByRole("button", { name: /add to cart/i }).click();
 
     // Verify /cart.js has no raw clinical prescription fields in properties
-    const cartRes = await page.request.get("/cart.js");
+    const cartRes = await page.request.get(buildCartUrl(page.url()));
     expect(cartRes.ok()).toBe(true);
     const cartJson = await cartRes.json();
 
@@ -376,15 +377,60 @@ test.describe("Storefront Configurator Flows (Spec 33 Flows 6–9)", () => {
     expect(lensItem.properties?.Prescription).toBe("Prescription on file");
     expect(lensItem.properties?._rx_ref).toBeTruthy();
 
+    const ALLOWED_UNDERSCORE_KEYS = new Set([
+      "_bundle_id",
+      "_bundle_role",
+      "_item_id",
+      "_option_ids",
+      "_addon_ids",
+      "_rx_ref",
+      "_parent_id",
+    ]);
+
+    const rxNormalizedForms = ["-2.50", "-2.5", "2.50", "-250", "63.0"];
+
     for (const item of cartJson.items) {
-      const props = item.properties || {};
+      const props = (item.properties || {}) as Record<string, unknown>;
+
+      // 1. Assert exact allowed set of _-prefixed property keys
+      for (const key of Object.keys(props)) {
+        if (key.startsWith("_")) {
+          expect(
+            ALLOWED_UNDERSCORE_KEYS.has(key),
+            `Unexpected _-prefixed property key: ${key}`
+          ).toBe(true);
+        }
+      }
+
+      // Explicitly assert that no raw clinical keys exist
       expect(props._rx_od).toBeUndefined();
       expect(props._rx_os).toBeUndefined();
       expect(props._rx_pd).toBeUndefined();
-      const serialized = JSON.stringify(props).toLowerCase();
-      expect(serialized).not.toContain("-2.50");
-      expect(serialized).not.toContain("sphere");
-      expect(serialized).not.toContain("cylinder");
+
+      // 2. Scan every property value for each entered Rx value in all normalised forms
+      for (const [key, rawVal] of Object.entries(props)) {
+        const valStr = String(rawVal);
+
+        // Substring check for normalized sphere/prescription values
+        for (const form of rxNormalizedForms) {
+          expect(
+            valStr,
+            `Property ${key} contains forbidden Rx representation ${form}`
+          ).not.toContain(form);
+        }
+
+        // PD 63 / 63.0 / PD 63 checks
+        expect(
+          valStr,
+          `Property ${key} contains forbidden PD value`
+        ).not.toMatch(/(?:^|[^\w])63(?:\.0)?(?:[^\w]|$)/);
+        expect(valStr).not.toMatch(/PD\s*63/i);
+
+        // Clinical terminology scan
+        expect(valStr.toLowerCase()).not.toContain("sphere");
+        expect(valStr.toLowerCase()).not.toContain("cylinder");
+        expect(valStr.toLowerCase()).not.toContain("axis");
+      }
     }
   });
 });

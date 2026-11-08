@@ -73,6 +73,7 @@ Fix both issues by:
 - [ ] `web-definitions.server.ts` executes in plain Node/Playwright without throwing `TypeError: (intermediate value).glob is not a function`. [unit]
 - [ ] `getQueue()` provides a test seam and uses `TEST_DATABASE_URL` in test environments, never touching dev `DATABASE_URL`. [unit]
 - [ ] Spec 33 Flows 11 & 12 in `e2e/server/orders.spec.ts` can be un-annotated from `fixme` and pass. [e2e]
+- [ ] Flow 11 and 12 bodies consume captured queue jobs. [e2e]
 - [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
 - [ ] `pnpm build` passes. [static]
 

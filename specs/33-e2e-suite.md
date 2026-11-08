@@ -94,15 +94,15 @@ store — so the integrated paths are proven once, after every implementation sp
   - Test bug fixed: Fixed `LabOrder` creation and assertion fields from non-existent `retryCount` and `emailSentAt` to schema fields `attempts` and `sentAt`.
   - App bug triaged: `app/shared/queue/web-definitions.server.ts` unconditionally calls `import.meta.glob`, which throws `TypeError: (intermediate value).glob is not a function` outside Vite bundler execution when routes invoke `getQueue()`. Per binding non-scope rules, app code was not edited; tests in `e2e/server/orders.spec.ts` are marked `fixme`, and fix spec 35 (`specs/35-fix-web-feature-jobs-glob.md`) was created and appended to `specs/README.md` and `specs/PROGRESS.md`.
 - **Runner Summaries**:
-  - `pnpm test:e2e --project=server`: `2 skipped, 9 passed (1.7s)`
-  - `pnpm test:e2e --project=storefront`: `5 skipped (0.8s)` (requires live Shopify dev store; env missing)
-  - `pnpm test:e2e`: `7 skipped, 9 passed (2.4s)`
+  - `pnpm test:e2e --project=server`: `3 skipped, 10 passed (1.7s)`
+  - `pnpm test:e2e --project=storefront`: `5 skipped (0.9s)` (requires live Shopify dev store; env missing)
+  - `pnpm test:e2e`: `8 skipped, 10 passed (2.5s)`
   - `pnpm typecheck`: `✔ Generated Prisma Client ... Done in 1.3s` (0 errors)
   - `pnpm lint`: `eslint . --max-warnings 0` (0 errors, 0 warnings)
   - `pnpm build`: `build/client ... build/server/index.js 523.30 kB ... Done in 745ms` (0 errors)
-  - `pnpm test`: `Test Files 72 passed (72), Tests 1307 passed (1307), Duration 14.28s`
-- **Inventory Fragment**: `specs/inventory/33-e2e-suite.md` recorded for `e2e-shared-db`, `e2e-shopify-auth-fixtures`, `e2e-shopify-mock`, `e2e-storage-mail-mock`, and `e2e-seed-helpers`.
-- **2026-11-08** — Evidence (orchestro spec verify, tree 822bad46): install pass · typecheck pass · lint pass · build pass · test pass 1307/0/0
+  - `pnpm test`: `Test Files 73 passed (73), Tests 1312 passed (1312), Duration 14.35s`
+- **Inventory Fragment**: `specs/inventory/33-e2e-suite.md` recorded for `e2e-shared-db`, `e2e-shopify-auth-fixtures`, `e2e-shopify-mock`, `e2e-storage-mail-mock`, `e2e-seed-helpers`, `e2e-cart-url`, and `e2e-queue-mock`.
+- **2026-11-08** — Evidence (orchestro spec verify, tree cf9f58dc): install pass · typecheck pass · lint pass · build pass · test pass 1312/0/0
 - **2026-11-08** — Review round R1 fixes applied by coder agy-3:
   - R1-F1: Added Spec 35 row to `specs/PROGRESS.md`, updated spec count to 36 (00–35), and recorded log entry.
   - R1-F2: Formatted `specs/35-fix-web-feature-jobs-glob.md` with full template (Explicit non-scope, Steps, Log), typed glob check (`typeof (import.meta as { glob?: unknown }).glob === "function"`), and explicit non-Vite fallback definition list.
@@ -114,3 +114,12 @@ store — so the integrated paths are proven once, after every implementation sp
   - R1-F8: Updated `e2e/helpers/shopify-mock.ts` to throw an Error on unmatched GraphQL queries; removed mock import from `playwright.config.ts`; added `e2e/server/shopify-mock.spec.ts` testing that unmatched queries throw.
   - R1-F9: Updated `e2e/server/compliance.spec.ts` (Flow 13) to assert `shopSettings` is deleted and iterate Prisma DMMF models with `shopId` to assert all are empty.
   - R1-F10: In `e2e/server/admin-lenses.spec.ts`, replaced `toBeDefined()` on Prisma `findFirst` with `not.toBeNull()`, and asserted sync status fields the badge reads (`isFailed === false`, `isSynced === true`).
+- **2026-11-08** — Review round R2 fixes applied by coder agy-3:
+  - R2-F1: Re-ran `pnpm test:e2e --project=server` at HEAD and recorded exact summary counts: 3 skipped, 10 passed (1.7s).
+  - R2-F3: Configured `use.baseURL` for storefront project from `process.env.E2E_STORE_URL` in `playwright.config.ts`, created `e2e/helpers/cart-url.ts` with `buildCartUrl`, tested in `test/cart-url.test.ts` (5 passed), and routed `/cart.js` calls in Flows 6, 8, and 9 through `buildCartUrl(page.url())`.
+  - R2-F4: Rewrote Flow 11 in `e2e/server/orders.spec.ts` to capture the queued intake job via queue test seam (`e2e/helpers/queue-mock.ts`), run it through real `intakeJob.handler`, capture the resulting dispatch job, and run it through real `dispatchJob.handler` with zero manual intake/dispatch service calls. Kept `fixme` naming spec 35. Added Done-when checkbox in spec 35.
+  - R2-F5: Rewrote Flow 12 in `e2e/server/orders.spec.ts` to exercise the full list-to-detail path (`labOrdersListLoader` and `labOrderDetailLoader`), trigger resend via `labOrderDetailAction`, assert exactly one dispatch job captured via the queue seam, and run that captured job through `dispatchJob.handler` with no manual handler calls. Kept `fixme` naming spec 35.
+  - R2-F6: Split Flow 13 in `e2e/server/compliance.spec.ts`: Test 1 (live) seeds shop B with DB rows and S3 objects and asserts shop B is untouched after shop A's redaction. Added Test 2 (fixme naming spec 35) which sends a signed `shop/redact` through `/webhooks/compliance`, captures the queued job, and executes `shopRedactJob.handler`.
+  - R2-F7: In Flow 9 of `e2e/storefront/configurator.spec.ts`, strictly asserted the exact allowed set of `_`-prefixed property keys (`_bundle_id`, `_bundle_role`, `_item_id`, `_option_ids`, `_addon_ids`, `_rx_ref`, `_parent_id`), asserted that `_rx_od`, `_rx_os`, `_rx_pd` are undefined, and scanned every property value across all items for normalized Rx forms (`-2.50`, `-2.5`, `2.50`, `-250`, `63.0`, standalone `63`, `PD 63`).
+  - R2-F8: In `e2e/storefront/health.spec.ts`, updated password form authentication to use web-first assertion `expect(passwordInput).not.toBeVisible()`, and required both a product-specific element and the Select lenses control to be visible.
+  - R2-F10: Staged removal of tracked `test-results/.last-run.json` (`git rm --cached test-results/.last-run.json`), removed local artifact directory, and verified `git ls-files test-results` is empty.
