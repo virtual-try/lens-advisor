@@ -2,7 +2,6 @@ import { z } from "zod";
 import {
   diopterSchema,
   iso4217CurrencySchema,
-  moneySchema,
   optionGroupKindSchema,
   rxTypeSchema,
 } from "../../../packages/rx-core/src/index.js";
@@ -12,21 +11,71 @@ export class ValidationError extends BadRequestError {
   constructor(codeOrMessage: string, messageOrCode?: string, fields?: FieldError[]) {
     if (/^[A-Z][A-Z0-9_]+$/.test(codeOrMessage)) {
       super(messageOrCode ?? codeOrMessage, codeOrMessage, fields);
+    } else if (messageOrCode && /^[A-Z][A-Z0-9_]+$/.test(messageOrCode)) {
+      super(codeOrMessage, messageOrCode, fields);
     } else {
-      super(codeOrMessage, messageOrCode ?? "VALIDATION_ERROR", fields);
+      super(codeOrMessage, "INVALID_INPUT", fields);
     }
     this.name = "ValidationError";
   }
+}
+
+export function mapZodIssueToCode(issue: z.ZodIssue): string {
+  if (/^[A-Z][A-Z0-9_]+$/.test(issue.message)) {
+    return issue.message;
+  }
+
+  if (
+    issue.path.some((p) => String(p).toLowerCase().includes("currency")) ||
+    issue.message.toLowerCase().includes("currency") ||
+    issue.message.toLowerCase().includes("iso-4217")
+  ) {
+    return "INVALID_CURRENCY";
+  }
+
+  if (issue.code === z.ZodIssueCode.invalid_type) {
+    if (issue.received === "undefined") {
+      return "REQUIRED";
+    }
+    if (issue.expected === "integer" || issue.message.toLowerCase().includes("integer")) {
+      return "NOT_INTEGER";
+    }
+  }
+
+  if (issue.code === z.ZodIssueCode.too_small) {
+    if (issue.type === "string" && issue.minimum === 1) {
+      return "REQUIRED";
+    }
+    if (issue.type === "array" && issue.minimum === 1) {
+      return "REQUIRED";
+    }
+    if (issue.type === "number") {
+      return "NEGATIVE_PRICE";
+    }
+  }
+
+  const lowerMsg = issue.message.toLowerCase();
+  if (lowerMsg.includes("integer")) {
+    return "NOT_INTEGER";
+  }
+  if (lowerMsg.includes("negative")) {
+    return "NEGATIVE_PRICE";
+  }
+  if (lowerMsg.includes("required")) {
+    return "REQUIRED";
+  }
+
+  return "INVALID_INPUT";
 }
 
 export function validateInput<T>(schema: z.ZodType<T>, data: unknown): T {
   const result = schema.safeParse(data);
   if (!result.success) {
     const firstIssue = result.error.issues[0];
-    const code = firstIssue.message || firstIssue.code;
+    const code = mapZodIssueToCode(firstIssue);
     const fields: FieldError[] = result.error.issues.map((issue) => ({
       path: issue.path.join("."),
-      code: issue.message || issue.code,
+      code: mapZodIssueToCode(issue),
     }));
     throw new ValidationError(code, firstIssue.message, fields);
   }
@@ -98,9 +147,11 @@ export const lensInputSchema = z
     groupId: z.string().min(1, "Group ID is required"),
     name: z.string().trim().min(1, "Name is required"),
     description: z.string().optional().default(""),
-    priceMinor: z.number().int({ message: "Price must be an integer" }).optional(),
+    priceMinor: z
+      .number({ required_error: "Price is required" })
+      .int({ message: "Price must be an integer" }),
     currency: iso4217CurrencySchema.optional().default("USD"),
-    price: moneySchema.optional(),
+    price: z.unknown().optional(),
     rxTypes: z.array(rxTypeSchema).min(1, "At least one Rx type is required"),
     sphMin: diopterSchema,
     sphMax: diopterSchema,
@@ -114,14 +165,14 @@ export const lensInputSchema = z
     position: z.number().int().nonnegative().optional(),
   })
   .superRefine((val, ctx) => {
-    const priceAmount = val.priceMinor ?? val.price?.amountMinor;
-    if (priceAmount === undefined) {
+    if (val.price !== undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Price is required",
-        path: ["priceMinor"],
+        message: "INVALID_INPUT",
+        path: ["price"],
       });
-    } else if (priceAmount < 0) {
+    }
+    if (val.priceMinor !== undefined && val.priceMinor < 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "NEGATIVE_PRICE",
@@ -139,7 +190,7 @@ export const lensUpdateSchema = z
     description: z.string().optional(),
     priceMinor: z.number().int({ message: "Price must be an integer" }).optional(),
     currency: iso4217CurrencySchema.optional(),
-    price: moneySchema.optional(),
+    price: z.unknown().optional(),
     rxTypes: z.array(rxTypeSchema).min(1).optional(),
     sphMin: diopterSchema.optional(),
     sphMax: diopterSchema.optional(),
@@ -153,8 +204,14 @@ export const lensUpdateSchema = z
     position: z.number().int().nonnegative().optional(),
   })
   .superRefine((val, ctx) => {
-    const priceAmount = val.priceMinor ?? val.price?.amountMinor;
-    if (priceAmount !== undefined && priceAmount < 0) {
+    if (val.price !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "INVALID_INPUT",
+        path: ["price"],
+      });
+    }
+    if (val.priceMinor !== undefined && val.priceMinor < 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "NEGATIVE_PRICE",
@@ -191,9 +248,13 @@ export const optionValueInputSchema = z
   .object({
     optionGroupId: z.string().min(1, "Option group ID is required"),
     label: z.string().trim().min(1, "Label is required"),
-    priceDeltaMinor: z.number().int({ message: "Price delta must be an integer" }).optional().default(0),
+    priceDeltaMinor: z
+      .number()
+      .int({ message: "Price delta must be an integer" })
+      .optional()
+      .default(0),
     currency: iso4217CurrencySchema.optional().default("USD"),
-    priceDelta: moneySchema.optional(),
+    priceDelta: z.unknown().optional(),
     tokenKey: z.string().trim().min(1).optional().nullable(),
     tokenValue: z.string().trim().min(1).optional().nullable(),
     overrideCode: z.string().trim().min(1).optional().nullable(),
@@ -202,8 +263,14 @@ export const optionValueInputSchema = z
     position: z.number().int().nonnegative().optional(),
   })
   .superRefine((val, ctx) => {
-    const delta = val.priceDeltaMinor ?? val.priceDelta?.amountMinor ?? 0;
-    if (delta < 0) {
+    if (val.priceDelta !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "INVALID_INPUT",
+        path: ["priceDelta"],
+      });
+    }
+    if (val.priceDeltaMinor !== undefined && val.priceDeltaMinor < 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "NEGATIVE_PRICE",
@@ -228,7 +295,7 @@ export const optionValueUpdateSchema = z
     label: z.string().trim().min(1).optional(),
     priceDeltaMinor: z.number().int({ message: "Price delta must be an integer" }).optional(),
     currency: iso4217CurrencySchema.optional(),
-    priceDelta: moneySchema.optional(),
+    priceDelta: z.unknown().optional(),
     tokenKey: z.string().trim().min(1).optional().nullable(),
     tokenValue: z.string().trim().min(1).optional().nullable(),
     overrideCode: z.string().trim().min(1).optional().nullable(),
@@ -237,8 +304,14 @@ export const optionValueUpdateSchema = z
     position: z.number().int().nonnegative().optional(),
   })
   .superRefine((val, ctx) => {
-    const delta = val.priceDeltaMinor ?? val.priceDelta?.amountMinor;
-    if (delta !== undefined && delta < 0) {
+    if (val.priceDelta !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "INVALID_INPUT",
+        path: ["priceDelta"],
+      });
+    }
+    if (val.priceDeltaMinor !== undefined && val.priceDeltaMinor < 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "NEGATIVE_PRICE",
@@ -264,22 +337,24 @@ export type OptionValueUpdateInput = z.input<typeof optionValueUpdateSchema>;
 export const addOnInputSchema = z
   .object({
     name: z.string().trim().min(1, "Name is required"),
-    priceMinor: z.number().int({ message: "Price must be an integer" }).optional(),
+    priceMinor: z
+      .number({ required_error: "Price is required" })
+      .int({ message: "Price must be an integer" }),
     currency: iso4217CurrencySchema.optional().default("USD"),
-    price: moneySchema.optional(),
+    price: z.unknown().optional(),
     shopifyProductId: z.string().min(1).optional().nullable(),
     shopifyVariantId: z.string().min(1).optional().nullable(),
     position: z.number().int().nonnegative().optional(),
   })
   .superRefine((val, ctx) => {
-    const priceAmount = val.priceMinor ?? val.price?.amountMinor;
-    if (priceAmount === undefined) {
+    if (val.price !== undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Price is required",
-        path: ["priceMinor"],
+        message: "INVALID_INPUT",
+        path: ["price"],
       });
-    } else if (priceAmount < 0) {
+    }
+    if (val.priceMinor !== undefined && val.priceMinor < 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "NEGATIVE_PRICE",
@@ -294,14 +369,20 @@ export const addOnUpdateSchema = z
     name: z.string().trim().min(1).optional(),
     priceMinor: z.number().int({ message: "Price must be an integer" }).optional(),
     currency: iso4217CurrencySchema.optional(),
-    price: moneySchema.optional(),
+    price: z.unknown().optional(),
     shopifyProductId: z.string().min(1).optional().nullable(),
     shopifyVariantId: z.string().min(1).optional().nullable(),
     position: z.number().int().nonnegative().optional(),
   })
   .superRefine((val, ctx) => {
-    const priceAmount = val.priceMinor ?? val.price?.amountMinor;
-    if (priceAmount !== undefined && priceAmount < 0) {
+    if (val.price !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "INVALID_INPUT",
+        path: ["price"],
+      });
+    }
+    if (val.priceMinor !== undefined && val.priceMinor < 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "NEGATIVE_PRICE",

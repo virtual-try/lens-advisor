@@ -5,6 +5,7 @@ import type {
   OptionGroup,
   OptionKind,
   OptionValue,
+  Prisma,
   PrismaClient,
   RxType,
   ShopSettings,
@@ -148,7 +149,20 @@ function handlePrismaNotFound(error: unknown, entityName: string): never {
 }
 
 export class CatalogRepository {
-  constructor(private readonly prisma: PrismaClient) {}
+  public readonly prisma: PrismaClient;
+
+  constructor(prisma: PrismaClient) {
+    this.prisma = prisma;
+  }
+
+  private async runInTx<T>(
+    fn: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    if ("$transaction" in this.prisma && typeof this.prisma.$transaction === "function") {
+      return this.prisma.$transaction(fn);
+    }
+    return fn(this.prisma as unknown as Prisma.TransactionClient);
+  }
 
   // -------------------------------------------------------------------------
   // Lens Groups
@@ -195,7 +209,7 @@ export class CatalogRepository {
     shopId: string,
     data: CreateLensGroupData,
   ): Promise<LensGroup> {
-    return this.prisma.$transaction(async (tx) => {
+    return this.runInTx(async (tx) => {
       let position = data.position;
       if (position === undefined) {
         const max = await tx.lensGroup.aggregate({
@@ -247,7 +261,7 @@ export class CatalogRepository {
   }
 
   async reorderLensGroups(shopId: string, ids: string[]): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
+    await this.runInTx(async (tx) => {
       const rows = await tx.lensGroup.findMany({
         where: { shopId, id: { in: ids }, archivedAt: null },
         select: { id: true },
@@ -289,7 +303,7 @@ export class CatalogRepository {
   }
 
   async createLens(shopId: string, data: CreateLensData): Promise<Lens> {
-    return this.prisma.$transaction(async (tx) => {
+    return this.runInTx(async (tx) => {
       // Verify groupId belongs to shopId
       const group = await tx.lensGroup.findUnique({
         where: { shopId_id: { shopId, id: data.groupId } },
@@ -380,7 +394,7 @@ export class CatalogRepository {
     ids: string[],
     groupId?: string,
   ): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
+    await this.runInTx(async (tx) => {
       const rows = await tx.lens.findMany({
         where: {
           shopId,
@@ -447,7 +461,7 @@ export class CatalogRepository {
     shopId: string,
     data: CreateOptionGroupData,
   ): Promise<OptionGroup> {
-    return this.prisma.$transaction(async (tx) => {
+    return this.runInTx(async (tx) => {
       let position = data.position;
       if (position === undefined) {
         const max = await tx.optionGroup.aggregate({
@@ -499,7 +513,7 @@ export class CatalogRepository {
   }
 
   async reorderOptionGroups(shopId: string, ids: string[]): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
+    await this.runInTx(async (tx) => {
       const rows = await tx.optionGroup.findMany({
         where: { shopId, id: { in: ids }, archivedAt: null },
         select: { id: true },
@@ -544,7 +558,7 @@ export class CatalogRepository {
     shopId: string,
     data: CreateOptionValueData,
   ): Promise<OptionValue> {
-    return this.prisma.$transaction(async (tx) => {
+    return this.runInTx(async (tx) => {
       const group = await tx.optionGroup.findUnique({
         where: { shopId_id: { shopId, id: data.optionGroupId } },
       });
@@ -622,7 +636,7 @@ export class CatalogRepository {
     ids: string[],
     optionGroupId?: string,
   ): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
+    await this.runInTx(async (tx) => {
       const rows = await tx.optionValue.findMany({
         where: {
           shopId,
@@ -668,7 +682,7 @@ export class CatalogRepository {
   }
 
   async createAddOn(shopId: string, data: CreateAddOnData): Promise<AddOn> {
-    return this.prisma.$transaction(async (tx) => {
+    return this.runInTx(async (tx) => {
       let position = data.position;
       if (position === undefined) {
         const max = await tx.addOn.aggregate({
@@ -726,7 +740,7 @@ export class CatalogRepository {
   }
 
   async reorderAddOns(shopId: string, ids: string[]): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
+    await this.runInTx(async (tx) => {
       const rows = await tx.addOn.findMany({
         where: { shopId, id: { in: ids }, archivedAt: null },
         select: { id: true },

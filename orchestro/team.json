@@ -7,7 +7,7 @@
   "coders": {
     "agy-3": {
       "engine": "agy",
-      "model": "gemini-3.1-pro-preview",
+      "model": "gemini-3.8-flash-high",
       "tier": "Heavy",
       "account": "agy-3"
     },

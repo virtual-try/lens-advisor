@@ -91,4 +91,4 @@ Stubbed: none. Consumers: 17, 18, 19, 21, 31.
     - `pnpm typecheck` -> exit 0
     - `pnpm lint` (`eslint . --max-warnings 0`) -> exit 0
     - `pnpm build` -> exit 0
-- **2026-11-07** — Evidence (orchestro spec verify, tree ff1729c5): install pass · typecheck pass · lint pass · build pass · test pass 338/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 5a4b567f): install pass · typecheck pass · lint pass · build pass · test pass 355/0/0

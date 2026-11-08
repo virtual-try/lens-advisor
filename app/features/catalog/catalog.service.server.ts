@@ -1,8 +1,10 @@
-import type {
-  AddOn as PrismaAddOn,
-  Lens as PrismaLens,
-  OptionValue as PrismaOptionValue,
-  PrismaClient,
+import crypto from "node:crypto";
+import {
+  Prisma,
+  type AddOn as PrismaAddOn,
+  type Lens as PrismaLens,
+  type OptionValue as PrismaOptionValue,
+  type PrismaClient,
 } from "@prisma/client";
 import {
   catalogResponseSchema,
@@ -196,9 +198,27 @@ function mapAddOnToDto(addOn: PrismaAddOn): CatalogAddOnDto {
 
 export class CatalogService {
   private readonly repository: CatalogRepository;
+  private readonly prisma: PrismaClient;
 
   constructor(deps: { repository?: CatalogRepository; prisma?: PrismaClient } = {}) {
     this.repository = deps.repository ?? createCatalogRepository(deps.prisma ?? getPrisma());
+    this.prisma = deps.prisma ?? this.repository.prisma ?? getPrisma();
+  }
+
+  private async withAdvisoryLock<T>(
+    shopId: string,
+    entity: string,
+    parentId: string | undefined,
+    fn: (repo: CatalogRepository) => Promise<T>,
+  ): Promise<T> {
+    const key = `${shopId}:${entity}:${parentId ?? ""}`;
+    const hash = crypto.createHash("sha256").update(key).digest().readBigInt64BE(0);
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(${hash})`);
+      const txRepo = createCatalogRepository(tx as unknown as PrismaClient);
+      return fn(txRepo);
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -224,17 +244,18 @@ export class CatalogService {
   async createLensGroup(shopId: string, input: LensGroupInput): Promise<CatalogLensGroupDto> {
     const valid = validateInput(lensGroupInputSchema, input);
 
-    // Enforce unique name within shop among active groups
-    const existing = await this.repository.listLensGroups(shopId, { includeArchived: false });
-    const duplicate = existing.some(
-      (g) => g.name.trim().toLowerCase() === valid.name.trim().toLowerCase(),
-    );
-    if (duplicate) {
-      throw new ValidationError("NAME_NOT_UNIQUE", "A lens group with this name already exists");
-    }
+    return this.withAdvisoryLock(shopId, "lensGroup", undefined, async (repo) => {
+      const existing = await repo.listLensGroups(shopId, { includeArchived: false });
+      const duplicate = existing.some(
+        (g) => g.name.trim().toLowerCase() === valid.name.trim().toLowerCase(),
+      );
+      if (duplicate) {
+        throw new ValidationError("NAME_NOT_UNIQUE", "A lens group with this name already exists");
+      }
 
-    const created = await this.repository.createLensGroup(shopId, valid);
-    return mapLensGroupToDto({ ...created, lenses: [] });
+      const created = await repo.createLensGroup(shopId, valid);
+      return mapLensGroupToDto({ ...created, lenses: [] });
+    });
   }
 
   async updateLensGroup(
@@ -250,13 +271,18 @@ export class CatalogService {
     }
 
     if (valid.name !== undefined) {
-      const allGroups = await this.repository.listLensGroups(shopId, { includeArchived: false });
-      const duplicate = allGroups.some(
-        (g) => g.id !== id && g.name.trim().toLowerCase() === valid.name!.trim().toLowerCase(),
-      );
-      if (duplicate) {
-        throw new ValidationError("NAME_NOT_UNIQUE", "A lens group with this name already exists");
-      }
+      return this.withAdvisoryLock(shopId, "lensGroup", undefined, async (repo) => {
+        const allGroups = await repo.listLensGroups(shopId, { includeArchived: false });
+        const duplicate = allGroups.some(
+          (g) => g.id !== id && g.name.trim().toLowerCase() === valid.name!.trim().toLowerCase(),
+        );
+        if (duplicate) {
+          throw new ValidationError("NAME_NOT_UNIQUE", "A lens group with this name already exists");
+        }
+
+        const updated = await repo.updateLensGroup(shopId, id, valid);
+        return mapLensGroupToDto({ ...updated, lenses: existing.lenses });
+      });
     }
 
     const updated = await this.repository.updateLensGroup(shopId, id, valid);
@@ -304,9 +330,9 @@ export class CatalogService {
   async createLens(shopId: string, input: LensInput): Promise<CatalogLensDto> {
     const valid = validateInput(lensInputSchema, input);
 
-    const priceMinor = valid.priceMinor ?? valid.price?.amountMinor;
+    const priceMinor = valid.priceMinor;
     if (priceMinor === undefined) {
-      throw new ValidationError("Price is required", "VALIDATION_ERROR");
+      throw new ValidationError("REQUIRED", "Price is required");
     }
     if (priceMinor < 0) {
       throw new ValidationError("NEGATIVE_PRICE");
@@ -330,38 +356,40 @@ export class CatalogService {
       throw new NotFoundError("LensGroup not found");
     }
 
-    // Enforce unique name within groupId among active lenses
-    const lensesInGroup = await this.repository.listLenses(shopId, {
-      groupId: valid.groupId,
-      includeArchived: false,
-    });
-    const duplicate = lensesInGroup.some(
-      (l) => l.name.trim().toLowerCase() === valid.name.trim().toLowerCase(),
-    );
-    if (duplicate) {
-      throw new ValidationError("NAME_NOT_UNIQUE", "A lens with this name already exists in this group");
-    }
+    return this.withAdvisoryLock(shopId, "lens", valid.groupId, async (repo) => {
+      // Enforce unique name within groupId among active lenses
+      const lensesInGroup = await repo.listLenses(shopId, {
+        groupId: valid.groupId,
+        includeArchived: false,
+      });
+      const duplicate = lensesInGroup.some(
+        (l) => l.name.trim().toLowerCase() === valid.name.trim().toLowerCase(),
+      );
+      if (duplicate) {
+        throw new ValidationError("NAME_NOT_UNIQUE", "A lens with this name already exists in this group");
+      }
 
-    const created = await this.repository.createLens(shopId, {
-      groupId: valid.groupId,
-      name: valid.name,
-      description: valid.description,
-      priceMinor,
-      currency: valid.currency ?? valid.price?.currency ?? "USD",
-      rxTypes: valid.rxTypes as RxType[],
-      sphMin: valid.sphMin,
-      sphMax: valid.sphMax,
-      cylMin: valid.cylMin,
-      cylMax: valid.cylMax,
-      addMin: valid.addMin,
-      addMax: valid.addMax,
-      labCodeTemplate: valid.labCodeTemplate,
-      shopifyProductId: valid.shopifyProductId,
-      shopifyVariantId: valid.shopifyVariantId,
-      position: valid.position,
-    });
+      const created = await repo.createLens(shopId, {
+        groupId: valid.groupId,
+        name: valid.name,
+        description: valid.description,
+        priceMinor,
+        currency: valid.currency ?? "USD",
+        rxTypes: valid.rxTypes as RxType[],
+        sphMin: valid.sphMin,
+        sphMax: valid.sphMax,
+        cylMin: valid.cylMin,
+        cylMax: valid.cylMax,
+        addMin: valid.addMin,
+        addMax: valid.addMax,
+        labCodeTemplate: valid.labCodeTemplate,
+        shopifyProductId: valid.shopifyProductId,
+        shopifyVariantId: valid.shopifyVariantId,
+        position: valid.position,
+      });
 
-    return mapLensToDto(created);
+      return mapLensToDto(created);
+    });
   }
 
   async updateLens(
@@ -410,32 +438,17 @@ export class CatalogService {
     }
 
     // Check merged price
-    const priceMinor = valid.priceMinor ?? valid.price?.amountMinor;
+    const priceMinor = valid.priceMinor;
     if (priceMinor !== undefined && priceMinor < 0) {
       throw new ValidationError("NEGATIVE_PRICE");
     }
 
-    // Check unique name within group
-    if (valid.name !== undefined || (valid.groupId && valid.groupId !== existing.groupId)) {
-      const targetName = valid.name ?? existing.name;
-      const lensesInGroup = await this.repository.listLenses(shopId, {
-        groupId: targetGroupId,
-        includeArchived: false,
-      });
-      const duplicate = lensesInGroup.some(
-        (l) => l.id !== id && l.name.trim().toLowerCase() === targetName.trim().toLowerCase(),
-      );
-      if (duplicate) {
-        throw new ValidationError("NAME_NOT_UNIQUE", "A lens with this name already exists in this group");
-      }
-    }
-
-    const updated = await this.repository.updateLens(shopId, id, {
+    const updateData = {
       groupId: valid.groupId,
       name: valid.name,
       description: valid.description,
       priceMinor,
-      currency: valid.currency ?? valid.price?.currency,
+      currency: valid.currency,
       rxTypes: valid.rxTypes as RxType[] | undefined,
       sphMin: valid.sphMin,
       sphMax: valid.sphMax,
@@ -447,8 +460,28 @@ export class CatalogService {
       shopifyProductId: valid.shopifyProductId,
       shopifyVariantId: valid.shopifyVariantId,
       position: valid.position,
-    });
+    };
 
+    if (valid.name !== undefined || (valid.groupId && valid.groupId !== existing.groupId)) {
+      const targetName = valid.name ?? existing.name;
+      return this.withAdvisoryLock(shopId, "lens", targetGroupId, async (repo) => {
+        const lensesInGroup = await repo.listLenses(shopId, {
+          groupId: targetGroupId,
+          includeArchived: false,
+        });
+        const duplicate = lensesInGroup.some(
+          (l) => l.id !== id && l.name.trim().toLowerCase() === targetName.trim().toLowerCase(),
+        );
+        if (duplicate) {
+          throw new ValidationError("NAME_NOT_UNIQUE", "A lens with this name already exists in this group");
+        }
+
+        const updated = await repo.updateLens(shopId, id, updateData);
+        return mapLensToDto(updated);
+      });
+    }
+
+    const updated = await this.repository.updateLens(shopId, id, updateData);
     return mapLensToDto(updated);
   }
 
@@ -500,16 +533,18 @@ export class CatalogService {
   ): Promise<CatalogOptionGroupDto> {
     const valid = validateInput(optionGroupInputSchema, input);
 
-    const existing = await this.repository.listOptionGroups(shopId, { includeArchived: false });
-    const duplicate = existing.some(
-      (g) => g.name.trim().toLowerCase() === valid.name.trim().toLowerCase(),
-    );
-    if (duplicate) {
-      throw new ValidationError("NAME_NOT_UNIQUE", "An option group with this name already exists");
-    }
+    return this.withAdvisoryLock(shopId, "optionGroup", undefined, async (repo) => {
+      const existing = await repo.listOptionGroups(shopId, { includeArchived: false });
+      const duplicate = existing.some(
+        (g) => g.name.trim().toLowerCase() === valid.name.trim().toLowerCase(),
+      );
+      if (duplicate) {
+        throw new ValidationError("NAME_NOT_UNIQUE", "An option group with this name already exists");
+      }
 
-    const created = await this.repository.createOptionGroup(shopId, valid);
-    return mapOptionGroupToDto({ ...created, values: [] });
+      const created = await repo.createOptionGroup(shopId, valid);
+      return mapOptionGroupToDto({ ...created, values: [] });
+    });
   }
 
   async updateOptionGroup(
@@ -525,13 +560,18 @@ export class CatalogService {
     }
 
     if (valid.name !== undefined) {
-      const allGroups = await this.repository.listOptionGroups(shopId, { includeArchived: false });
-      const duplicate = allGroups.some(
-        (g) => g.id !== id && g.name.trim().toLowerCase() === valid.name!.trim().toLowerCase(),
-      );
-      if (duplicate) {
-        throw new ValidationError("NAME_NOT_UNIQUE", "An option group with this name already exists");
-      }
+      return this.withAdvisoryLock(shopId, "optionGroup", undefined, async (repo) => {
+        const allGroups = await repo.listOptionGroups(shopId, { includeArchived: false });
+        const duplicate = allGroups.some(
+          (g) => g.id !== id && g.name.trim().toLowerCase() === valid.name!.trim().toLowerCase(),
+        );
+        if (duplicate) {
+          throw new ValidationError("NAME_NOT_UNIQUE", "An option group with this name already exists");
+        }
+
+        const updated = await repo.updateOptionGroup(shopId, id, valid);
+        return mapOptionGroupToDto({ ...updated, values: existing.values });
+      });
     }
 
     const updated = await this.repository.updateOptionGroup(shopId, id, valid);
@@ -582,7 +622,7 @@ export class CatalogService {
   ): Promise<CatalogOptionValueDto> {
     const valid = validateInput(optionValueInputSchema, input);
 
-    const delta = valid.priceDeltaMinor ?? valid.priceDelta?.amountMinor ?? 0;
+    const delta = valid.priceDeltaMinor ?? 0;
     if (delta < 0) {
       throw new ValidationError("NEGATIVE_PRICE");
     }
@@ -598,34 +638,36 @@ export class CatalogService {
       throw new NotFoundError("OptionGroup not found");
     }
 
-    const existingValues = await this.repository.listOptionValues(shopId, {
-      optionGroupId: valid.optionGroupId,
-      includeArchived: false,
-    });
-    const duplicate = existingValues.some(
-      (v) => v.label.trim().toLowerCase() === valid.label.trim().toLowerCase(),
-    );
-    if (duplicate) {
-      throw new ValidationError(
-        "NAME_NOT_UNIQUE",
-        "An option value with this label already exists in this group",
+    return this.withAdvisoryLock(shopId, "optionValue", valid.optionGroupId, async (repo) => {
+      const existingValues = await repo.listOptionValues(shopId, {
+        optionGroupId: valid.optionGroupId,
+        includeArchived: false,
+      });
+      const duplicate = existingValues.some(
+        (v) => v.label.trim().toLowerCase() === valid.label.trim().toLowerCase(),
       );
-    }
+      if (duplicate) {
+        throw new ValidationError(
+          "NAME_NOT_UNIQUE",
+          "An option value with this label already exists in this group",
+        );
+      }
 
-    const created = await this.repository.createOptionValue(shopId, {
-      optionGroupId: valid.optionGroupId,
-      label: valid.label,
-      priceDeltaMinor: delta,
-      currency: valid.currency ?? valid.priceDelta?.currency ?? "USD",
-      tokenKey: valid.tokenKey,
-      tokenValue: valid.tokenValue,
-      overrideCode: valid.overrideCode,
-      swatch: valid.swatch,
-      shopifyVariantId: valid.shopifyVariantId,
-      position: valid.position,
+      const created = await repo.createOptionValue(shopId, {
+        optionGroupId: valid.optionGroupId,
+        label: valid.label,
+        priceDeltaMinor: delta,
+        currency: valid.currency ?? "USD",
+        tokenKey: valid.tokenKey,
+        tokenValue: valid.tokenValue,
+        overrideCode: valid.overrideCode,
+        swatch: valid.swatch,
+        shopifyVariantId: valid.shopifyVariantId,
+        position: valid.position,
+      });
+
+      return mapOptionValueToDto(created);
     });
-
-    return mapOptionValueToDto(created);
   }
 
   async updateOptionValue(
@@ -648,7 +690,7 @@ export class CatalogService {
       }
     }
 
-    const delta = valid.priceDeltaMinor ?? valid.priceDelta?.amountMinor;
+    const delta = valid.priceDeltaMinor;
     if (delta !== undefined && delta < 0) {
       throw new ValidationError("NEGATIVE_PRICE");
     }
@@ -663,36 +705,42 @@ export class CatalogService {
       throw new ValidationError("ONE_CODE_SOURCE");
     }
 
-    if (valid.label !== undefined || (valid.optionGroupId && valid.optionGroupId !== existing.optionGroupId)) {
-      const targetLabel = valid.label ?? existing.label;
-      const existingValues = await this.repository.listOptionValues(shopId, {
-        optionGroupId: targetGroupId,
-        includeArchived: false,
-      });
-      const duplicate = existingValues.some(
-        (v) => v.id !== id && v.label.trim().toLowerCase() === targetLabel.trim().toLowerCase(),
-      );
-      if (duplicate) {
-        throw new ValidationError(
-          "NAME_NOT_UNIQUE",
-          "An option value with this label already exists in this group",
-        );
-      }
-    }
-
-    const updated = await this.repository.updateOptionValue(shopId, id, {
+    const updateData = {
       optionGroupId: valid.optionGroupId,
       label: valid.label,
       priceDeltaMinor: delta,
-      currency: valid.currency ?? valid.priceDelta?.currency,
+      currency: valid.currency,
       tokenKey: valid.tokenKey,
       tokenValue: valid.tokenValue,
       overrideCode: valid.overrideCode,
       swatch: valid.swatch,
       shopifyVariantId: valid.shopifyVariantId,
       position: valid.position,
-    });
+    };
 
+    if (valid.label !== undefined || (valid.optionGroupId && valid.optionGroupId !== existing.optionGroupId)) {
+      const targetLabel = valid.label ?? existing.label;
+      return this.withAdvisoryLock(shopId, "optionValue", targetGroupId, async (repo) => {
+        const existingValues = await repo.listOptionValues(shopId, {
+          optionGroupId: targetGroupId,
+          includeArchived: false,
+        });
+        const duplicate = existingValues.some(
+          (v) => v.id !== id && v.label.trim().toLowerCase() === targetLabel.trim().toLowerCase(),
+        );
+        if (duplicate) {
+          throw new ValidationError(
+            "NAME_NOT_UNIQUE",
+            "An option value with this label already exists in this group",
+          );
+        }
+
+        const updated = await repo.updateOptionValue(shopId, id, updateData);
+        return mapOptionValueToDto(updated);
+      });
+    }
+
+    const updated = await this.repository.updateOptionValue(shopId, id, updateData);
     return mapOptionValueToDto(updated);
   }
 
@@ -741,32 +789,34 @@ export class CatalogService {
   async createAddOn(shopId: string, input: AddOnInput): Promise<CatalogAddOnDto> {
     const valid = validateInput(addOnInputSchema, input);
 
-    const priceMinor = valid.priceMinor ?? valid.price?.amountMinor;
+    const priceMinor = valid.priceMinor;
     if (priceMinor === undefined) {
-      throw new ValidationError("Price is required", "VALIDATION_ERROR");
+      throw new ValidationError("REQUIRED", "Price is required");
     }
     if (priceMinor < 0) {
       throw new ValidationError("NEGATIVE_PRICE");
     }
 
-    const existing = await this.repository.listAddOns(shopId, { includeArchived: false });
-    const duplicate = existing.some(
-      (a) => a.name.trim().toLowerCase() === valid.name.trim().toLowerCase(),
-    );
-    if (duplicate) {
-      throw new ValidationError("NAME_NOT_UNIQUE", "An add-on with this name already exists");
-    }
+    return this.withAdvisoryLock(shopId, "addOn", undefined, async (repo) => {
+      const existing = await repo.listAddOns(shopId, { includeArchived: false });
+      const duplicate = existing.some(
+        (a) => a.name.trim().toLowerCase() === valid.name.trim().toLowerCase(),
+      );
+      if (duplicate) {
+        throw new ValidationError("NAME_NOT_UNIQUE", "An add-on with this name already exists");
+      }
 
-    const created = await this.repository.createAddOn(shopId, {
-      name: valid.name,
-      priceMinor,
-      currency: valid.currency ?? valid.price?.currency ?? "USD",
-      shopifyProductId: valid.shopifyProductId,
-      shopifyVariantId: valid.shopifyVariantId,
-      position: valid.position,
+      const created = await repo.createAddOn(shopId, {
+        name: valid.name,
+        priceMinor,
+        currency: valid.currency ?? "USD",
+        shopifyProductId: valid.shopifyProductId,
+        shopifyVariantId: valid.shopifyVariantId,
+        position: valid.position,
+      });
+
+      return mapAddOnToDto(created);
     });
-
-    return mapAddOnToDto(created);
   }
 
   async updateAddOn(
@@ -781,30 +831,36 @@ export class CatalogService {
       throw new NotFoundError("AddOn not found");
     }
 
-    const priceMinor = valid.priceMinor ?? valid.price?.amountMinor;
+    const priceMinor = valid.priceMinor;
     if (priceMinor !== undefined && priceMinor < 0) {
       throw new ValidationError("NEGATIVE_PRICE");
     }
 
-    if (valid.name !== undefined) {
-      const allAddOns = await this.repository.listAddOns(shopId, { includeArchived: false });
-      const duplicate = allAddOns.some(
-        (a) => a.id !== id && a.name.trim().toLowerCase() === valid.name!.trim().toLowerCase(),
-      );
-      if (duplicate) {
-        throw new ValidationError("NAME_NOT_UNIQUE", "An add-on with this name already exists");
-      }
-    }
-
-    const updated = await this.repository.updateAddOn(shopId, id, {
+    const updateData = {
       name: valid.name,
       priceMinor,
-      currency: valid.currency ?? valid.price?.currency,
+      currency: valid.currency,
       shopifyProductId: valid.shopifyProductId,
       shopifyVariantId: valid.shopifyVariantId,
       position: valid.position,
-    });
+    };
 
+    if (valid.name !== undefined) {
+      return this.withAdvisoryLock(shopId, "addOn", undefined, async (repo) => {
+        const allAddOns = await repo.listAddOns(shopId, { includeArchived: false });
+        const duplicate = allAddOns.some(
+          (a) => a.id !== id && a.name.trim().toLowerCase() === valid.name!.trim().toLowerCase(),
+        );
+        if (duplicate) {
+          throw new ValidationError("NAME_NOT_UNIQUE", "An add-on with this name already exists");
+        }
+
+        const updated = await repo.updateAddOn(shopId, id, updateData);
+        return mapAddOnToDto(updated);
+      });
+    }
+
+    const updated = await this.repository.updateAddOn(shopId, id, updateData);
     return mapAddOnToDto(updated);
   }
 
@@ -1039,6 +1095,14 @@ export async function deleteLensGroup(
   return createCatalogService(deps).deleteLensGroup(shopId, id);
 }
 
+export async function archiveLensGroup(
+  shopId: string,
+  id: string,
+  deps?: { repository?: CatalogRepository; prisma?: PrismaClient },
+): Promise<CatalogLensGroupDto> {
+  return createCatalogService(deps).archiveLensGroup(shopId, id);
+}
+
 export async function reorderLensGroups(
   shopId: string,
   ids: string[],
@@ -1086,6 +1150,14 @@ export async function deleteLens(
   deps?: { repository?: CatalogRepository; prisma?: PrismaClient },
 ): Promise<CatalogLensDto> {
   return createCatalogService(deps).deleteLens(shopId, id);
+}
+
+export async function archiveLens(
+  shopId: string,
+  id: string,
+  deps?: { repository?: CatalogRepository; prisma?: PrismaClient },
+): Promise<CatalogLensDto> {
+  return createCatalogService(deps).archiveLens(shopId, id);
 }
 
 export async function reorderLenses(
@@ -1138,6 +1210,14 @@ export async function deleteOptionGroup(
   return createCatalogService(deps).deleteOptionGroup(shopId, id);
 }
 
+export async function archiveOptionGroup(
+  shopId: string,
+  id: string,
+  deps?: { repository?: CatalogRepository; prisma?: PrismaClient },
+): Promise<CatalogOptionGroupDto> {
+  return createCatalogService(deps).archiveOptionGroup(shopId, id);
+}
+
 export async function reorderOptionGroups(
   shopId: string,
   ids: string[],
@@ -1185,6 +1265,14 @@ export async function deleteOptionValue(
   deps?: { repository?: CatalogRepository; prisma?: PrismaClient },
 ): Promise<CatalogOptionValueDto> {
   return createCatalogService(deps).deleteOptionValue(shopId, id);
+}
+
+export async function archiveOptionValue(
+  shopId: string,
+  id: string,
+  deps?: { repository?: CatalogRepository; prisma?: PrismaClient },
+): Promise<CatalogOptionValueDto> {
+  return createCatalogService(deps).archiveOptionValue(shopId, id);
 }
 
 export async function reorderOptionValues(
@@ -1235,6 +1323,14 @@ export async function deleteAddOn(
   deps?: { repository?: CatalogRepository; prisma?: PrismaClient },
 ): Promise<CatalogAddOnDto> {
   return createCatalogService(deps).deleteAddOn(shopId, id);
+}
+
+export async function archiveAddOn(
+  shopId: string,
+  id: string,
+  deps?: { repository?: CatalogRepository; prisma?: PrismaClient },
+): Promise<CatalogAddOnDto> {
+  return createCatalogService(deps).archiveAddOn(shopId, id);
 }
 
 export async function reorderAddOns(

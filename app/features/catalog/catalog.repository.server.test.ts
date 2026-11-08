@@ -1,10 +1,58 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { PrismaClient } from "@prisma/client";
 import { createTestDb, seedShop, type TestDb } from "../../../test/db";
 import { NotFoundError } from "../../shared/http/errors.server";
 import {
   createCatalogRepository,
   type CatalogRepository,
 } from "./catalog.repository.server";
+
+function createFailingClient(
+  prisma: PrismaClient,
+  modelName: "lensGroup" | "lens" | "optionGroup" | "optionValue" | "addOn",
+  failOnUpdateIndex = 2,
+): PrismaClient {
+  let updateCount = 0;
+  function wrap(targetClient: object): PrismaClient {
+    return new Proxy(targetClient, {
+      get(target: Record<string, unknown>, prop: string | symbol) {
+        if (prop === "$transaction" && typeof target.$transaction === "function") {
+          const rawTx = (target.$transaction as (arg: unknown) => Promise<unknown>).bind(target);
+          return async (arg: unknown) => {
+            if (typeof arg === "function") {
+              return rawTx(async (tx: unknown) => (arg as (client: unknown) => unknown)(wrap(tx as object)));
+            }
+            return rawTx(arg);
+          };
+        }
+        if (prop === modelName) {
+          const modelObj = target[modelName] as Record<string, unknown>;
+          return new Proxy(modelObj, {
+            get(modelTarget: Record<string, unknown>, modelProp: string | symbol) {
+              if (modelProp === "update") {
+                return async (...args: unknown[]) => {
+                  updateCount++;
+                  if (updateCount === failOnUpdateIndex) {
+                    throw new Error("Simulated database failure mid-transaction");
+                  }
+                  const updateFn = modelTarget.update as (...a: unknown[]) => Promise<unknown>;
+                  return updateFn(...args);
+                };
+              }
+              return Reflect.get(modelTarget, modelProp);
+            },
+          });
+        }
+        const value = Reflect.get(target, prop);
+        if (typeof value === "function") {
+          return value.bind(target);
+        }
+        return value;
+      },
+    }) as unknown as PrismaClient;
+  }
+  return wrap(prisma);
+}
 
 describe("CatalogRepository (DB-backed)", { timeout: 60_000 }, () => {
   let db: TestDb;
@@ -93,12 +141,29 @@ describe("CatalogRepository (DB-backed)", { timeout: 60_000 }, () => {
       });
 
       it("reorderLensGroups with another shop's ID throws NotFoundError and leaves order untouched", async () => {
-        const groupsB = await repo.listLensGroups(shopB);
-        const groupB = groupsB[0];
+        const groupsBBefore = await repo.listLensGroups(shopB);
+        const groupB = groupsBBefore[0];
 
         await expect(
           repo.reorderLensGroups(shopA, [groupB.id]),
         ).rejects.toThrow(NotFoundError);
+
+        const groupsBAfter = await repo.listLensGroups(shopB);
+        expect(groupsBAfter.map((g) => ({ id: g.id, position: g.position }))).toEqual(
+          groupsBBefore.map((g) => ({ id: g.id, position: g.position })),
+        );
+      });
+
+      it("reorderLensGroups in shop A leaves shop B positions completely untouched", async () => {
+        const groupsA = await repo.listLensGroups(shopA);
+        const groupsBBefore = await repo.listLensGroups(shopB);
+
+        await repo.reorderLensGroups(shopA, groupsA.map((g) => g.id).reverse());
+
+        const groupsBAfter = await repo.listLensGroups(shopB);
+        expect(groupsBAfter.map((g) => ({ id: g.id, position: g.position }))).toEqual(
+          groupsBBefore.map((g) => ({ id: g.id, position: g.position })),
+        );
       });
     });
 
@@ -172,11 +237,28 @@ describe("CatalogRepository (DB-backed)", { timeout: 60_000 }, () => {
       });
 
       it("reorderLenses with another shop's ID throws NotFoundError and leaves order untouched", async () => {
-        const lensesB = await repo.listLenses(shopB);
-        const lensB = lensesB[0];
+        const lensesBBefore = await repo.listLenses(shopB);
+        const lensB = lensesBBefore[0];
 
         await expect(repo.reorderLenses(shopA, [lensB.id])).rejects.toThrow(
           NotFoundError,
+        );
+
+        const lensesBAfter = await repo.listLenses(shopB);
+        expect(lensesBAfter.map((l) => ({ id: l.id, position: l.position }))).toEqual(
+          lensesBBefore.map((l) => ({ id: l.id, position: l.position })),
+        );
+      });
+
+      it("reorderLenses in shop A leaves shop B positions completely untouched", async () => {
+        const lensesA = await repo.listLenses(shopA);
+        const lensesBBefore = await repo.listLenses(shopB);
+
+        await repo.reorderLenses(shopA, lensesA.map((l) => l.id).reverse());
+
+        const lensesBAfter = await repo.listLenses(shopB);
+        expect(lensesBAfter.map((l) => ({ id: l.id, position: l.position }))).toEqual(
+          lensesBBefore.map((l) => ({ id: l.id, position: l.position })),
         );
       });
     });
@@ -242,12 +324,29 @@ describe("CatalogRepository (DB-backed)", { timeout: 60_000 }, () => {
       });
 
       it("reorderOptionGroups with another shop's ID throws NotFoundError and leaves order untouched", async () => {
-        const optGroupsB = await repo.listOptionGroups(shopB);
-        const optGroupB = optGroupsB[0];
+        const optGroupsBBefore = await repo.listOptionGroups(shopB);
+        const optGroupB = optGroupsBBefore[0];
 
         await expect(
           repo.reorderOptionGroups(shopA, [optGroupB.id]),
         ).rejects.toThrow(NotFoundError);
+
+        const optGroupsBAfter = await repo.listOptionGroups(shopB);
+        expect(optGroupsBAfter.map((g) => ({ id: g.id, position: g.position }))).toEqual(
+          optGroupsBBefore.map((g) => ({ id: g.id, position: g.position })),
+        );
+      });
+
+      it("reorderOptionGroups in shop A leaves shop B positions completely untouched", async () => {
+        const optGroupsA = await repo.listOptionGroups(shopA);
+        const optGroupsBBefore = await repo.listOptionGroups(shopB);
+
+        await repo.reorderOptionGroups(shopA, optGroupsA.map((g) => g.id).reverse());
+
+        const optGroupsBAfter = await repo.listOptionGroups(shopB);
+        expect(optGroupsBAfter.map((g) => ({ id: g.id, position: g.position }))).toEqual(
+          optGroupsBBefore.map((g) => ({ id: g.id, position: g.position })),
+        );
       });
     });
 
@@ -314,12 +413,29 @@ describe("CatalogRepository (DB-backed)", { timeout: 60_000 }, () => {
       });
 
       it("reorderOptionValues with another shop's ID throws NotFoundError and leaves order untouched", async () => {
-        const valuesB = await repo.listOptionValues(shopB);
-        const valueB = valuesB[0];
+        const valuesBBefore = await repo.listOptionValues(shopB);
+        const valueB = valuesBBefore[0];
 
         await expect(
           repo.reorderOptionValues(shopA, [valueB.id]),
         ).rejects.toThrow(NotFoundError);
+
+        const valuesBAfter = await repo.listOptionValues(shopB);
+        expect(valuesBAfter.map((v) => ({ id: v.id, position: v.position }))).toEqual(
+          valuesBBefore.map((v) => ({ id: v.id, position: v.position })),
+        );
+      });
+
+      it("reorderOptionValues in shop A leaves shop B positions completely untouched", async () => {
+        const valuesA = await repo.listOptionValues(shopA);
+        const valuesBBefore = await repo.listOptionValues(shopB);
+
+        await repo.reorderOptionValues(shopA, valuesA.map((v) => v.id).reverse());
+
+        const valuesBAfter = await repo.listOptionValues(shopB);
+        expect(valuesBAfter.map((v) => ({ id: v.id, position: v.position }))).toEqual(
+          valuesBBefore.map((v) => ({ id: v.id, position: v.position })),
+        );
       });
     });
 
@@ -384,59 +500,181 @@ describe("CatalogRepository (DB-backed)", { timeout: 60_000 }, () => {
       });
 
       it("reorderAddOns with another shop's ID throws NotFoundError and leaves order untouched", async () => {
-        const addOnsB = await repo.listAddOns(shopB);
-        const addOnB = addOnsB[0];
+        const addOnsBBefore = await repo.listAddOns(shopB);
+        const addOnB = addOnsBBefore[0];
 
         await expect(repo.reorderAddOns(shopA, [addOnB.id])).rejects.toThrow(
           NotFoundError,
+        );
+
+        const addOnsBAfter = await repo.listAddOns(shopB);
+        expect(addOnsBAfter.map((a) => ({ id: a.id, position: a.position }))).toEqual(
+          addOnsBBefore.map((a) => ({ id: a.id, position: a.position })),
+        );
+      });
+
+      it("reorderAddOns in shop A leaves shop B positions completely untouched", async () => {
+        const addOnsA = await repo.listAddOns(shopA);
+        const addOnsBBefore = await repo.listAddOns(shopB);
+
+        await repo.reorderAddOns(shopA, addOnsA.map((a) => a.id).reverse());
+
+        const addOnsBAfter = await repo.listAddOns(shopB);
+        expect(addOnsBAfter.map((a) => ({ id: a.id, position: a.position }))).toEqual(
+          addOnsBBefore.map((a) => ({ id: a.id, position: a.position })),
         );
       });
     });
 
     describe("Sync and Storefront data scoping", () => {
-      it("markSynced with another shop's row throws NotFoundError and leaves row untouched", async () => {
-        const lensesB = await repo.listLenses(shopB);
-        const lensB = lensesB[0];
-        const originalVariant = lensB.shopifyVariantId;
+      describe("markSynced", () => {
+        it("markSynced ('lens') with another shop's row throws NotFoundError and leaves row untouched", async () => {
+          const lensesB = await repo.listLenses(shopB);
+          const lensB = lensesB[0];
+          const originalVariant = lensB.shopifyVariantId;
 
-        await expect(
-          repo.markSynced(shopA, "lens", lensB.id, "gid://shopify/ProductVariant/9999"),
-        ).rejects.toThrow(NotFoundError);
+          await expect(
+            repo.markSynced(shopA, "lens", lensB.id, "gid://shopify/ProductVariant/9999"),
+          ).rejects.toThrow(NotFoundError);
 
-        const checkB = await repo.getLens(shopB, lensB.id);
-        expect(checkB?.shopifyVariantId).toBe(originalVariant);
+          const checkB = await repo.getLens(shopB, lensB.id);
+          expect(checkB?.shopifyVariantId).toBe(originalVariant);
+        });
+
+        it("markSynced ('lens') updates entity for the correct shop", async () => {
+          const lensesA = await repo.listLenses(shopA);
+          const lensA = lensesA[0];
+
+          const synced = await repo.markSynced(
+            shopA,
+            "lens",
+            lensA.id,
+            "gid://shopify/ProductVariant/1111",
+            "gid://shopify/Product/1111",
+          );
+
+          expect(synced.shopifyVariantId).toBe("gid://shopify/ProductVariant/1111");
+
+          const updated = await repo.getLens(shopA, lensA.id);
+          expect(updated?.shopifyVariantId).toBe("gid://shopify/ProductVariant/1111");
+          expect(updated?.shopifyProductId).toBe("gid://shopify/Product/1111");
+        });
+
+        it("markSynced ('optionValue') with another shop's row throws NotFoundError and leaves row untouched", async () => {
+          const valuesB = await repo.listOptionValues(shopB);
+          const valB = valuesB[0];
+          const originalVariant = valB.shopifyVariantId;
+
+          await expect(
+            repo.markSynced(shopA, "optionValue", valB.id, "gid://shopify/ProductVariant/8888"),
+          ).rejects.toThrow(NotFoundError);
+
+          const checkB = await repo.getOptionValue(shopB, valB.id);
+          expect(checkB?.shopifyVariantId).toBe(originalVariant);
+        });
+
+        it("markSynced ('optionValue') updates entity for the correct shop", async () => {
+          const valuesA = await repo.listOptionValues(shopA);
+          const valA = valuesA[0];
+
+          const synced = await repo.markSynced(
+            shopA,
+            "optionValue",
+            valA.id,
+            "gid://shopify/ProductVariant/2222",
+          );
+
+          expect(synced.shopifyVariantId).toBe("gid://shopify/ProductVariant/2222");
+
+          const updated = await repo.getOptionValue(shopA, valA.id);
+          expect(updated?.shopifyVariantId).toBe("gid://shopify/ProductVariant/2222");
+        });
+
+        it("markSynced ('addOn') with another shop's row throws NotFoundError and leaves row untouched", async () => {
+          const addOnsB = await repo.listAddOns(shopB);
+          const addOnB = addOnsB[0];
+          const originalVariant = addOnB.shopifyVariantId;
+
+          await expect(
+            repo.markSynced(shopA, "addOn", addOnB.id, "gid://shopify/ProductVariant/7777", "gid://shopify/Product/7777"),
+          ).rejects.toThrow(NotFoundError);
+
+          const checkB = await repo.getAddOn(shopB, addOnB.id);
+          expect(checkB?.shopifyVariantId).toBe(originalVariant);
+        });
+
+        it("markSynced ('addOn') updates entity for the correct shop", async () => {
+          const addOnsA = await repo.listAddOns(shopA);
+          const addOnA = addOnsA[0];
+
+          const synced = await repo.markSynced(
+            shopA,
+            "addOn",
+            addOnA.id,
+            "gid://shopify/ProductVariant/3333",
+            "gid://shopify/Product/3333",
+          );
+
+          expect(synced.shopifyVariantId).toBe("gid://shopify/ProductVariant/3333");
+
+          const updated = await repo.getAddOn(shopA, addOnA.id);
+          expect(updated?.shopifyVariantId).toBe("gid://shopify/ProductVariant/3333");
+          expect(updated?.shopifyProductId).toBe("gid://shopify/Product/3333");
+        });
       });
 
-      it("markSynced updates entity for the correct shop", async () => {
-        const lensesA = await repo.listLenses(shopA);
-        const lensA = lensesA[0];
+      describe("getStorefrontCatalogData", () => {
+        it("getStorefrontCatalogData returns only rows belonging to the queried shop and no shop B nested rows", async () => {
+          // Sync a lens and an add-on for shop B so both shops have active storefront items
+          const lensesBList = await repo.listLenses(shopB);
+          await repo.markSynced(shopB, "lens", lensesBList[0].id, "gid://shopify/ProductVariant/B_LENS");
+          const addOnsBList = await repo.listAddOns(shopB);
+          await repo.markSynced(shopB, "addOn", addOnsBList[0].id, "gid://shopify/ProductVariant/B_ADDON");
 
-        const synced = await repo.markSynced(
-          shopA,
-          "lens",
-          lensA.id,
-          "gid://shopify/ProductVariant/1111",
-          "gid://shopify/Product/1111",
-        );
+          const dataA = await repo.getStorefrontCatalogData(shopA);
+          const dataB = await repo.getStorefrontCatalogData(shopB);
 
-        expect(synced.shopifyVariantId).toBe("gid://shopify/ProductVariant/1111");
+          // Top level
+          expect(dataA.lensGroups.length).toBeGreaterThan(0);
+          expect(dataA.optionGroups.length).toBeGreaterThan(0);
+          expect(dataA.addOns.length).toBeGreaterThan(0);
+          expect(dataA.lensGroups.every((g) => g.shopId === shopA)).toBe(true);
+          expect(dataA.optionGroups.every((g) => g.shopId === shopA)).toBe(true);
+          expect(dataA.addOns.every((a) => a.shopId === shopA)).toBe(true);
 
-        const updated = await repo.getLens(shopA, lensA.id);
-        expect(updated?.shopifyVariantId).toBe("gid://shopify/ProductVariant/1111");
-        expect(updated?.shopifyProductId).toBe("gid://shopify/Product/1111");
-      });
+          expect(dataB.lensGroups.length).toBeGreaterThan(0);
+          expect(dataB.optionGroups.length).toBeGreaterThan(0);
+          expect(dataB.addOns.length).toBeGreaterThan(0);
+          expect(dataB.lensGroups.every((g) => g.shopId === shopB)).toBe(true);
+          expect(dataB.optionGroups.every((g) => g.shopId === shopB)).toBe(true);
+          expect(dataB.addOns.every((a) => a.shopId === shopB)).toBe(true);
 
-      it("getStorefrontCatalogData returns only rows belonging to the queried shop", async () => {
-        const dataA = await repo.getStorefrontCatalogData(shopA);
-        const dataB = await repo.getStorefrontCatalogData(shopB);
+          // Nested lenses: must all belong to shopA and contain no shop B lenses
+          const lensesA = dataA.lensGroups.flatMap((g) => g.lenses);
+          const lensesB = dataB.lensGroups.flatMap((g) => g.lenses);
+          expect(lensesA.length).toBeGreaterThan(0);
+          expect(lensesB.length).toBeGreaterThan(0);
+          expect(lensesA.every((l) => l.shopId === shopA)).toBe(true);
+          expect(lensesB.every((l) => l.shopId === shopB)).toBe(true);
+          const lensBIds = new Set(lensesB.map((l) => l.id));
+          expect(lensesA.some((l) => lensBIds.has(l.id))).toBe(false);
 
-        expect(dataA.lensGroups.every((g) => g.shopId === shopA)).toBe(true);
-        expect(dataA.optionGroups.every((g) => g.shopId === shopA)).toBe(true);
-        expect(dataA.addOns.every((a) => a.shopId === shopA)).toBe(true);
+          // Nested option values: must all belong to shopA and contain no shop B values
+          const valuesA = dataA.optionGroups.flatMap((g) => g.values);
+          const valuesB = dataB.optionGroups.flatMap((g) => g.values);
+          expect(valuesA.length).toBeGreaterThan(0);
+          expect(valuesB.length).toBeGreaterThan(0);
+          expect(valuesA.every((v) => v.shopId === shopA)).toBe(true);
+          expect(valuesB.every((v) => v.shopId === shopB)).toBe(true);
+          const valBIds = new Set(valuesB.map((v) => v.id));
+          expect(valuesA.some((v) => valBIds.has(v.id))).toBe(false);
 
-        expect(dataB.lensGroups.every((g) => g.shopId === shopB)).toBe(true);
-        expect(dataB.optionGroups.every((g) => g.shopId === shopB)).toBe(true);
-        expect(dataB.addOns.every((a) => a.shopId === shopB)).toBe(true);
+          // AddOns: Shop A add-ons contain no Shop B add-on ids
+          const addOnBIds = new Set(dataB.addOns.map((a) => a.id));
+          expect(dataA.addOns.some((a) => addOnBIds.has(a.id))).toBe(false);
+          const addOnAIds = new Set(dataA.addOns.map((a) => a.id));
+          expect(dataB.addOns.some((a) => addOnAIds.has(a.id))).toBe(false);
+        });
       });
     });
   });
@@ -446,18 +684,20 @@ describe("CatalogRepository (DB-backed)", { timeout: 60_000 }, () => {
   // =========================================================================
 
   describe("Reorder transactional atomicity", () => {
-    it("reorder interrupted mid-transaction leaves previous order untouched (LensGroup)", async () => {
-      // Create 3 groups for shopA
-      const g1 = await repo.createLensGroup(shopA, { name: "G1", position: 10 });
-      const g2 = await repo.createLensGroup(shopA, { name: "G2", position: 20 });
-      const g3 = await repo.createLensGroup(shopA, { name: "G3", position: 30 });
+    it("reorder interrupted mid-transaction rolls back position updates (LensGroup)", async () => {
+      const g1 = await repo.createLensGroup(shopA, { name: "AtomicG1", position: 10 });
+      const g2 = await repo.createLensGroup(shopA, { name: "AtomicG2", position: 20 });
+      const g3 = await repo.createLensGroup(shopA, { name: "AtomicG3", position: 30 });
 
-      // Attempt to reorder with a bad ID in the middle
+      // Injected client forces failure on 2nd update inside transaction
+      const failingClient = createFailingClient(db.prisma, "lensGroup", 2);
+      const failingRepo = createCatalogRepository(failingClient);
+
       await expect(
-        repo.reorderLensGroups(shopA, [g3.id, "non-existent-id", g1.id]),
-      ).rejects.toThrow(NotFoundError);
+        failingRepo.reorderLensGroups(shopA, [g3.id, g1.id, g2.id]),
+      ).rejects.toThrow("Simulated database failure mid-transaction");
 
-      // Verify original positions remain completely unchanged
+      // Verify original positions remain completely unchanged because tx rolled back
       const check1 = await repo.getLensGroup(shopA, g1.id);
       const check2 = await repo.getLensGroup(shopA, g2.id);
       const check3 = await repo.getLensGroup(shopA, g3.id);
@@ -477,13 +717,13 @@ describe("CatalogRepository (DB-backed)", { timeout: 60_000 }, () => {
       expect(after2?.position).toBe(2);
     });
 
-    it("reorder interrupted mid-transaction leaves previous order untouched (Lens)", async () => {
+    it("reorder interrupted mid-transaction rolls back position updates (Lens)", async () => {
       const groups = await repo.listLensGroups(shopA);
       const groupId = groups[0].id;
 
       const l1 = await repo.createLens(shopA, {
         groupId,
-        name: "L1",
+        name: "AtomicL1",
         priceMinor: 1000,
         rxTypes: ["SINGLE_VISION"],
         sphMin: -200,
@@ -494,7 +734,7 @@ describe("CatalogRepository (DB-backed)", { timeout: 60_000 }, () => {
       });
       const l2 = await repo.createLens(shopA, {
         groupId,
-        name: "L2",
+        name: "AtomicL2",
         priceMinor: 2000,
         rxTypes: ["SINGLE_VISION"],
         sphMin: -200,
@@ -503,31 +743,53 @@ describe("CatalogRepository (DB-backed)", { timeout: 60_000 }, () => {
         cylMax: 0,
         position: 20,
       });
+      const l3 = await repo.createLens(shopA, {
+        groupId,
+        name: "AtomicL3",
+        priceMinor: 3000,
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -200,
+        sphMax: 200,
+        cylMin: -100,
+        cylMax: 0,
+        position: 30,
+      });
+
+      const failingClient = createFailingClient(db.prisma, "lens", 2);
+      const failingRepo = createCatalogRepository(failingClient);
 
       await expect(
-        repo.reorderLenses(shopA, [l2.id, "fake-lens-id"]),
-      ).rejects.toThrow(NotFoundError);
+        failingRepo.reorderLenses(shopA, [l3.id, l1.id, l2.id]),
+      ).rejects.toThrow("Simulated database failure mid-transaction");
 
       const check1 = await repo.getLens(shopA, l1.id);
       const check2 = await repo.getLens(shopA, l2.id);
+      const check3 = await repo.getLens(shopA, l3.id);
 
       expect(check1?.position).toBe(10);
       expect(check2?.position).toBe(20);
+      expect(check3?.position).toBe(30);
     });
 
-    it("reorder interrupted mid-transaction leaves previous order untouched (AddOn)", async () => {
-      const a1 = await repo.createAddOn(shopA, { name: "A1", priceMinor: 500, position: 10 });
-      const a2 = await repo.createAddOn(shopA, { name: "A2", priceMinor: 600, position: 20 });
+    it("reorder interrupted mid-transaction rolls back position updates (AddOn)", async () => {
+      const a1 = await repo.createAddOn(shopA, { name: "AtomicA1", priceMinor: 500, position: 10 });
+      const a2 = await repo.createAddOn(shopA, { name: "AtomicA2", priceMinor: 600, position: 20 });
+      const a3 = await repo.createAddOn(shopA, { name: "AtomicA3", priceMinor: 700, position: 30 });
+
+      const failingClient = createFailingClient(db.prisma, "addOn", 2);
+      const failingRepo = createCatalogRepository(failingClient);
 
       await expect(
-        repo.reorderAddOns(shopA, [a2.id, "fake-addon-id"]),
-      ).rejects.toThrow(NotFoundError);
+        failingRepo.reorderAddOns(shopA, [a3.id, a1.id, a2.id]),
+      ).rejects.toThrow("Simulated database failure mid-transaction");
 
       const check1 = await repo.getAddOn(shopA, a1.id);
       const check2 = await repo.getAddOn(shopA, a2.id);
+      const check3 = await repo.getAddOn(shopA, a3.id);
 
       expect(check1?.position).toBe(10);
       expect(check2?.position).toBe(20);
+      expect(check3?.position).toBe(30);
     });
   });
 

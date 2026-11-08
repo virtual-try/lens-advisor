@@ -4,8 +4,13 @@ import {
   type RxLimits,
 } from "../../../packages/rx-core/src/index.js";
 import { createTestDb, seedShop, type TestDb } from "../../../test/db";
-import { NotFoundError } from "../../shared/http/errors.server";
+import { errorResponse, NotFoundError } from "../../shared/http/errors.server";
 import {
+  archiveAddOn,
+  archiveLens,
+  archiveLensGroup,
+  archiveOptionGroup,
+  archiveOptionValue,
   createCatalogService,
   ValidationError,
   type CatalogService,
@@ -14,6 +19,7 @@ import {
   addOnInputSchema,
   lensInputSchema,
   optionValueInputSchema,
+  validateInput,
 } from "./schema";
 
 describe("CatalogService (DB-backed)", { timeout: 60_000 }, () => {
@@ -232,49 +238,269 @@ describe("CatalogService (DB-backed)", { timeout: 60_000 }, () => {
   // =========================================================================
 
   describe("Invariants: INV-4 (integer money) & INV-5 (integer diopters)", () => {
-    it("INV-4: prices round-trip as integers; float input is rejected by schema.ts", () => {
-      // Float price in lens schema rejected
-      const floatLens = lensInputSchema.safeParse({
-        groupId: "grp_1",
-        name: "Float Lens",
-        priceMinor: 12.5,
-        currency: "USD",
+    it("INV-4 / R1-F1: nested DTO money is rejected with ValidationError and flat EUR price persists exactly", async () => {
+      const optGroups = await service.listOptionGroups(shopA);
+      const optGroupId = optGroups[0].id;
+      const lensGroups = await service.listLensGroups(shopA);
+      const lensGroupId = lensGroups[0].id;
+
+      // Nested DTO-shaped money is rejected by optionValue schema / validateInput
+      expect(() => {
+        validateInput(optionValueInputSchema, {
+          optionGroupId: optGroupId,
+          label: "Nested EUR Option",
+          priceDelta: { amountMinor: 1500, currency: "EUR" },
+        });
+      }).toThrow(ValidationError);
+
+      // Rejection also holds for service.createOptionValue
+      await expect(
+        service.createOptionValue(shopA, {
+          optionGroupId: optGroupId,
+          label: "Nested EUR Option Service",
+          priceDelta: { amountMinor: 1500, currency: "EUR" },
+        } as never),
+      ).rejects.toThrow(ValidationError);
+
+      // Nested DTO money rejected by lens schema
+      expect(() => {
+        validateInput(lensInputSchema, {
+          groupId: lensGroupId,
+          name: "Nested EUR Lens",
+          price: { amountMinor: 1500, currency: "EUR" },
+          rxTypes: ["SINGLE_VISION"],
+          sphMin: -200,
+          sphMax: 200,
+          cylMin: -100,
+          cylMax: 0,
+        });
+      }).toThrow(ValidationError);
+
+      // Nested DTO money rejected by addOn schema
+      expect(() => {
+        validateInput(addOnInputSchema, {
+          name: "Nested EUR AddOn",
+          price: { amountMinor: 1500, currency: "EUR" },
+        });
+      }).toThrow(ValidationError);
+
+      // Flat EUR price is accepted and persists exactly (amount and currency)
+      const createdOpt = await service.createOptionValue(shopA, {
+        optionGroupId: optGroupId,
+        label: "Flat EUR Option Exact",
+        priceDeltaMinor: 1500,
+        currency: "EUR",
+      });
+      expect(createdOpt.priceDelta).toEqual({
+        amountMinor: 1500,
+        currency: "EUR",
+      });
+
+      const fetchedOpt = await service.getOptionValue(shopA, createdOpt.id);
+      expect(fetchedOpt.priceDelta).toEqual({
+        amountMinor: 1500,
+        currency: "EUR",
+      });
+    });
+
+    it("INV-4 / R1-F3: float prices yield stable UPPER_SNAKE_CASE codes and conform to caller-visible ValidationError shape", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const groupId = groups[0].id;
+      const optGroups = await service.listOptionGroups(shopA);
+      const optGroupId = optGroups[0].id;
+
+      // 1. Caller-visible ValidationError shape for float price in createLens
+      try {
+        await service.createLens(shopA, {
+          groupId,
+          name: "Float Price Lens",
+          priceMinor: 12.5 as unknown as number,
+          currency: "USD",
+          rxTypes: ["SINGLE_VISION"],
+          sphMin: -200,
+          sphMax: 200,
+          cylMin: -100,
+          cylMax: 0,
+        });
+        expect.unreachable("createLens with float price should have thrown ValidationError");
+      } catch (err: unknown) {
+        expect(err).toBeInstanceOf(ValidationError);
+        const valErr = err as ValidationError;
+        expect(valErr.code).toBe("NOT_INTEGER");
+        expect(valErr.message).toBe("Price must be an integer");
+        expect(valErr.fields).toEqual([
+          { path: "priceMinor", code: "NOT_INTEGER" },
+        ]);
+
+        const response = errorResponse(valErr);
+        expect(response.status).toBe(400);
+        const body = await response.json();
+        expect(body).toEqual({
+          error: {
+            code: "NOT_INTEGER",
+            message: "Price must be an integer",
+            fields: [
+              { path: "priceMinor", code: "NOT_INTEGER" },
+            ],
+          },
+        });
+      }
+
+      // 2. Float price in OptionValue
+      try {
+        await service.createOptionValue(shopA, {
+          optionGroupId: optGroupId,
+          label: "Float Delta Option",
+          priceDeltaMinor: 15.75 as unknown as number,
+        });
+        expect.unreachable("createOptionValue with float delta should have thrown ValidationError");
+      } catch (err: unknown) {
+        expect(err).toBeInstanceOf(ValidationError);
+        const valErr = err as ValidationError;
+        expect(valErr.code).toBe("NOT_INTEGER");
+        expect(valErr.fields?.[0]?.code).toBe("NOT_INTEGER");
+      }
+
+      // 3. Float price in AddOn
+      try {
+        await service.createAddOn(shopA, {
+          name: "Float AddOn",
+          priceMinor: 9.99 as unknown as number,
+        });
+        expect.unreachable("createAddOn with float price should have thrown ValidationError");
+      } catch (err: unknown) {
+        expect(err).toBeInstanceOf(ValidationError);
+        const valErr = err as ValidationError;
+        expect(valErr.code).toBe("NOT_INTEGER");
+        expect(valErr.fields?.[0]?.code).toBe("NOT_INTEGER");
+      }
+
+      // 4. Invalid currency yields INVALID_CURRENCY code
+      try {
+        await service.createLens(shopA, {
+          groupId,
+          name: "Invalid Currency Lens",
+          priceMinor: 2000,
+          currency: "LOL" as unknown as "USD",
+          rxTypes: ["SINGLE_VISION"],
+          sphMin: -200,
+          sphMax: 200,
+          cylMin: -100,
+          cylMax: 0,
+        });
+        expect.unreachable("createLens with invalid currency should have thrown ValidationError");
+      } catch (err: unknown) {
+        expect(err).toBeInstanceOf(ValidationError);
+        const valErr = err as ValidationError;
+        expect(valErr.code).toBe("INVALID_CURRENCY");
+      }
+
+      // 5. Missing required field yields REQUIRED code
+      try {
+        await service.createLens(shopA, {
+          groupId,
+          name: "",
+          priceMinor: 2000,
+          currency: "USD",
+          rxTypes: ["SINGLE_VISION"],
+          sphMin: -200,
+          sphMax: 200,
+          cylMin: -100,
+          cylMax: 0,
+        });
+        expect.unreachable("createLens with empty name should have thrown ValidationError");
+      } catch (err: unknown) {
+        expect(err).toBeInstanceOf(ValidationError);
+        const valErr = err as ValidationError;
+        expect(valErr.code).toBe("REQUIRED");
+      }
+    });
+
+    it("INV-4 / R1-F6: DB-backed round-trip tests for every price field with non-default currency and odd amounts", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const groupId = groups[0].id;
+      const optGroups = await service.listOptionGroups(shopA);
+      const optGroupId = optGroups[0].id;
+
+      // 1. Lens with EUR and odd amount 4567
+      const createdLens = await service.createLens(shopA, {
+        groupId,
+        name: "Odd EUR Round-Trip Lens",
+        priceMinor: 4567,
+        currency: "EUR",
         rxTypes: ["SINGLE_VISION"],
         sphMin: -200,
         sphMax: 200,
         cylMin: -100,
         cylMax: 0,
       });
-      expect(floatLens.success).toBe(false);
+      // Mark synced so it is published in storefront catalog
+      await service.markSynced(shopA, "lens", createdLens.id, "gid://shopify/ProductVariant/EUR_LENS_4567");
 
-      // Float price in option value schema rejected
-      const floatOption = optionValueInputSchema.safeParse({
-        optionGroupId: "og_1",
-        label: "Float Option",
-        priceDeltaMinor: 15.75,
+      const fetchedLens = await service.getLens(shopA, createdLens.id);
+      expect(fetchedLens.price).toEqual({
+        amountMinor: 4567,
+        currency: "EUR",
       });
-      expect(floatOption.success).toBe(false);
 
-      // Float price in add-on schema rejected
-      const floatAddOn = addOnInputSchema.safeParse({
-        name: "Float Addon",
-        priceMinor: 9.99,
+      // 2. OptionValue with EUR and odd amount 1357
+      const createdVal = await service.createOptionValue(shopA, {
+        optionGroupId: optGroupId,
+        label: "Odd EUR Round-Trip Option",
+        priceDeltaMinor: 1357,
+        currency: "EUR",
       });
-      expect(floatAddOn.success).toBe(false);
+      // Mark synced so it is published in storefront catalog
+      await service.markSynced(shopA, "optionValue", createdVal.id, "gid://shopify/ProductVariant/EUR_OPT_1357");
 
-      // Valid integer prices accepted
-      const validLens = lensInputSchema.safeParse({
-        groupId: "grp_1",
-        name: "Valid Lens",
-        priceMinor: 1250,
-        currency: "USD",
-        rxTypes: ["SINGLE_VISION"],
-        sphMin: -200,
-        sphMax: 200,
-        cylMin: -100,
-        cylMax: 0,
+      const fetchedVal = await service.getOptionValue(shopA, createdVal.id);
+      expect(fetchedVal.priceDelta).toEqual({
+        amountMinor: 1357,
+        currency: "EUR",
       });
-      expect(validLens.success).toBe(true);
+
+      // 3. AddOn with EUR and odd amount 987
+      const createdAddOn = await service.createAddOn(shopA, {
+        name: "Odd EUR Round-Trip AddOn",
+        priceMinor: 987,
+        currency: "EUR",
+      });
+      // Mark synced so it is published in storefront catalog
+      await service.markSynced(shopA, "addOn", createdAddOn.id, "gid://shopify/ProductVariant/EUR_ADDON_987");
+
+      const fetchedAddOn = await service.getAddOn(shopA, createdAddOn.id);
+      expect(fetchedAddOn.price).toEqual({
+        amountMinor: 987,
+        currency: "EUR",
+      });
+
+      // 4. Assert round-trip through storefront catalog
+      const storefrontCatalog = await service.getStorefrontCatalog(shopA);
+
+      const storefrontLens = storefrontCatalog.lensGroups
+        .flatMap((g) => g.lenses)
+        .find((l) => l.id === createdLens.id);
+      expect(storefrontLens).toBeDefined();
+      expect(storefrontLens?.price).toEqual({
+        amountMinor: 4567,
+        currency: "EUR",
+      });
+
+      const storefrontVal = storefrontCatalog.optionGroups
+        .flatMap((g) => g.values)
+        .find((v) => v.id === createdVal.id);
+      expect(storefrontVal).toBeDefined();
+      expect(storefrontVal?.priceDelta).toEqual({
+        amountMinor: 1357,
+        currency: "EUR",
+      });
+
+      const storefrontAddOn = storefrontCatalog.addOns.find((a) => a.id === createdAddOn.id);
+      expect(storefrontAddOn).toBeDefined();
+      expect(storefrontAddOn?.price).toEqual({
+        amountMinor: 987,
+        currency: "EUR",
+      });
     });
 
     it("INV-5: limits round-trip as integer hundredths; float input is rejected by schema.ts", async () => {
@@ -418,6 +644,63 @@ describe("CatalogService (DB-backed)", { timeout: 60_000 }, () => {
           cylMax: 0,
         }),
       ).rejects.toThrow(ValidationError);
+    });
+
+    it("R1-F2: atomic uniqueness under advisory lock: two concurrent creates with the same name -> exactly one succeeds, other gets NAME_NOT_UNIQUE", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const groupId = groups[0].id;
+      const lensName = "Atomic Concurrent Lens";
+
+      // Fire two concurrent creates with the exact same name
+      const p1 = service.createLens(shopA, {
+        groupId,
+        name: lensName,
+        priceMinor: 2000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -200,
+        sphMax: 200,
+        cylMin: -100,
+        cylMax: 0,
+      });
+
+      const p2 = service.createLens(shopA, {
+        groupId,
+        name: lensName,
+        priceMinor: 2000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -200,
+        sphMax: 200,
+        cylMin: -100,
+        cylMax: 0,
+      });
+
+      const results = await Promise.allSettled([p1, p2]);
+      const fulfilled = results.filter((r) => r.status === "fulfilled");
+      const rejected = results.filter((r) => r.status === "rejected");
+
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+
+      const rejReason = (rejected[0] as PromiseRejectedResult).reason;
+      expect(rejReason).toBeInstanceOf(ValidationError);
+      expect((rejReason as ValidationError).code).toBe("NAME_NOT_UNIQUE");
+
+      // Similarly test concurrent group creates
+      const groupName = "Atomic Concurrent Group";
+      const g1 = service.createLensGroup(shopA, { name: groupName });
+      const g2 = service.createLensGroup(shopA, { name: groupName });
+
+      const gResults = await Promise.allSettled([g1, g2]);
+      const gFulfilled = gResults.filter((r) => r.status === "fulfilled");
+      const gRejected = gResults.filter((r) => r.status === "rejected");
+
+      expect(gFulfilled).toHaveLength(1);
+      expect(gRejected).toHaveLength(1);
+      const gRejReason = (gRejected[0] as PromiseRejectedResult).reason;
+      expect(gRejReason).toBeInstanceOf(ValidationError);
+      expect((gRejReason as ValidationError).code).toBe("NAME_NOT_UNIQUE");
     });
 
     it("enforces unique group names within a shop", async () => {
@@ -639,6 +922,68 @@ describe("CatalogService (DB-backed)", { timeout: 60_000 }, () => {
       if ("shopifyProductId" in synced) {
         expect(synced.shopifyProductId).toBe("gid://shopify/Product/888");
       }
+    });
+  });
+
+  // =========================================================================
+  // Standalone archive wrappers (R1-F9)
+  // =========================================================================
+
+  describe("Standalone archive wrappers (R1-F9)", () => {
+    it("archiveLensGroup standalone function archives group and returns DTO", async () => {
+      const created = await service.createLensGroup(shopA, { name: "To Archive Standalone Group" });
+      const archived = await archiveLensGroup(shopA, created.id, { prisma: db.prisma });
+      expect(archived.archivedAt).not.toBeNull();
+      expect(archived.id).toBe(created.id);
+    });
+
+    it("archiveLens standalone function archives lens and returns DTO", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const created = await service.createLens(shopA, {
+        groupId: groups[0].id,
+        name: "To Archive Standalone Lens",
+        priceMinor: 2000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -200,
+        sphMax: 200,
+        cylMin: -100,
+        cylMax: 0,
+      });
+      const archived = await archiveLens(shopA, created.id, { prisma: db.prisma });
+      expect(archived.archivedAt).not.toBeNull();
+      expect(archived.id).toBe(created.id);
+    });
+
+    it("archiveOptionGroup standalone function archives option group and returns DTO", async () => {
+      const created = await service.createOptionGroup(shopA, {
+        kind: "MATERIAL",
+        name: "To Archive Standalone Opt Group",
+      });
+      const archived = await archiveOptionGroup(shopA, created.id, { prisma: db.prisma });
+      expect(archived.archivedAt).not.toBeNull();
+      expect(archived.id).toBe(created.id);
+    });
+
+    it("archiveOptionValue standalone function archives option value and returns DTO", async () => {
+      const optGroups = await service.listOptionGroups(shopA);
+      const created = await service.createOptionValue(shopA, {
+        optionGroupId: optGroups[0].id,
+        label: "To Archive Standalone Opt Value",
+      });
+      const archived = await archiveOptionValue(shopA, created.id, { prisma: db.prisma });
+      expect(archived.archivedAt).not.toBeNull();
+      expect(archived.id).toBe(created.id);
+    });
+
+    it("archiveAddOn standalone function archives add-on and returns DTO", async () => {
+      const created = await service.createAddOn(shopA, {
+        name: "To Archive Standalone AddOn",
+        priceMinor: 1200,
+      });
+      const archived = await archiveAddOn(shopA, created.id, { prisma: db.prisma });
+      expect(archived.archivedAt).not.toBeNull();
+      expect(archived.id).toBe(created.id);
     });
   });
 });
