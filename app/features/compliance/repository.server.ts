@@ -79,16 +79,6 @@ export async function insertComplianceRequest(
   }
 }
 
-export async function deleteUnfinishedComplianceRequest(
-  db: ComplianceDb,
-  shopId: string,
-  id: string,
-): Promise<void> {
-  await db.complianceRequest.deleteMany({
-    where: { id, shopId, handledAt: null },
-  });
-}
-
 export async function complianceRequestHandled(
   db: ComplianceDb,
   shopId: string,

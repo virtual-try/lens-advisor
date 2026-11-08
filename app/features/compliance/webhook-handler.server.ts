@@ -10,7 +10,6 @@ import {
 } from "./jobs.server";
 import {
   complianceRequestHandled,
-  deleteUnfinishedComplianceRequest,
   findShopByDomain,
   insertComplianceRequest,
 } from "./repository.server";
@@ -85,18 +84,13 @@ export async function handleComplianceWebhook(input: VerifiedWebhook): Promise<R
 
   const job = jobFor(topic);
   registerJob(job.definition);
-  try {
-    await deps.queue.enqueue(job.definition.name, job.payload(shop.id, inserted.id, parsed), {
-      singletonKey: webhookId.data,
-    });
-  } catch (error) {
-    if (inserted.created) {
-      await deleteUnfinishedComplianceRequest(deps.prisma, shop.id, inserted.id).catch(
-        () => undefined,
-      );
-    }
-    throw error;
-  }
+  // Leave the row when enqueue throws. Deleting it lets a concurrent delivery's
+  // job see a missing request and treat the work as already handled. The throw
+  // is a 500, so Shopify retries; the unfinished-duplicate path re-enqueues
+  // with the same singleton key.
+  await deps.queue.enqueue(job.definition.name, job.payload(shop.id, inserted.id, parsed), {
+    singletonKey: webhookId.data,
+  });
 
   return new Response(null, { status: 200 });
 }

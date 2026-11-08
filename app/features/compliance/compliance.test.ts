@@ -961,7 +961,7 @@ describe("webhook boundaries", () => {
     ).toBe(1);
   }, DB_MS);
 
-  it("enqueue failure deletes only this shop's unfinished request and leaves shop B", async () => {
+  it("enqueue failure leaves the unfinished request and a retry enqueues one job", async () => {
     const prisma = database();
     const shopA = await seedShop(prisma, shopDomain("enq-a"));
     const shopB = await seedShop(prisma, shopDomain("enq-b"));
@@ -1000,11 +1000,12 @@ describe("webhook boundaries", () => {
       logger,
       shopContactEmail: async () => CONTACT,
     });
+    const body = { orders_to_redact: [1001] };
     try {
       const response = await post(
         "compliance",
         "customers/redact",
-        { orders_to_redact: [1001] },
+        body,
         "valid",
         shopA.domain,
         id,
@@ -1014,12 +1015,37 @@ describe("webhook boundaries", () => {
       applyDeps();
     }
 
-    expect(
-      await prisma.complianceRequest.findUnique({ where: { shopifyRequestId: id } }),
-    ).toBeNull();
-    expect(await testQueue().findJobs(customersRedactJob.name, { data: { shopId: shopA.shopId } })).toEqual(
-      [],
-    );
+    const persisted = await prisma.complianceRequest.findUnique({
+      where: { shopifyRequestId: id },
+    });
+    expect(persisted).toMatchObject({
+      shopId: shopA.shopId,
+      topic: "customers/redact",
+      handledAt: null,
+    });
+    // The rejecting queue never calls enqueue, so the pg-boss queue may not exist yet.
+    let queuedBeforeRetry: readonly { data: unknown }[] = [];
+    try {
+      queuedBeforeRetry = await testQueue().findJobs(customersRedactJob.name, {
+        data: { shopId: shopA.shopId },
+      });
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes("does not exist")) throw error;
+    }
+    expect(queuedBeforeRetry).toEqual([]);
+
+    const retry = await post("compliance", "customers/redact", body, "valid", shopA.domain, id);
+    expect(retry.status).toBe(200);
+    const jobs = await testQueue().findJobs(customersRedactJob.name, {
+      data: { shopId: shopA.shopId },
+    });
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]?.data).toMatchObject({
+      complianceRequestId: persisted?.id,
+      shopId: shopA.shopId,
+      orderIds: ["1001"],
+    });
+    expect(await prisma.complianceRequest.count({ where: { shopifyRequestId: id } })).toBe(1);
     const shopBAfter = await prisma.shop.findUniqueOrThrow({ where: { id: shopB.shopId } });
     expect(shopBAfter.domain).toBe(shopBBefore.domain);
     expect(shopBAfter.uninstalledAt).toBeNull();
