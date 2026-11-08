@@ -2,24 +2,6 @@ import type { EnqueueOptions, Queue as QueueType } from "../../app/shared/queue/
 import { Queue as NodeQueue } from "../../app/shared/queue/queue";
 import { getViteServer } from "./vite";
 
-try {
-  // Hook pg-boss Attorney in Node so any direct pg-boss instances inherit run-scoped schema
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const Attorney = require("pg-boss/dist/attorney.js") as {
-    getConfig: (val: unknown) => { schema: string };
-  };
-  const origGetConfig = Attorney.getConfig;
-  Attorney.getConfig = function (value: unknown) {
-    const config = origGetConfig.call(this, value);
-    if (process.env.PGBOSS_SCHEMA && config.schema === "pgboss") {
-      config.schema = process.env.PGBOSS_SCHEMA;
-    }
-    return config;
-  };
-} catch {
-  // Ignore if Attorney is not directly requireable
-}
-
 export interface CapturedQueueJob {
   name: string;
   payload: unknown;

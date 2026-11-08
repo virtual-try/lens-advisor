@@ -1,11 +1,23 @@
+import type { FullConfig } from "@playwright/test";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { PrismaClient } from "@prisma/client";
 import { getPgbossSchemaTrackingFile, teardownSharedTestDb } from "./shared-db";
+import { isStorefrontOnly } from "./global-setup";
 
-export default async function globalTeardown(): Promise<void> {
+export default async function globalTeardown(config?: FullConfig): Promise<void> {
+  if (isStorefrontOnly(config)) {
+    return;
+  }
+
+  const dbUrl = process.env.TEST_DATABASE_URL?.trim();
+  if (!dbUrl) {
+    throw new Error(
+      "TEST_DATABASE_URL is required for e2e database teardown, but it is unset."
+    );
+  }
+
   await teardownSharedTestDb();
 
-  const dbUrl = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL;
   const trackingFile = getPgbossSchemaTrackingFile();
   let schemaToDrop = process.env.PGBOSS_SCHEMA;
 
@@ -26,7 +38,7 @@ export default async function globalTeardown(): Promise<void> {
     }
   }
 
-  if (dbUrl && schemaToDrop && /^pgboss_e2e_[a-zA-Z0-9_]+$/.test(schemaToDrop)) {
+  if (schemaToDrop && /^pgboss_e2e_[a-zA-Z0-9_]+$/.test(schemaToDrop)) {
     const client = new PrismaClient({
       datasources: { db: { url: dbUrl } },
     });

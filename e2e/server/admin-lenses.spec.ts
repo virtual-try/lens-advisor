@@ -58,7 +58,13 @@ test.describe("Spec 33 Flow 2: Admin Lenses (admin-lenses)", () => {
       }),
     });
 
-    await lensGroupAction(createActionArgs(groupReq, { id: "new" }));
+    const groupRes = await lensGroupAction(createActionArgs(groupReq, { id: "new" }));
+    expect(groupRes).toBeInstanceOf(Response);
+    if (!(groupRes instanceof Response)) {
+      throw new Error("Expected lens group action to return a Response redirect");
+    }
+    expect(groupRes.status).toBe(302);
+    expect(groupRes.headers.get("location")).toBe("/app/lenses");
 
     const groups = await listLensGroups(shopId, { includeArchived: false });
     expect(groups.length).toBeGreaterThan(0);
@@ -88,7 +94,13 @@ test.describe("Spec 33 Flow 2: Admin Lenses (admin-lenses)", () => {
       }),
     });
 
-    await lensAction(createActionArgs(lensReq, { id: "new" }));
+    const lensRes = await lensAction(createActionArgs(lensReq, { id: "new" }));
+    expect(lensRes).toBeInstanceOf(Response);
+    if (!(lensRes instanceof Response)) {
+      throw new Error("Expected lens action to return a Response redirect");
+    }
+    expect(lensRes.status).toBe(302);
+    expect(lensRes.headers.get("location")).toBe("/app/lenses");
 
     // 3. Verify in repository / service: variant id stored, limits persisted as hundredths (INV-5)
     const storedLens = await db.prisma.lens.findFirst({

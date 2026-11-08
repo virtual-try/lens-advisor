@@ -98,7 +98,7 @@ store — so the integrated paths are proven once, after every implementation sp
   - `pnpm test:e2e --project=storefront`: `5 skipped (0.9s)` (requires live Shopify dev store; env missing)
   - Gates (typecheck, lint, build, test): verified by tree-stamped `orchestro spec verify` evidence lines below.
 - **Inventory Fragment**: `specs/inventory/33-e2e-suite.md` recorded for `e2e-shared-db`, `e2e-shopify-auth-fixtures`, `e2e-shopify-mock`, `e2e-storage-mail-mock`, `e2e-seed-helpers`, `e2e-cart-url`, and `e2e-queue-mock`.
-- **2026-11-08** — Evidence (orchestro spec verify, tree b2f46180): install pass · typecheck pass · lint pass · build pass · test pass 1307/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 7953e8ba): install pass · typecheck pass · lint pass · build pass · test pass 1307/0/0
 - **2026-11-08** — Review round R1 fixes applied by coder agy-3:
   - R1-F1: Added Spec 35 row to `specs/PROGRESS.md`, updated spec count to 36 (00–35), and recorded log entry.
   - R1-F2: Formatted `specs/35-fix-web-feature-jobs-glob.md` with full template (Explicit non-scope, Steps, Log), typed glob check (`typeof (import.meta as { glob?: unknown }).glob === "function"`), and explicit non-Vite fallback definition list.
@@ -144,3 +144,8 @@ store — so the integrated paths are proven once, after every implementation sp
   - R5-F2: Executed the server e2e suite at HEAD; verified exact summary: 25 passed, 0 skipped, 0 failed (3.1s). Recorded runner summary in Log.
   - R5-F3: Struck stale manual gate claims (`pnpm typecheck`, `pnpm lint`, `pnpm build`, `pnpm test`) from Runner Summaries; all gate claims now reference tree-stamped `orchestro spec verify` evidence lines.
   - R5-F4: Staged deletion of `specs/35-fix-web-feature-jobs-glob.md` confirmed (deleted on disk and from `specs/README.md`). Corrected line 95 triage log and related text to clarify that the glob issue was plain-Node execution in the harness rather than an application bug.
+- **2026-11-09** — Review round R6 fixes applied by coder agy-1:
+  - R6-F1: Removed internal `require("pg-boss/dist/attorney.js")` hook and its `eslint-disable-next-line` directive from `e2e/helpers/queue-mock.ts`. Schema isolation is fully handled via Vite module transformation in `e2e/helpers/vite.ts`, eliminating the suppression comment and restoring strict lint compliance without weakened gates.
+  - R6-F2: Updated `e2e/helpers/global-setup.ts` and `e2e/helpers/global-teardown.ts` to require and exclusively use `TEST_DATABASE_URL` (throwing a clear error when unset and never falling back to `DATABASE_URL`). Added `isStorefrontOnly` helper skipping all database setup and teardown when only the storefront project runs. Added behavior tests in `e2e/helpers/global-setup.spec.ts`.
+  - R6-F4: In Flow 2 (`e2e/server/admin-lenses.spec.ts`), captured both create-action responses (`lensGroupAction` and `lensAction`), asserted `instanceof Response`, status 302, and redirect location `"/app/lenses"` before subsequent database and loader checks.
+  - R6-F5: In Flow 3 (`e2e/server/admin-options.spec.ts`), asserted exact status (200) and `{ ok, syncFailed, item }` response body for the priced option value, zero-priced option value, and add-on create actions before proceeding to loader and DB checks.

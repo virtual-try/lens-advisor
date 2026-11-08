@@ -13,6 +13,7 @@ import {
   createAdminUrl,
   createAuthHeaders,
   createLoaderArgs,
+  getResponseStatus,
   unwrapData,
 } from "../helpers/shopify-auth";
 import {
@@ -84,7 +85,24 @@ test.describe("Spec 33 Flow 3: Admin Options and Add-ons (admin-options)", () =>
         token: "material=HI167",
       }),
     });
-    await optionValueAction(createActionArgs(pricedReq, { id: "new" }));
+    const pricedRes = await optionValueAction(createActionArgs(pricedReq, { id: "new" }));
+    expect(getResponseStatus(pricedRes)).toBe(200);
+    const pricedData = await unwrapData<{
+      ok: boolean;
+      syncFailed: boolean;
+      optionValue: {
+        id: string;
+        label: string;
+        priceDelta: { amountMinor: number };
+        shopifyVariantId: string | null;
+      };
+    }>(pricedRes);
+    expect(pricedData.ok).toBe(true);
+    expect(pricedData.syncFailed).toBe(false);
+    expect(pricedData.optionValue).toBeDefined();
+    expect(pricedData.optionValue.label).toBe("1.67 High Index");
+    expect(pricedData.optionValue.priceDelta.amountMinor).toBe(3500);
+    expect(pricedData.optionValue.shopifyVariantId).toBeTruthy();
 
     // 3. Create a zero-priced option value (0.00) via options action
     const zeroPriceReq = new Request(createAdminUrl("/app/options/new", domain), {
@@ -101,7 +119,24 @@ test.describe("Spec 33 Flow 3: Admin Options and Add-ons (admin-options)", () =>
         token: "material=CR39",
       }),
     });
-    await optionValueAction(createActionArgs(zeroPriceReq, { id: "new" }));
+    const zeroPriceRes = await optionValueAction(createActionArgs(zeroPriceReq, { id: "new" }));
+    expect(getResponseStatus(zeroPriceRes)).toBe(200);
+    const zeroPriceData = await unwrapData<{
+      ok: boolean;
+      syncFailed: boolean;
+      optionValue: {
+        id: string;
+        label: string;
+        priceDelta: { amountMinor: number };
+        shopifyVariantId: string | null;
+      };
+    }>(zeroPriceRes);
+    expect(zeroPriceData.ok).toBe(true);
+    expect(zeroPriceData.syncFailed).toBe(false);
+    expect(zeroPriceData.optionValue).toBeDefined();
+    expect(zeroPriceData.optionValue.label).toBe("Standard Plastic");
+    expect(zeroPriceData.optionValue.priceDelta.amountMinor).toBe(0);
+    expect(zeroPriceData.optionValue.shopifyVariantId).toBeNull();
 
     // 4. Create an add-on (+25.00) via add-ons action
     const addOnReq = new Request(createAdminUrl("/app/add-ons/new", domain), {
@@ -116,7 +151,24 @@ test.describe("Spec 33 Flow 3: Admin Options and Add-ons (admin-options)", () =>
         price: "25.00",
       }),
     });
-    await addOnAction(createActionArgs(addOnReq, { id: "new" }));
+    const addOnRes = await addOnAction(createActionArgs(addOnReq, { id: "new" }));
+    expect(getResponseStatus(addOnRes)).toBe(200);
+    const addOnData = await unwrapData<{
+      ok: boolean;
+      syncFailed: boolean;
+      addOn: {
+        id: string;
+        name: string;
+        price: { amountMinor: number };
+        shopifyVariantId: string | null;
+      };
+    }>(addOnRes);
+    expect(addOnData.ok).toBe(true);
+    expect(addOnData.syncFailed).toBe(false);
+    expect(addOnData.addOn).toBeDefined();
+    expect(addOnData.addOn.name).toBe("Blue Light Filter");
+    expect(addOnData.addOn.price.amountMinor).toBe(2500);
+    expect(addOnData.addOn.shopifyVariantId).toBeTruthy();
 
     // 5. Query index loader to inspect options and add-ons
     const listReq = new Request(createAdminUrl("/app/options", domain), {

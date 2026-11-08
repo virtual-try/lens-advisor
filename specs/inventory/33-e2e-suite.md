@@ -5,7 +5,7 @@
 **Use instead of:** recreating separate schemas per test file in Playwright test suites.
 **Added by:** spec 33.
 ### `e2e-shopify-auth-fixtures`
-`e2e/helpers/shopify-auth.ts` — `createSessionToken`, `createAuthHeaders`, `createAdminUrl`, `createSignedProxyRequest`, `createSignedWebhookRequest`, `createLoaderArgs`, `createActionArgs`, and `unwrapData`. Signed request builders for Shopify admin requests, proxy signatures, and webhook HMAC verification conforming to INV-6.
+`e2e/helpers/shopify-auth.ts` — `createSessionToken`, `createAuthHeaders`, `createAdminUrl`, `createSignedProxyRequest`, `createSignedWebhookRequest`, `createLoaderArgs`, `createActionArgs`, `getResponseStatus`, and `unwrapData`. Signed request builders for Shopify admin requests, proxy signatures, and webhook HMAC verification conforming to INV-6.
 **Use instead of:** custom signature implementations or manually formatted auth headers in e2e tests.
 **Added by:** spec 33.
 ### `e2e-shopify-mock`

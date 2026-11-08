@@ -165,6 +165,22 @@ export async function unwrapData<T>(response: unknown): Promise<T> {
   return response as T;
 }
 
+export function getResponseStatus(response: unknown): number {
+  if (response instanceof Response) {
+    return response.status;
+  }
+  if (
+    response &&
+    typeof response === "object" &&
+    "type" in response &&
+    (response as { type: string }).type === "DataWithResponseInit"
+  ) {
+    const init = (response as { init?: { status?: number } | null }).init;
+    return typeof init?.status === "number" ? init.status : 200;
+  }
+  return 200;
+}
+
 export function createLoaderArgs(
   request: Request,
   params: Record<string, string | undefined> = {}
