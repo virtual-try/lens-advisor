@@ -84,6 +84,7 @@ is applied as an inline custom property on its swatch chip (`--la-swatch-color`)
 | `--la-shadow-sheet` | `0 24px 64px rgb(10 10 9 / 0.22), 0 2px 8px rgb(10 10 9 / 0.08)` |
 | `--la-shadow-footer` | `0 -1px 0 var(--la-hairline)` |
 | `--la-z-overlay` | `2147483000` |
+| `--la-z-footer` | `10` |
 
 ## Layout conventions
 

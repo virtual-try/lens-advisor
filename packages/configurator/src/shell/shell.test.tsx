@@ -343,7 +343,10 @@ describe("Configurator Shell - Examples Table Rows", () => {
       />,
     );
 
-    await view.findByRole("dialog");
+    const dialog = await view.findByRole("dialog");
+    expect(dialog).not.toBeNull();
+    const headerTitle = `${strings.header.titlePrefix}Harlow`;
+    expect(view.getByText(headerTitle)).not.toBeNull();
 
     // Press Escape
     fireEvent.keyDown(document, { key: "Escape" });
@@ -351,6 +354,8 @@ describe("Configurator Shell - Examples Table Rows", () => {
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce();
     });
+    expect(view.queryByRole("dialog")).toBeNull();
+    expect(view.queryByText(headerTitle)).toBeNull();
     expect(document.activeElement).toBe(trigger);
 
     trigger.remove();
@@ -420,11 +425,12 @@ describe("Configurator Shell - Examples Table Rows", () => {
     expect(sheetRule?.style.getPropertyValue("max-width")).toBe("100%");
     expect(sheetRule?.style.getPropertyValue("border-bottom-left-radius")).toBe("0");
 
-    // 3. Sticky footer: .la-footer has position: sticky and bottom: 0
+    // 3. Sticky footer: .la-footer has position: sticky, bottom: 0, and uses z-index token
     const footerRule = innerRules.find((r) => r.selectorText === ".la-footer");
     expect(footerRule).toBeDefined();
     expect(footerRule?.style.getPropertyValue("position")).toBe("sticky");
     expect(footerRule?.style.getPropertyValue("bottom")).toBe("0");
+    expect(footerRule?.style.getPropertyValue("z-index")).toBe("var(--la-z-footer)");
 
     // 4. No horizontal overflow: .la-body has overflow-x: hidden
     const baseRules = sheets.flatMap((s) => Array.from(s.cssRules) as CSSStyleRule[]);
@@ -850,6 +856,16 @@ describe("Configurator Shell - Examples Table Rows", () => {
   it("uses --la-sheet-max-height token for sheet max-height (R4-F1)", () => {
     expect(shellCss).toMatch(/max-height:\s*var\(--la-sheet-max-height\);/);
     expect(shellCss).not.toMatch(/max-height:\s*90vh/);
+  });
+
+  it("uses --la-z-footer token for sticky footer and contains no raw z-index (R5-F1)", () => {
+    expect(shellCss).toMatch(/z-index:\s*var\(--la-z-footer\);/);
+    expect(shellCss).not.toMatch(/z-index:\s*\d+/);
+  });
+
+  it("applies font-variant-numeric: var(--la-font-numeric) to running totals (R5-F3)", () => {
+    expect(shellCss).toMatch(/\.la-total\s*\{[^}]*font-variant-numeric:\s*var\(--la-font-numeric\);/);
+    expect(shellCss).not.toMatch(/\.la-total\s*\{[^}]*font-family:\s*var\(--la-font-numeric\);/);
   });
 
   it("maps ApiError NOT_AVAILABLE to empty state without Retry button (R4-F2)", async () => {

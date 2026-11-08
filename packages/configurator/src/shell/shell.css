@@ -186,7 +186,7 @@
   display: flex;
   align-items: center;
   font-size: var(--la-text-md);
-  font-family: var(--la-font-numeric);
+  font-variant-numeric: var(--la-font-numeric);
 }
 
 .la-footer__actions {
@@ -388,7 +388,7 @@
   .la-footer {
     position: sticky;
     bottom: 0;
-    z-index: 10;
+    z-index: var(--la-z-footer);
   }
 }
 
