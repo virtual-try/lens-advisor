@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { Form } from "react-router";
 import { minorUnitDigits } from "../../../../packages/rx-core/src/pricing/index.js";
 
 export interface OptionValueFormData {
@@ -76,7 +77,7 @@ export function OptionValueForm({
     Object.entries(errors).find(([k]) => !KNOWN_ERROR_KEYS.has(k))?.[1];
 
   return (
-    <form onSubmit={onSubmit} method="post">
+    <Form onSubmit={onSubmit} method="post">
       <s-stack direction="block" gap="base">
         {unlistedError && (
           <s-banner tone="critical" heading="Action failed">
@@ -126,8 +127,10 @@ export function OptionValueForm({
           value={priceDelta}
           onInput={(e) => setPriceDelta(e.currentTarget.value)}
           error={errors.priceDelta || errors.NEGATIVE_PRICE || errors.MONEY_PRECISION}
-          details="Additional price for this option in minor units or formatted currency (e.g. 35.00 or 0 for included)."
+          details="Additional price for this option in the shop currency's normal units (e.g. 35.00 or 0 for included)."
         />
+
+        <input type="hidden" name="codeType" value={codeType} />
 
         <s-choice-list
           label="Lab-code mapping"
@@ -191,18 +194,22 @@ export function OptionValueForm({
           <s-button
             type="submit"
             variant="primary"
-            loading={isSubmitting}
-            disabled={isSubmitting}
+            {...(isSubmitting ? { loading: true } : {})}
+            {...(isSubmitting ? { disabled: true } : {})}
           >
             Save option value
           </s-button>
           {onCancel && (
-            <s-button type="button" onClick={onCancel} disabled={isSubmitting}>
+            <s-button
+              type="button"
+              onClick={onCancel}
+              {...(isSubmitting ? { disabled: true } : {})}
+            >
               Cancel
             </s-button>
           )}
         </s-stack>
       </s-stack>
-    </form>
+    </Form>
   );
 }

@@ -90,4 +90,21 @@ Real, used now: 14, 17, 09. Tests: `testConfig()` loader/action calls, fake admi
     - `pnpm lint` -> exit 0 (0 errors, 0 warnings)
     - `pnpm build` -> exit 0
     - `git diff --check` -> exit 0
-- **2026-11-08** — Evidence (orchestro spec verify, tree 1bb46f59): install pass · typecheck pass · lint pass · build pass · test pass 701/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree fc092732): install pass · typecheck pass · lint pass · build pass · test pass 709/0/0
+- **2026-11-08** — Addressed Review R3 and R4 findings (Spec 18 R6-F1/F2 Ruling):
+  - R3-F1: Surfaced and persisted positive-price sync failures on options and add-ons with Retry button on both detail and list views.
+  - R3-F2: Maintained mapping when token/override is omitted on partial updates, and cleared only on explicit selection ("none" or mode switch).
+  - R3-F3: Enforced prevention of deleting populated option groups with 409 `GROUP_NOT_EMPTY`.
+  - R3-F4: Required positive price (`> 0`) on add-on creation/updates with structured 400 error.
+  - R3-F5: Clarified help text to reference shop normal currency units rather than minor units.
+  - R4-F1: Migrated forms to React Router `<Form>` to ensure submissions dispatch through the router and display inline error banners.
+  - R4-F2: Conditioned `disabled` and `loading` attributes so web-component boolean attributes are completely omitted when false.
+  - Added 10 verification test cases in `app/features/catalog/admin-options.test.tsx` (total 47 tests passed).
+  - Gates:
+    - `pnpm vitest run app/features/catalog/admin-options.test.tsx` -> 47 passed (47)
+    - `pnpm test` -> 43 files passed (43), 709 tests passed (709)
+    - `rg 'style=|className=|<style' app/routes/app.options* app/routes/app.add-ons* app/features/catalog/components/option-value-form.tsx` -> 0 matches (exit 1)
+    - `pnpm typecheck` -> exit 0 (0 errors)
+    - `pnpm lint` -> exit 0 (0 errors, 0 warnings)
+    - `pnpm build` -> exit 0
+    - `git diff --check` -> exit 0

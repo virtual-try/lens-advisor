@@ -10,6 +10,7 @@ import {
   useNavigate,
   useNavigation,
   useRouteError,
+  Form,
 } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
@@ -133,6 +134,43 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const payload = validateInput(optionValueActionSchema, rawData);
     const intent = payload.intent ?? "save";
 
+    // Intent: Retry sync
+    if (intent === "retry_sync") {
+      const existing = await catalogService.getOptionValue(shop.id, id);
+      if (!existing) {
+        return errorResponse(new NotFoundError("Option value not found"));
+      }
+
+      if (existing.priceDelta.amountMinor === 0 && existing.shopifyVariantId) {
+        let archiveSuccess = false;
+        try {
+          const res = await archiveItem(admin, shop.id, "optionValue", id);
+          archiveSuccess = Boolean(res && res.ok && (res.archived || res.reason === "NOT_SYNCED"));
+        } catch {
+          archiveSuccess = false;
+        }
+
+        if (archiveSuccess) {
+          await catalogService.updateOptionValue(shop.id, id, {
+            shopifyVariantId: null,
+          });
+        }
+
+        const finalValue = await catalogService.getOptionValue(shop.id, id);
+        return data({ ok: true, optionValue: finalValue, syncFailed: !archiveSuccess, synced: archiveSuccess });
+      }
+
+      let syncFailed = false;
+      try {
+        await syncItem(admin, shop.id, "optionValue", id);
+      } catch {
+        syncFailed = true;
+      }
+
+      const finalValue = await catalogService.getOptionValue(shop.id, id);
+      return data({ ok: true, optionValue: finalValue, syncFailed, synced: !syncFailed });
+    }
+
     // Intent: Delete / Archive
     if (intent === "delete" || intent === "archive") {
       const existing = await catalogService.getOptionValue(shop.id, id);
@@ -225,10 +263,21 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       priceDeltaMinor = existing.priceDelta.amountMinor;
     }
 
-    // Parse token and overrideCode
-    let tokenKey: string | null = null;
-    let tokenValue: string | null = null;
-    let overrideCode: string | null = null;
+    // Parse token and overrideCode (preserve existing values unless explicitly changed or cleared)
+    let tokenKey: string | null = existing?.tokenKey ?? null;
+    let tokenValue: string | null = existing?.tokenValue ?? null;
+    let overrideCode: string | null = existing?.overrideCode ?? null;
+
+    if (payload.codeType === "none") {
+      tokenKey = null;
+      tokenValue = null;
+      overrideCode = null;
+    } else if (payload.codeType === "override") {
+      tokenKey = null;
+      tokenValue = null;
+    } else if (payload.codeType === "token") {
+      overrideCode = null;
+    }
 
     const rawTokenString = typeof payload.token === "string" ? payload.token.trim() : null;
     const rawOverrideString = typeof payload.overrideCode === "string" ? payload.overrideCode.trim() : null;
@@ -282,11 +331,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       overrideCode = rawOverrideString;
     }
 
-    if (payload.token === "" || payload.token === null) {
+    if (payload.token === "" || (payload.token === null && payload.codeType !== "override")) {
       tokenKey = null;
       tokenValue = null;
     }
-    if (payload.overrideCode === "" || payload.overrideCode === null) {
+    if (payload.overrideCode === "" || (payload.overrideCode === null && payload.codeType !== "token")) {
       overrideCode = null;
     }
 
@@ -341,15 +390,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         swatch,
       });
 
+      let syncFailed = false;
       if (priceDeltaMinor > 0) {
         try {
           await syncItem(admin, shop.id, "optionValue", created.id);
         } catch {
-          // Keep the saved item even if Shopify sync fails
+          syncFailed = true;
         }
       }
 
-      return data({ ok: true, optionValue: created });
+      const finalCreated = await catalogService.getOptionValue(shop.id, created.id);
+      return data({ ok: true, optionValue: finalCreated ?? created, syncFailed });
     } else {
       const previousDelta = existing!.priceDelta.amountMinor;
       const hadVariant = Boolean(existing!.shopifyVariantId);
@@ -385,16 +436,20 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       }
 
       // Delta > 0: sync to Shopify
+      let syncFailed = false;
       if (priceDeltaMinor > 0) {
         try {
           await syncItem(admin, shop.id, "optionValue", id);
         } catch {
-          // Keep the saved item even if Shopify sync fails
+          syncFailed = true;
+          await catalogService.updateOptionValue(shop.id, id, {
+            shopifyVariantId: null,
+          });
         }
       }
 
       const finalValue = await catalogService.getOptionValue(shop.id, id);
-      return data({ ok: true, optionValue: finalValue });
+      return data({ ok: true, optionValue: finalValue, syncFailed });
     }
   } catch (err) {
     if (err instanceof NotFoundError) {
@@ -463,10 +518,10 @@ export default function OptionValueRoute() {
   };
 
   const syncFailed = Boolean(
-    (actionResult as { syncFailed?: boolean } | undefined)?.syncFailed ||
+    (actionResult as { syncFailed?: boolean } | undefined)?.syncFailed ??
       (optionValue &&
-        optionValue.priceDelta.amountMinor === 0 &&
-        optionValue.shopifyVariantId),
+        ((optionValue.priceDelta.amountMinor === 0 && optionValue.shopifyVariantId) ||
+          (optionValue.priceDelta.amountMinor > 0 && !optionValue.shopifyVariantId))),
   );
 
   return (
@@ -477,11 +532,26 @@ export default function OptionValueRoute() {
       <s-section heading="Option value details">
         <s-stack direction="block" gap="base">
           {syncFailed && (
-            <s-banner tone="critical" heading="Shopify sync failed">
-              <s-paragraph>
-                Failed to archive product variant in Shopify.
-              </s-paragraph>
-            </s-banner>
+            <s-stack direction="block" gap="base">
+              <s-banner tone="critical" heading="Shopify sync failed">
+                <s-paragraph>
+                  Failed to synchronize product variant with Shopify.
+                </s-paragraph>
+              </s-banner>
+              <s-stack direction="inline" gap="base">
+                <s-badge tone="critical">Sync failed</s-badge>
+                <Form method="post">
+                  <input type="hidden" name="intent" value="retry_sync" />
+                  <s-button
+                    type="submit"
+                    variant="tertiary"
+                    {...(isSubmitting ? { disabled: true } : {})}
+                  >
+                    Retry
+                  </s-button>
+                </Form>
+              </s-stack>
+            </s-stack>
           )}
           <OptionValueForm
             initialData={initialData}

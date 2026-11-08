@@ -9,7 +9,7 @@ import {
   vi,
 } from "vitest";
 import React from "react";
-import { render, screen, cleanup, within } from "@testing-library/react";
+import { render, screen, cleanup, within, fireEvent, waitFor } from "@testing-library/react";
 import * as ReactRouter from "react-router";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { testConfig } from "@shopify/shopify-app-react-router/test-helpers";
@@ -39,7 +39,6 @@ import AddOnRoute, {
   ErrorBoundary as AddOnErrorBoundary,
 } from "../../routes/app.add-ons.$id";
 import { toShopifyDecimal } from "../../../packages/rx-core/src/pricing/index.js";
-import { fireEvent } from "@testing-library/react";
 
 const DB_TIMEOUT_MS = 120_000;
 
@@ -77,6 +76,18 @@ function getTestPrisma() {
 }
 
 const origCreateElement = document.createElement.bind(document);
+const origReactRouterForm = ReactRouter.Form;
+
+const mockRouterForm = React.forwardRef(
+  (
+    { children, ...props }: React.PropsWithChildren<React.FormHTMLAttributes<HTMLFormElement>>,
+    ref: React.ForwardedRef<HTMLFormElement>,
+  ) => (
+    <form {...props} ref={ref}>
+      {children}
+    </form>
+  ),
+);
 
 beforeAll(async () => {
   document.createElement = function (tagName: string, options?: ElementCreationOptions) {
@@ -94,6 +105,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   document.createElement = origCreateElement;
+  (ReactRouter as Record<string, unknown>).Form = origReactRouterForm;
   (globalThis as Record<string, unknown>).__prismaClient = undefined;
   await db?.drop();
 }, DB_TIMEOUT_MS);
@@ -110,6 +122,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   testConfig();
   recordedCalls.length = 0;
+
+  // Mock ReactRouter Form by default for component tests in MemoryRouter
+  (ReactRouter as Record<string, unknown>).Form = mockRouterForm;
 
   // Mock Partner API billing fetch
   vi.spyOn(globalThis, "fetch").mockImplementation(
@@ -2308,6 +2323,692 @@ describe("Spec 19 — Admin: lens options and add-ons", () => {
       );
       expect(screen.queryByText("Material Group B")).toBeNull();
       expect(screen.getByText("Material Group A")).toBeTruthy();
+    });
+  });
+
+  describe("Review R3 Fixes", () => {
+    it("R3-F1: surfaces and persists positive-price sync failures on options and add-ons with Retry on detail page and list", async () => {
+      const shopId = await createShop("shop-r3f1.myshopify.com");
+      mocks.currentShop = "shop-r3f1.myshopify.com";
+
+      // 1. Setup an already-synced option value
+      const group = await catalogService.createOptionGroup(shopId, {
+        name: "Index",
+        kind: "MATERIAL",
+      });
+      const initialOpt = await catalogService.createOptionValue(shopId, {
+        optionGroupId: group.id,
+        label: "1.67 High Index",
+        priceDeltaMinor: 3500,
+        shopifyVariantId: "gid://shopify/ProductVariant/opt-synced-1",
+      });
+
+      // 2. Setup an already-synced add-on
+      const initialAddOn = await catalogService.createAddOn(shopId, {
+        name: "Anti-reflective coating",
+        priceMinor: 1500,
+        shopifyVariantId: "gid://shopify/ProductVariant/addon-synced-1",
+      });
+
+      const defaultGraphql = mocks.adminGraphql.getMockImplementation()!;
+      let failBulkUpdate = true;
+      mocks.adminGraphql.mockImplementation(async (query: string, init?: { variables?: Record<string, unknown> }) => {
+        if (failBulkUpdate && query.includes("ProductVariantsBulkUpdate")) {
+          return new Response(
+            JSON.stringify({
+              data: {
+                productVariantsBulkUpdate: {
+                  productVariants: null,
+                  userErrors: [{ message: "Shopify API sync error" }],
+                },
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return defaultGraphql(query, init);
+      });
+
+      // A. Update option value price while Shopify sync fails
+      const optReq = new Request(`https://test-shop.myshopify.com/app/options/${initialOpt.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: "1.67 High Index",
+          priceDelta: "45.00",
+        }),
+      });
+      const optRes = await optionValueAction(createActionArgs(optReq, { id: initialOpt.id }));
+      const optUnwrapped = await unwrapResponse<{
+        ok: boolean;
+        syncFailed: boolean;
+        optionValue: { priceDelta: { amountMinor: number }; shopifyVariantId: string | null };
+      }>(optRes);
+
+      expect(optUnwrapped.status).toBe(200);
+      expect(optUnwrapped.data.ok).toBe(true);
+      expect(optUnwrapped.data.syncFailed).toBe(true);
+      // The variant id must be cleared in DB so the failure is persisted and index doesn't report "Synced"
+      expect(optUnwrapped.data.optionValue.shopifyVariantId).toBeNull();
+      const inDbOpt = await catalogService.getOptionValue(shopId, initialOpt.id);
+      expect(inDbOpt?.priceDelta.amountMinor).toBe(4500);
+      expect(inDbOpt?.shopifyVariantId).toBeNull();
+
+      // B. Render OptionValueRoute detail page: displays "Sync failed" badge and "Retry" button
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        optionValue: inDbOpt,
+        group,
+        allGroups: [group],
+        plan: { active: true },
+        shopDomain: "shop-r3f1.myshopify.com",
+      });
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(optUnwrapped.data);
+
+      const { container: optDetailContainer } = render(
+        <ReactRouter.MemoryRouter>
+          <OptionValueRoute />
+        </ReactRouter.MemoryRouter>,
+      );
+      expect(within(optDetailContainer).getByText("Sync failed")).toBeTruthy();
+      expect(within(optDetailContainer).getByText("Retry")).toBeTruthy();
+
+      // C. Update add-on price while Shopify sync fails
+      const addOnReq = new Request(`https://test-shop.myshopify.com/app/add-ons/${initialAddOn.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Anti-reflective coating",
+          price: "25.00",
+        }),
+      });
+      const addOnRes = await addOnAction(createActionArgs(addOnReq, { id: initialAddOn.id }));
+      const addOnUnwrapped = await unwrapResponse<{
+        ok: boolean;
+        syncFailed: boolean;
+        addOn: { price: { amountMinor: number }; shopifyVariantId: string | null };
+      }>(addOnRes);
+
+      expect(addOnUnwrapped.status).toBe(200);
+      expect(addOnUnwrapped.data.ok).toBe(true);
+      expect(addOnUnwrapped.data.syncFailed).toBe(true);
+      expect(addOnUnwrapped.data.addOn.shopifyVariantId).toBeNull();
+      const inDbAddOn = await catalogService.getAddOn(shopId, initialAddOn.id);
+      expect(inDbAddOn?.price.amountMinor).toBe(2500);
+      expect(inDbAddOn?.shopifyVariantId).toBeNull();
+
+      // D. Render AddOnRoute detail page: displays "Sync failed" badge and "Retry" button
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        addOn: inDbAddOn,
+        plan: { active: true },
+        shopDomain: "shop-r3f1.myshopify.com",
+      });
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(addOnUnwrapped.data);
+
+      const { container: addOnDetailContainer } = render(
+        <ReactRouter.MemoryRouter>
+          <AddOnRoute />
+        </ReactRouter.MemoryRouter>,
+      );
+      expect(within(addOnDetailContainer).getByText("Sync failed")).toBeTruthy();
+      expect(within(addOnDetailContainer).getByText("Retry")).toBeTruthy();
+
+      // E. Render AdminOptionsIndexRoute (list): both items display "Sync failed" badges with Retry
+      const indexLoaderRes = await indexLoader(
+        createLoaderArgs(new Request("https://test-shop.myshopify.com/app/options")),
+      );
+      const indexLoaderData = (await unwrapResponse(indexLoaderRes)).data;
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue(indexLoaderData);
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(undefined);
+
+      const { container: listContainer } = render(
+        <ReactRouter.MemoryRouter>
+          <AdminOptionsIndexRoute />
+        </ReactRouter.MemoryRouter>,
+      );
+      const syncFailedBadges = within(listContainer).getAllByText("Sync failed");
+      expect(syncFailedBadges.length).toBe(2);
+      const retryButtons = within(listContainer).getAllByText("Retry");
+      expect(retryButtons.length).toBe(2);
+
+      // F. Retry sync on OptionValue: Shopify API recovers
+      failBulkUpdate = false;
+
+      const optRetryReq = new Request(`https://test-shop.myshopify.com/app/options/${initialOpt.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: "retry_sync" }),
+      });
+      const optRetryRes = await optionValueAction(createActionArgs(optRetryReq, { id: initialOpt.id }));
+      const optRetryUnwrapped = await unwrapResponse<{ ok: boolean; synced: boolean; syncFailed: boolean }>(optRetryRes);
+      expect(optRetryUnwrapped.status).toBe(200);
+      expect(optRetryUnwrapped.data.synced).toBe(true);
+      expect(optRetryUnwrapped.data.syncFailed).toBe(false);
+
+      const inDbOptAfterRetry = await catalogService.getOptionValue(shopId, initialOpt.id);
+      expect(inDbOptAfterRetry?.shopifyVariantId).toBeTruthy();
+
+      // G. Retry sync on AddOn: Shopify API succeeds
+      const addOnRetryReq = new Request(`https://test-shop.myshopify.com/app/add-ons/${initialAddOn.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: "retry_sync" }),
+      });
+      const addOnRetryRes = await addOnAction(createActionArgs(addOnRetryReq, { id: initialAddOn.id }));
+      const addOnRetryUnwrapped = await unwrapResponse<{ ok: boolean; synced: boolean; syncFailed: boolean }>(addOnRetryRes);
+      expect(addOnRetryUnwrapped.status).toBe(200);
+      expect(addOnRetryUnwrapped.data.synced).toBe(true);
+      expect(addOnRetryUnwrapped.data.syncFailed).toBe(false);
+
+      const inDbAddOnAfterRetry = await catalogService.getAddOn(shopId, initialAddOn.id);
+      expect(inDbAddOnAfterRetry?.shopifyVariantId).toBeTruthy();
+
+      // H. Re-render list: both items are now "Synced"
+      const postRetryLoaderRes = await indexLoader(
+        createLoaderArgs(new Request("https://test-shop.myshopify.com/app/options")),
+      );
+      const postRetryLoaderData = (await unwrapResponse(postRetryLoaderRes)).data;
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue(postRetryLoaderData);
+
+      const { container: postRetryListContainer } = render(
+        <ReactRouter.MemoryRouter>
+          <AdminOptionsIndexRoute />
+        </ReactRouter.MemoryRouter>,
+      );
+      expect(within(postRetryListContainer).queryByText("Sync failed")).toBeNull();
+      const syncedBadges = within(postRetryListContainer).getAllByText("Synced");
+      expect(syncedBadges.length).toBe(2);
+    });
+
+    it("R3-F2: partial update omitting token/override leaves mapping unchanged, while explicit none or switch clears it", async () => {
+      const shopId = await createShop("shop-r3f2.myshopify.com");
+      mocks.currentShop = "shop-r3f2.myshopify.com";
+
+      const group = await catalogService.createOptionGroup(shopId, {
+        name: "Material",
+        kind: "MATERIAL",
+      });
+      const initial = await catalogService.createOptionValue(shopId, {
+        optionGroupId: group.id,
+        label: "Polycarbonate",
+        priceDeltaMinor: 1000,
+        tokenKey: "material",
+        tokenValue: "POLY",
+      });
+
+      // 1. Partial update posting only a new label (omits token and overrideCode)
+      const labelOnlyReq = new Request(`https://test-shop.myshopify.com/app/options/${initial.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: "Polycarbonate Thin",
+        }),
+      });
+      const labelOnlyRes = await optionValueAction(createActionArgs(labelOnlyReq, { id: initial.id }));
+      const labelOnlyUnwrapped = await unwrapResponse<{
+        ok: boolean;
+        optionValue: { label: string; tokenKey: string | null; tokenValue: string | null; overrideCode: string | null };
+      }>(labelOnlyRes);
+
+      expect(labelOnlyUnwrapped.status).toBe(200);
+      expect(labelOnlyUnwrapped.data.ok).toBe(true);
+      expect(labelOnlyUnwrapped.data.optionValue.label).toBe("Polycarbonate Thin");
+      // Retains existing token mapping!
+      expect(labelOnlyUnwrapped.data.optionValue.tokenKey).toBe("material");
+      expect(labelOnlyUnwrapped.data.optionValue.tokenValue).toBe("POLY");
+      expect(labelOnlyUnwrapped.data.optionValue.overrideCode).toBeFalsy();
+
+      const inDbAfterLabel = await catalogService.getOptionValue(shopId, initial.id);
+      expect(inDbAfterLabel?.tokenKey).toBe("material");
+      expect(inDbAfterLabel?.tokenValue).toBe("POLY");
+      expect(inDbAfterLabel?.overrideCode).toBeFalsy();
+
+      const dbRowAfterLabel = await getTestPrisma().optionValue.findUnique({ where: { id: initial.id } });
+      expect(dbRowAfterLabel?.tokenKey).toBe("material");
+      expect(dbRowAfterLabel?.tokenValue).toBe("POLY");
+      expect(dbRowAfterLabel?.overrideCode).toBeNull();
+
+      // 2. Explicit switch of code-source radio to "none" clears the mapping
+      const clearReq = new Request(`https://test-shop.myshopify.com/app/options/${initial.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          codeType: "none",
+        }),
+      });
+      const clearRes = await optionValueAction(createActionArgs(clearReq, { id: initial.id }));
+      const clearUnwrapped = await unwrapResponse<{
+        ok: boolean;
+        optionValue: { tokenKey?: string; tokenValue?: string };
+      }>(clearRes);
+
+      expect(clearUnwrapped.status).toBe(200);
+      expect(clearUnwrapped.data.optionValue.tokenKey).toBeFalsy();
+      expect(clearUnwrapped.data.optionValue.tokenValue).toBeFalsy();
+
+      const inDbAfterClear = await catalogService.getOptionValue(shopId, initial.id);
+      expect(inDbAfterClear?.tokenKey).toBeFalsy();
+      expect(inDbAfterClear?.tokenValue).toBeFalsy();
+
+      const dbRowAfterClear = await getTestPrisma().optionValue.findUnique({ where: { id: initial.id } });
+      expect(dbRowAfterClear?.tokenKey).toBeNull();
+      expect(dbRowAfterClear?.tokenValue).toBeNull();
+      expect(dbRowAfterClear?.overrideCode).toBeNull();
+    });
+
+    it("R3-F3: refuses to delete a populated option group with 409 GROUP_NOT_EMPTY and archives an empty group", async () => {
+      const shopId = await createShop("shop-r3f3.myshopify.com");
+      mocks.currentShop = "shop-r3f3.myshopify.com";
+
+      const group = await catalogService.createOptionGroup(shopId, {
+        name: "Populated Group",
+        kind: "MATERIAL",
+      });
+      const optVal = await catalogService.createOptionValue(shopId, {
+        optionGroupId: group.id,
+        label: "Standard CR39",
+        priceDeltaMinor: 0,
+      });
+
+      // 1. Attempt to delete populated option group -> 409 Conflict with GROUP_NOT_EMPTY
+      const deletePopulatedReq = new Request("https://test-shop.myshopify.com/app/options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent: "delete_group",
+          groupId: group.id,
+        }),
+      });
+      const deletePopulatedRes = await indexAction(createActionArgs(deletePopulatedReq));
+      const deletePopulatedUnwrapped = await unwrapResponse<{
+        error: { code: string; message: string };
+      }>(deletePopulatedRes);
+
+      expect(deletePopulatedUnwrapped.status).toBe(409);
+      expect(deletePopulatedUnwrapped.data.error.code).toBe("GROUP_NOT_EMPTY");
+      expect(deletePopulatedUnwrapped.data.error.message).toContain("active values");
+
+      // Group is NOT archived
+      const inDbGroup = await catalogService.getOptionGroup(shopId, group.id);
+      expect(inDbGroup).not.toBeNull();
+      expect(inDbGroup?.archivedAt).toBeNull();
+
+      // 2. Archive child option value first
+      await catalogService.archiveOptionValue(shopId, optVal.id);
+
+      // 3. Now delete the empty option group -> 200 ok, archived
+      const deleteEmptyReq = new Request("https://test-shop.myshopify.com/app/options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent: "delete_group",
+          groupId: group.id,
+        }),
+      });
+      const deleteEmptyRes = await indexAction(createActionArgs(deleteEmptyReq));
+      const deleteEmptyUnwrapped = await unwrapResponse<{ ok: boolean; archived: boolean }>(deleteEmptyRes);
+
+      expect(deleteEmptyUnwrapped.status).toBe(200);
+      expect(deleteEmptyUnwrapped.data.ok).toBe(true);
+      expect(deleteEmptyUnwrapped.data.archived).toBe(true);
+
+      const inDbArchivedGroup = await catalogService.getOptionGroup(shopId, group.id);
+      expect(inDbArchivedGroup?.archivedAt).not.toBeNull();
+    });
+
+    it("R3-F4: rejects missing or blank price on add-on creation with structured 400 error and no Shopify call", async () => {
+      const shopId = await createShop("shop-r3f4.myshopify.com");
+      mocks.currentShop = "shop-r3f4.myshopify.com";
+
+      const syncSpy = vi.fn();
+      mocks.adminGraphql.mockImplementation(syncSpy);
+
+      // 1. Missing price field entirely
+      const missingPriceReq = new Request("https://test-shop.myshopify.com/app/add-ons/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Protective Case",
+        }),
+      });
+      const missingPriceRes = await addOnAction(createActionArgs(missingPriceReq, { id: "new" }));
+      const missingPriceUnwrapped = await unwrapResponse<{
+        error: { code: string; message: string; fields?: Array<{ path: string; code: string }> };
+      }>(missingPriceRes);
+
+      expect(missingPriceUnwrapped.status).toBe(400);
+      expect(missingPriceUnwrapped.data.error.code).toBe("REQUIRED");
+      expect(missingPriceUnwrapped.data.error.fields).toEqual([{ path: "price", code: "REQUIRED" }]);
+      expect(syncSpy).not.toHaveBeenCalled();
+
+      // 2. Blank price string
+      const blankPriceReq = new Request("https://test-shop.myshopify.com/app/add-ons/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Protective Case",
+          price: "   ",
+        }),
+      });
+      const blankPriceRes = await addOnAction(createActionArgs(blankPriceReq, { id: "new" }));
+      const blankPriceUnwrapped = await unwrapResponse<{
+        error: { code: string; message: string; fields?: Array<{ path: string; code: string }> };
+      }>(blankPriceRes);
+
+      expect(blankPriceUnwrapped.status).toBe(400);
+      expect(blankPriceUnwrapped.data.error.code).toBe("REQUIRED");
+      expect(blankPriceUnwrapped.data.error.fields).toEqual([{ path: "price", code: "REQUIRED" }]);
+      expect(syncSpy).not.toHaveBeenCalled();
+
+      // 3. Zero price
+      const zeroPriceReq = new Request("https://test-shop.myshopify.com/app/add-ons/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Protective Case",
+          price: "0",
+        }),
+      });
+      const zeroPriceRes = await addOnAction(createActionArgs(zeroPriceReq, { id: "new" }));
+      const zeroPriceUnwrapped = await unwrapResponse<{
+        error: { code: string; message: string };
+      }>(zeroPriceRes);
+
+      expect(zeroPriceUnwrapped.status).toBe(400);
+      expect(zeroPriceUnwrapped.data.error.code).toBe("PRICE_NOT_POSITIVE");
+      expect(syncSpy).not.toHaveBeenCalled();
+
+      // Confirm no add-on was written to DB
+      const allAddOns = await catalogService.listAddOns(shopId);
+      expect(allAddOns.filter((a) => a.name === "Protective Case")).toHaveLength(0);
+    });
+
+    it("R3-F5: displays decimal currency amount in shop normal units in help text, not minor units", () => {
+      // 1. OptionValueForm
+      const { container: optFormContainer } = render(
+        <OptionValueForm
+          groupKind="MATERIAL"
+          currency="USD"
+        />,
+      );
+      const optPriceField = optFormContainer.querySelector('s-text-field[name="priceDelta"]');
+      expect(optPriceField).not.toBeNull();
+      const optDetails = optPriceField?.getAttribute("details") || "";
+      expect(optDetails).toContain("shop currency's normal units (e.g. 35.00");
+      expect(optDetails).not.toContain("minor units");
+
+      // 2. AddOnRoute
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        addOn: null,
+        plan: { active: true },
+        shopDomain: "test.myshopify.com",
+      });
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(undefined);
+
+      const { container: addOnContainer } = render(
+        <ReactRouter.MemoryRouter>
+          <AddOnRoute />
+        </ReactRouter.MemoryRouter>,
+      );
+      const addOnPriceField = addOnContainer.querySelector('s-text-field[name="price"]');
+      expect(addOnPriceField).not.toBeNull();
+      const addOnDetails = addOnPriceField?.getAttribute("details") || "";
+      expect(addOnDetails).toContain("shop currency's normal units (e.g. 15.00");
+      expect(addOnDetails).not.toContain("minor units");
+    });
+  });
+
+  describe("Review R4 Fixes (Spec 18 R6-F1/F2 Ruling)", () => {
+    it("R4-F1: form submits through the router (action called) and an action error renders inline", async () => {
+      // Restore real ReactRouter hooks and Form to verify submissions dispatch through the router
+      (ReactRouter as Record<string, unknown>).Form = origReactRouterForm;
+      vi.restoreAllMocks();
+
+      try {
+        const actionSpy = vi.fn(async ({ request }: ReactRouter.ActionFunctionArgs) => {
+          const formData = await request.formData();
+          const label = formData.get("label");
+          if (!label) {
+            return ReactRouter.data(
+              {
+                error: {
+                  code: "REQUIRED",
+                  message: "Please fill in all required fields.",
+                  fields: [{ path: "label", code: "REQUIRED" }],
+                },
+              },
+              { status: 400 },
+            );
+          }
+          return ReactRouter.data(
+            {
+              error: {
+                code: "ONE_CODE_SOURCE",
+                message: "Choose either a lab-code token or an override code, not both.",
+                fields: [{ path: "overrideCode", code: "ONE_CODE_SOURCE" }],
+              },
+            },
+            { status: 400 },
+          );
+        });
+
+        const router = ReactRouter.createMemoryRouter(
+          [
+            {
+              path: "/app/options/:id",
+              element: <OptionValueRoute />,
+              loader: () => ({
+                optionValue: null,
+                group: { id: "grp-1", name: "Material", kind: "MATERIAL" },
+                allGroups: [{ id: "grp-1", name: "Material", kind: "MATERIAL" }],
+                plan: { active: true },
+                shopDomain: "test-shop.myshopify.com",
+              }),
+              action: actionSpy,
+            },
+          ],
+          { initialEntries: ["/app/options/new"] },
+        );
+
+        const { container } = render(<ReactRouter.RouterProvider router={router} />);
+
+        await waitFor(() => {
+          expect(container.querySelector("form")).not.toBeNull();
+        });
+
+        const form = container.querySelector("form")!;
+
+        // Submit form through the router
+        fireEvent.submit(form);
+
+        // Router action is called and action error banner renders inline
+        await waitFor(
+          () => {
+            expect(actionSpy).toHaveBeenCalledTimes(1);
+            expect(container.querySelector('s-banner[heading="Missing required fields"]')).not.toBeNull();
+            expect(screen.getByText("Please fill in all required fields.")).toBeTruthy();
+          },
+          { timeout: 4000 },
+        );
+      } finally {
+        (ReactRouter as Record<string, unknown>).Form = mockRouterForm;
+      }
+    });
+
+    it("R4-F1: add-on form submits through the router (action called) and an action error renders inline", async () => {
+      (ReactRouter as Record<string, unknown>).Form = origReactRouterForm;
+      vi.restoreAllMocks();
+
+      try {
+        const actionSpy = vi.fn(async () => {
+          return ReactRouter.data(
+            {
+              error: {
+                code: "PRICE_NOT_POSITIVE",
+                message: "Price must be greater than 0.",
+                fields: [{ path: "price", code: "PRICE_NOT_POSITIVE" }],
+              },
+            },
+            { status: 400 },
+          );
+        });
+
+        const router = ReactRouter.createMemoryRouter(
+          [
+            {
+              path: "/app/add-ons/:id",
+              element: <AddOnRoute />,
+              loader: () => ({
+                addOn: null,
+                plan: { active: true },
+                shopDomain: "test-shop.myshopify.com",
+              }),
+              action: actionSpy,
+            },
+          ],
+          { initialEntries: ["/app/add-ons/new"] },
+        );
+
+        const { container } = render(<ReactRouter.RouterProvider router={router} />);
+
+        await waitFor(() => {
+          expect(container.querySelector("form")).not.toBeNull();
+        });
+
+        const form = container.querySelector("form")!;
+
+        fireEvent.submit(form);
+
+        await waitFor(
+          () => {
+            expect(actionSpy).toHaveBeenCalledTimes(1);
+            expect(container.querySelector('s-banner[heading="Invalid price"]')).not.toBeNull();
+            expect(screen.getByText("Price must be greater than 0.")).toBeTruthy();
+          },
+          { timeout: 4000 },
+        );
+      } finally {
+        (ReactRouter as Record<string, unknown>).Form = mockRouterForm;
+      }
+    });
+
+    it("R4-F2: a valid form's Save and an enabled Move button have no disabled attribute", async () => {
+      const shopId = await createShop("shop-r4f2.myshopify.com");
+      mocks.currentShop = "shop-r4f2.myshopify.com";
+
+      // 1. Valid OptionValueForm Save button has no disabled or loading attribute
+      const { container: formContainer } = render(
+        <ReactRouter.MemoryRouter>
+          <OptionValueForm
+            initialData={{ label: "1.67 High Index", priceDelta: "35.00" }}
+            groupKind="MATERIAL"
+            currency="USD"
+            isSubmitting={false}
+            onCancel={() => {}}
+          />
+        </ReactRouter.MemoryRouter>,
+      );
+
+      const saveBtn = within(formContainer).getByRole("button", { name: "Save option value" });
+      expect(saveBtn.hasAttribute("disabled")).toBe(false);
+      expect(saveBtn.getAttribute("disabled")).toBeNull();
+      expect(saveBtn.hasAttribute("loading")).toBe(false);
+      expect(saveBtn.getAttribute("loading")).toBeNull();
+
+      // Cancel button also has no disabled attribute
+      const cancelBtn = within(formContainer).getByRole("button", { name: "Cancel" });
+      expect(cancelBtn.hasAttribute("disabled")).toBe(false);
+      expect(cancelBtn.getAttribute("disabled")).toBeNull();
+
+      // When isSubmitting is true, Save button HAS disabled and loading attributes
+      const { container: submittingContainer } = render(
+        <ReactRouter.MemoryRouter>
+          <OptionValueForm
+            initialData={{ label: "1.67 High Index", priceDelta: "35.00" }}
+            groupKind="MATERIAL"
+            currency="USD"
+            isSubmitting={true}
+          />
+        </ReactRouter.MemoryRouter>,
+      );
+      const submittingSaveBtn = within(submittingContainer).getByRole("button", {
+        name: "Save option value",
+      });
+      expect(submittingSaveBtn.hasAttribute("disabled")).toBe(true);
+      expect(submittingSaveBtn.hasAttribute("loading")).toBe(true);
+
+      // 2. AddOn form Save button has no disabled attribute when isSubmitting is false
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        addOn: {
+          id: "addon-1",
+          name: "Blue light blocking",
+          price: { amountMinor: 2000, currency: "USD" },
+          shopifyVariantId: "gid://shopify/ProductVariant/101",
+        },
+        plan: { active: true },
+        shopDomain: "shop-r4f2.myshopify.com",
+      });
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(undefined);
+      vi.spyOn(ReactRouter, "useNavigation").mockReturnValue({ state: "idle" } as ReactRouter.Navigation);
+
+      const { container: addOnContainer } = render(
+        <ReactRouter.MemoryRouter>
+          <AddOnRoute />
+        </ReactRouter.MemoryRouter>,
+      );
+      const addOnSaveBtn = within(addOnContainer).getByRole("button", { name: "Save add-on" });
+      expect(addOnSaveBtn.hasAttribute("disabled")).toBe(false);
+      expect(addOnSaveBtn.getAttribute("disabled")).toBeNull();
+      expect(addOnSaveBtn.hasAttribute("loading")).toBe(false);
+
+      // 3. Enabled Move button in AdminOptionsIndexRoute has no disabled attribute
+      const g1 = await catalogService.createOptionGroup(shopId, {
+        name: "Material 1",
+        kind: "MATERIAL",
+        position: 0,
+      });
+      const g2 = await catalogService.createOptionGroup(shopId, {
+        name: "Material 2",
+        kind: "MATERIAL",
+        position: 1,
+      });
+
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        groups: [
+          { ...g1, values: [] },
+          { ...g2, values: [] },
+        ],
+        addOns: [],
+        syncFailedId: null,
+        plan: { active: true },
+        shopDomain: "shop-r4f2.myshopify.com",
+      });
+      vi.spyOn(ReactRouter, "useActionData").mockReturnValue(undefined);
+      vi.spyOn(ReactRouter, "useNavigation").mockReturnValue({ state: "idle" } as ReactRouter.Navigation);
+
+      const { container: indexContainer } = render(
+        <ReactRouter.MemoryRouter>
+          <AdminOptionsIndexRoute />
+        </ReactRouter.MemoryRouter>,
+      );
+
+      // Group 1 (index 0): Move up is disabled (index === 0), Move down is enabled!
+      const moveUpBtns = within(indexContainer).getAllByRole("button", { name: "Move up" });
+      const moveDownBtns = within(indexContainer).getAllByRole("button", { name: "Move down" });
+
+      const disabledGroupMoveUp = moveUpBtns[0];
+      const enabledGroupMoveDown = moveDownBtns[0];
+
+      expect(disabledGroupMoveUp.hasAttribute("disabled")).toBe(true);
+      expect(enabledGroupMoveDown.hasAttribute("disabled")).toBe(false);
+      expect(enabledGroupMoveDown.getAttribute("disabled")).toBeNull();
+
+      // Group 2 (index 1): Move up is enabled, Move down is disabled (index === length - 1)!
+      const enabledGroupMoveUp = moveUpBtns[1];
+      const disabledGroupMoveDown = moveDownBtns[1];
+
+      expect(enabledGroupMoveUp.hasAttribute("disabled")).toBe(false);
+      expect(enabledGroupMoveUp.getAttribute("disabled")).toBeNull();
+      expect(disabledGroupMoveDown.hasAttribute("disabled")).toBe(true);
     });
   });
 

@@ -11,6 +11,7 @@ import {
   useNavigate,
   useNavigation,
   useRouteError,
+  Form,
 } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
@@ -115,6 +116,24 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const payload = validateInput(addOnActionSchema, rawData);
     const intent = payload.intent ?? "save";
 
+    // Intent: Retry sync
+    if (intent === "retry_sync") {
+      const existing = await catalogService.getAddOn(shop.id, id);
+      if (!existing) {
+        return errorResponse(new NotFoundError("Add-on not found"));
+      }
+
+      let syncFailed = false;
+      try {
+        await syncItem(admin, shop.id, "addOn", id);
+      } catch {
+        syncFailed = true;
+      }
+
+      const finalAddOn = await catalogService.getAddOn(shop.id, id);
+      return data({ ok: true, addOn: finalAddOn, syncFailed, synced: !syncFailed });
+    }
+
     // Intent: Delete / Archive
     if (intent === "delete" || intent === "archive") {
       const existing = await catalogService.getAddOn(shop.id, id);
@@ -171,39 +190,68 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
     let priceMinor = 0;
     if (payload.priceMinor !== undefined && payload.priceMinor !== null) {
+      if (typeof payload.priceMinor !== "number" || isNaN(payload.priceMinor)) {
+        return errorResponse(
+          new BadRequestError("Price must be a number", "INVALID_PRICE", [
+            { path: "price", code: "INVALID_PRICE" },
+          ]),
+        );
+      }
+      if (payload.priceMinor <= 0) {
+        return errorResponse(
+          new BadRequestError(
+            "Price must be greater than 0",
+            payload.priceMinor < 0 ? "NEGATIVE_PRICE" : "PRICE_NOT_POSITIVE",
+            [{ path: "price", code: payload.priceMinor < 0 ? "NEGATIVE_PRICE" : "PRICE_NOT_POSITIVE" }],
+          ),
+        );
+      }
       priceMinor = payload.priceMinor;
     } else if (payload.price !== undefined && payload.price !== null) {
       const priceStr = String(payload.price).trim();
-      if (priceStr !== "") {
-        const parsed = parseMoneyText(priceStr, currency);
-        if (!parsed.ok) {
-          if (parsed.error === "MONEY_PRECISION") {
-            const digits = minorUnitDigits(currency) ?? 2;
-            return errorResponse(
-              new BadRequestError(
-                `Maximum ${digits} decimal places allowed for ${currency}`,
-                "MONEY_PRECISION",
-                [{ path: "price", code: "MONEY_PRECISION" }],
-              ),
-            );
-          }
-          return errorResponse(
-            new BadRequestError("Invalid price format", parsed.error, [
-              { path: "price", code: parsed.error },
-            ]),
-          );
-        }
-        if (parsed.amountMinor < 0) {
-          return errorResponse(
-            new BadRequestError("Price must be at least 0", "NEGATIVE_PRICE", [
-              { path: "price", code: "NEGATIVE_PRICE" },
-            ]),
-          );
-        }
-        priceMinor = parsed.amountMinor;
+      if (priceStr === "") {
+        return errorResponse(
+          new BadRequestError("Price is required", "REQUIRED", [
+            { path: "price", code: "REQUIRED" },
+          ]),
+        );
       }
+      const parsed = parseMoneyText(priceStr, currency);
+      if (!parsed.ok) {
+        if (parsed.error === "MONEY_PRECISION") {
+          const digits = minorUnitDigits(currency) ?? 2;
+          return errorResponse(
+            new BadRequestError(
+              `Maximum ${digits} decimal places allowed for ${currency}`,
+              "MONEY_PRECISION",
+              [{ path: "price", code: "MONEY_PRECISION" }],
+            ),
+          );
+        }
+        return errorResponse(
+          new BadRequestError("Invalid price format", parsed.error, [
+            { path: "price", code: parsed.error },
+          ]),
+        );
+      }
+      if (parsed.amountMinor <= 0) {
+        return errorResponse(
+          new BadRequestError(
+            parsed.amountMinor < 0 ? "Price must be at least 0" : "Price must be greater than 0",
+            parsed.amountMinor < 0 ? "NEGATIVE_PRICE" : "PRICE_NOT_POSITIVE",
+            [{ path: "price", code: parsed.amountMinor < 0 ? "NEGATIVE_PRICE" : "PRICE_NOT_POSITIVE" }],
+          ),
+        );
+      }
+      priceMinor = parsed.amountMinor;
     } else if (existing) {
       priceMinor = existing.price.amountMinor;
+    } else {
+      return errorResponse(
+        new BadRequestError("Price is required", "REQUIRED", [
+          { path: "price", code: "REQUIRED" },
+        ]),
+      );
     }
 
     if (id === "new") {
@@ -213,13 +261,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         currency,
       });
 
+      let syncFailed = false;
       try {
         await syncItem(admin, shop.id, "addOn", created.id);
       } catch {
-        // Keep save even if Shopify sync fails
+        syncFailed = true;
       }
 
-      return data({ ok: true, addOn: created });
+      const finalCreated = await catalogService.getAddOn(shop.id, created.id);
+      return data({ ok: true, addOn: finalCreated ?? created, syncFailed });
     } else {
       await catalogService.updateAddOn(shop.id, id, {
         name,
@@ -227,14 +277,18 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         currency,
       });
 
+      let syncFailed = false;
       try {
         await syncItem(admin, shop.id, "addOn", id);
       } catch {
-        // Keep save even if Shopify sync fails
+        syncFailed = true;
+        await catalogService.updateAddOn(shop.id, id, {
+          shopifyVariantId: null,
+        });
       }
 
       const finalAddOn = await catalogService.getAddOn(shop.id, id);
-      return data({ ok: true, addOn: finalAddOn });
+      return data({ ok: true, addOn: finalAddOn, syncFailed });
     }
   } catch (err) {
     if (err instanceof NotFoundError) {
@@ -301,6 +355,7 @@ export default function AddOnRoute() {
   const KNOWN_ERROR_KEYS = new Set([
     "REQUIRED",
     "NEGATIVE_PRICE",
+    "PRICE_NOT_POSITIVE",
     "MONEY_PRECISION",
     "name",
     "price",
@@ -308,14 +363,42 @@ export default function AddOnRoute() {
   const unlistedError =
     Object.entries(fieldErrors).find(([k]) => !KNOWN_ERROR_KEYS.has(k))?.[1];
 
+  const syncFailed = Boolean(
+    (actionResult as { syncFailed?: boolean } | undefined)?.syncFailed ??
+      (addOn && !addOn.shopifyVariantId),
+  );
+
   return (
     <s-page heading={addOn ? `Edit: ${addOn.name}` : "New add-on"}>
       <s-link slot="breadcrumb" href="/app/options">
         Options & add-ons
       </s-link>
       <s-section heading="Add-on details">
-        <form method="post">
-          <s-stack direction="block" gap="base">
+        <s-stack direction="block" gap="base">
+          {syncFailed && (
+            <s-stack direction="block" gap="base">
+              <s-banner tone="critical" heading="Shopify sync failed">
+                <s-paragraph>
+                  Failed to synchronize add-on with Shopify.
+                </s-paragraph>
+              </s-banner>
+              <s-stack direction="inline" gap="base">
+                <s-badge tone="critical">Sync failed</s-badge>
+                <Form method="post">
+                  <input type="hidden" name="intent" value="retry_sync" />
+                  <s-button
+                    type="submit"
+                    variant="tertiary"
+                    {...(isSubmitting ? { disabled: true } : {})}
+                  >
+                    Retry
+                  </s-button>
+                </Form>
+              </s-stack>
+            </s-stack>
+          )}
+          <Form method="post">
+            <s-stack direction="block" gap="base">
             {unlistedError && (
               <s-banner tone="critical" heading="Action failed">
                 <s-paragraph>{unlistedError}</s-paragraph>
@@ -329,6 +412,11 @@ export default function AddOnRoute() {
             {fieldErrors.NEGATIVE_PRICE && (
               <s-banner tone="critical" heading="Invalid price">
                 <s-paragraph>Price must be at least 0.</s-paragraph>
+              </s-banner>
+            )}
+            {fieldErrors.PRICE_NOT_POSITIVE && (
+              <s-banner tone="critical" heading="Invalid price">
+                <s-paragraph>Price must be greater than 0.</s-paragraph>
               </s-banner>
             )}
             {fieldErrors.MONEY_PRECISION && (
@@ -356,8 +444,8 @@ export default function AddOnRoute() {
               name="price"
               value={price}
               onInput={(e) => setPrice(e.currentTarget.value)}
-              error={fieldErrors.price || fieldErrors.NEGATIVE_PRICE || fieldErrors.MONEY_PRECISION}
-              details="Price in minor units or formatted currency (e.g. 15.00)."
+              error={fieldErrors.price || fieldErrors.NEGATIVE_PRICE || fieldErrors.PRICE_NOT_POSITIVE || fieldErrors.MONEY_PRECISION}
+              details="Price in the shop currency's normal units (e.g. 15.00)."
               required
             />
 
@@ -365,21 +453,22 @@ export default function AddOnRoute() {
               <s-button
                 type="submit"
                 variant="primary"
-                loading={isSubmitting}
-                disabled={isSubmitting}
+                {...(isSubmitting ? { loading: true } : {})}
+                {...(isSubmitting ? { disabled: true } : {})}
               >
                 Save add-on
               </s-button>
               <s-button
                 type="button"
                 onClick={() => navigate("/app/options")}
-                disabled={isSubmitting}
+                {...(isSubmitting ? { disabled: true } : {})}
               >
                 Cancel
               </s-button>
             </s-stack>
           </s-stack>
-        </form>
+        </Form>
+        </s-stack>
       </s-section>
     </s-page>
   );

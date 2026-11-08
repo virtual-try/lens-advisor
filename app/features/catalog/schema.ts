@@ -473,7 +473,7 @@ export const retrySyncActionSchema = z.object({
 
 export const optionValueActionSchema = z.object({
   intent: z
-    .enum(["save", "delete", "archive"], {
+    .enum(["save", "delete", "archive", "retry_sync"], {
       errorMap: () => ({ message: "UNKNOWN_INTENT" }),
     })
     .optional(),
@@ -486,6 +486,7 @@ export const optionValueActionSchema = z.object({
   priceDelta: z.union([z.string(), z.number()]).optional(),
   currency: z.string().optional(),
   optionGroupId: z.string().trim().min(1).optional(),
+  codeType: z.enum(["none", "token", "override"]).optional(),
   token: z.string().optional(),
   tokenKey: z.string().optional(),
   tokenValue: z.string().optional(),
@@ -495,7 +496,7 @@ export const optionValueActionSchema = z.object({
 
 export const addOnActionSchema = z.object({
   intent: z
-    .enum(["save", "delete", "archive"], {
+    .enum(["save", "delete", "archive", "retry_sync"], {
       errorMap: () => ({ message: "UNKNOWN_INTENT" }),
     })
     .optional(),
@@ -503,7 +504,6 @@ export const addOnActionSchema = z.object({
   priceMinor: z
     .number({ invalid_type_error: "Price must be an integer" })
     .int({ message: "Price must be an integer" })
-    .min(0, "Price must be at least 0")
     .optional(),
   price: z.union([z.string(), z.number()]).optional(),
   currency: z.string().optional(),

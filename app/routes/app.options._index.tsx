@@ -10,6 +10,7 @@ import {
   useLoaderData,
   useNavigation,
   useRouteError,
+  Form,
 } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
@@ -19,6 +20,7 @@ import { getPrisma } from "../shared/container/prisma.server";
 import {
   AppError,
   BadRequestError,
+  ConflictError,
   errorResponse,
   NotFoundError,
 } from "../shared/http/errors.server";
@@ -89,6 +91,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const shop = await getShopByDomain(session.shop, prisma);
   const catalogService = createCatalogService({ prisma });
 
+  const url = new URL(request.url);
+  const syncFailedId = url.searchParams.get("syncFailed");
+
   const allGroups = await catalogService.listOptionGroups(shop.id);
   const groupsWithValues: OptionGroupWithValues[] = await Promise.all(
     allGroups.map(async (group) => {
@@ -107,6 +112,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return data({
     groups: groupsWithValues,
     addOns,
+    syncFailedId,
     plan,
     shopDomain: session.shop,
   });
@@ -150,6 +156,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     if (intent === "delete_group") {
       const validated = validateInput(deleteGroupActionSchema, payload);
+      const activeValuesCount = await prisma.optionValue.count({
+        where: {
+          shopId: shop.id,
+          optionGroupId: validated.groupId,
+          archivedAt: null,
+        },
+      });
+      if (activeValuesCount > 0) {
+        return errorResponse(
+          new ConflictError(
+            "Cannot delete an option group that still has active values. Delete or archive its option values first.",
+            "GROUP_NOT_EMPTY",
+          ),
+        );
+      }
       await catalogService.archiveOptionGroup(shop.id, validated.groupId);
       return data({ ok: true, archived: true });
     }
@@ -257,7 +278,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function AdminOptionsRoute() {
-  const { groups, addOns } = useLoaderData<typeof loader>();
+  const { groups, addOns, syncFailedId } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const [newGroupName, setNewGroupName] = useState("");
   const [newGroupKind, setNewGroupKind] = useState<"MATERIAL" | "TINT_TYPE" | "COLOR">("MATERIAL");
@@ -342,7 +363,9 @@ export default function AdminOptionsRoute() {
                 ? "Shopify archive failed"
                 : actionError.code === "SYNC_FAILED"
                   ? "Shopify sync failed"
-                  : "Action failed"
+                  : actionError.code === "GROUP_NOT_EMPTY"
+                    ? "Option group not empty"
+                    : "Action failed"
             }
           >
             <s-paragraph>{actionError.message || actionError.code}</s-paragraph>
@@ -371,18 +394,22 @@ export default function AdminOptionsRoute() {
                   <s-stack direction="block" gap="base">
                     <s-stack direction="inline" gap="base">
                       <s-heading>{group.name}</s-heading>
-                      <form method="post">
+                      <Form method="post">
                         <input type="hidden" name="intent" value="reorder_groups" />
                         <input
                           type="hidden"
                           name="ids"
                           value={JSON.stringify(getReorderedIds(materialGroups, gIndex, -1))}
                         />
-                        <s-button type="submit" disabled={gIndex === 0 || isSubmitting} onClick={handleFormSubmitClick}>
+                        <s-button
+                          type="submit"
+                          {...((gIndex === 0 || isSubmitting) ? { disabled: true } : {})}
+                          onClick={handleFormSubmitClick}
+                        >
                           Move up
                         </s-button>
-                      </form>
-                      <form method="post">
+                      </Form>
+                      <Form method="post">
                         <input type="hidden" name="intent" value="reorder_groups" />
                         <input
                           type="hidden"
@@ -391,12 +418,12 @@ export default function AdminOptionsRoute() {
                         />
                         <s-button
                           type="submit"
-                          disabled={gIndex === materialGroups.length - 1 || isSubmitting}
+                          {...((gIndex === materialGroups.length - 1 || isSubmitting) ? { disabled: true } : {})}
                           onClick={handleFormSubmitClick}
                         >
                           Move down
                         </s-button>
-                      </form>
+                      </Form>
                       <s-button
                         type="button"
                         tone="critical"
@@ -433,37 +460,47 @@ export default function AdminOptionsRoute() {
                               <s-text>Override: {val.overrideCode}</s-text>
                             )}
                             {val.priceDelta.amountMinor === 0 ? (
-                              val.shopifyVariantId ? (
+                              val.shopifyVariantId || val.id === syncFailedId ? (
                                 <s-stack direction="inline" gap="base">
                                   <s-badge tone="critical">Sync failed</s-badge>
-                                  <form method="post">
+                                  <Form method="post">
                                     <input type="hidden" name="intent" value="retry_sync" />
                                     <input type="hidden" name="entity" value="optionValue" />
                                     <input type="hidden" name="id" value={val.id} />
-                                    <s-button type="submit" variant="tertiary" disabled={isSubmitting} onClick={handleFormSubmitClick}>
+                                    <s-button
+                                      type="submit"
+                                      variant="tertiary"
+                                      {...(isSubmitting ? { disabled: true } : {})}
+                                      onClick={handleFormSubmitClick}
+                                    >
                                       Retry
                                     </s-button>
-                                  </form>
+                                  </Form>
                                 </s-stack>
                               ) : (
                                 <s-badge tone="info">Included</s-badge>
                               )
-                            ) : val.shopifyVariantId ? (
+                            ) : val.shopifyVariantId && val.id !== syncFailedId ? (
                               <s-badge tone="success">Synced</s-badge>
                             ) : (
                               <s-stack direction="inline" gap="base">
                                 <s-badge tone="critical">Sync failed</s-badge>
-                                <form method="post">
+                                <Form method="post">
                                   <input type="hidden" name="intent" value="retry_sync" />
                                   <input type="hidden" name="entity" value="optionValue" />
                                   <input type="hidden" name="id" value={val.id} />
-                                  <s-button type="submit" variant="tertiary" disabled={isSubmitting} onClick={handleFormSubmitClick}>
+                                  <s-button
+                                    type="submit"
+                                    variant="tertiary"
+                                    {...(isSubmitting ? { disabled: true } : {})}
+                                    onClick={handleFormSubmitClick}
+                                  >
                                     Retry
                                   </s-button>
-                                </form>
+                                </Form>
                               </s-stack>
                             )}
-                            <form method="post">
+                            <Form method="post">
                               <input type="hidden" name="intent" value="reorder_values" />
                               <input type="hidden" name="optionGroupId" value={group.id} />
                               <input
@@ -471,11 +508,15 @@ export default function AdminOptionsRoute() {
                                 name="ids"
                                 value={JSON.stringify(getReorderedIds(group.values, vIndex, -1))}
                               />
-                              <s-button type="submit" disabled={vIndex === 0 || isSubmitting} onClick={handleFormSubmitClick}>
+                              <s-button
+                                type="submit"
+                                {...((vIndex === 0 || isSubmitting) ? { disabled: true } : {})}
+                                onClick={handleFormSubmitClick}
+                              >
                                 Move up
                               </s-button>
-                            </form>
-                            <form method="post">
+                            </Form>
+                            <Form method="post">
                               <input type="hidden" name="intent" value="reorder_values" />
                               <input type="hidden" name="optionGroupId" value={group.id} />
                               <input
@@ -485,12 +526,12 @@ export default function AdminOptionsRoute() {
                               />
                               <s-button
                                 type="submit"
-                                disabled={vIndex === group.values.length - 1 || isSubmitting}
+                                {...((vIndex === group.values.length - 1 || isSubmitting) ? { disabled: true } : {})}
                                 onClick={handleFormSubmitClick}
                               >
                                 Move down
                               </s-button>
-                            </form>
+                            </Form>
                             <s-link href={`/app/options/${val.id}`}>Edit</s-link>
                             <s-button
                               type="button"
@@ -544,18 +585,22 @@ export default function AdminOptionsRoute() {
                       <s-heading>
                         {group.name} ({group.kind === "COLOR" ? "Colour" : "Tint type"})
                       </s-heading>
-                      <form method="post">
+                      <Form method="post">
                         <input type="hidden" name="intent" value="reorder_groups" />
                         <input
                           type="hidden"
                           name="ids"
                           value={JSON.stringify(getReorderedIds(tintAndColorGroups, gIndex, -1))}
                         />
-                        <s-button type="submit" disabled={gIndex === 0 || isSubmitting} onClick={handleFormSubmitClick}>
+                        <s-button
+                          type="submit"
+                          {...((gIndex === 0 || isSubmitting) ? { disabled: true } : {})}
+                          onClick={handleFormSubmitClick}
+                        >
                           Move up
                         </s-button>
-                      </form>
-                      <form method="post">
+                      </Form>
+                      <Form method="post">
                         <input type="hidden" name="intent" value="reorder_groups" />
                         <input
                           type="hidden"
@@ -564,12 +609,12 @@ export default function AdminOptionsRoute() {
                         />
                         <s-button
                           type="submit"
-                          disabled={gIndex === tintAndColorGroups.length - 1 || isSubmitting}
+                          {...((gIndex === tintAndColorGroups.length - 1 || isSubmitting) ? { disabled: true } : {})}
                           onClick={handleFormSubmitClick}
                         >
                           Move down
                         </s-button>
-                      </form>
+                      </Form>
                       <s-button
                         type="button"
                         tone="critical"
@@ -609,37 +654,47 @@ export default function AdminOptionsRoute() {
                               <s-text>Swatch: {val.swatch}</s-text>
                             )}
                             {val.priceDelta.amountMinor === 0 ? (
-                              val.shopifyVariantId ? (
+                              val.shopifyVariantId || val.id === syncFailedId ? (
                                 <s-stack direction="inline" gap="base">
                                   <s-badge tone="critical">Sync failed</s-badge>
-                                  <form method="post">
+                                  <Form method="post">
                                     <input type="hidden" name="intent" value="retry_sync" />
                                     <input type="hidden" name="entity" value="optionValue" />
                                     <input type="hidden" name="id" value={val.id} />
-                                    <s-button type="submit" variant="tertiary" disabled={isSubmitting} onClick={handleFormSubmitClick}>
+                                    <s-button
+                                      type="submit"
+                                      variant="tertiary"
+                                      {...(isSubmitting ? { disabled: true } : {})}
+                                      onClick={handleFormSubmitClick}
+                                    >
                                       Retry
                                     </s-button>
-                                  </form>
+                                  </Form>
                                 </s-stack>
                               ) : (
                                 <s-badge tone="info">Included</s-badge>
                               )
-                            ) : val.shopifyVariantId ? (
+                            ) : val.shopifyVariantId && val.id !== syncFailedId ? (
                               <s-badge tone="success">Synced</s-badge>
                             ) : (
                               <s-stack direction="inline" gap="base">
                                 <s-badge tone="critical">Sync failed</s-badge>
-                                <form method="post">
+                                <Form method="post">
                                   <input type="hidden" name="intent" value="retry_sync" />
                                   <input type="hidden" name="entity" value="optionValue" />
                                   <input type="hidden" name="id" value={val.id} />
-                                  <s-button type="submit" variant="tertiary" disabled={isSubmitting} onClick={handleFormSubmitClick}>
+                                  <s-button
+                                    type="submit"
+                                    variant="tertiary"
+                                    {...(isSubmitting ? { disabled: true } : {})}
+                                    onClick={handleFormSubmitClick}
+                                  >
                                     Retry
                                   </s-button>
-                                </form>
+                                </Form>
                               </s-stack>
                             )}
-                            <form method="post">
+                            <Form method="post">
                               <input type="hidden" name="intent" value="reorder_values" />
                               <input type="hidden" name="optionGroupId" value={group.id} />
                               <input
@@ -647,11 +702,15 @@ export default function AdminOptionsRoute() {
                                 name="ids"
                                 value={JSON.stringify(getReorderedIds(group.values, vIndex, -1))}
                               />
-                              <s-button type="submit" disabled={vIndex === 0 || isSubmitting} onClick={handleFormSubmitClick}>
+                              <s-button
+                                type="submit"
+                                {...((vIndex === 0 || isSubmitting) ? { disabled: true } : {})}
+                                onClick={handleFormSubmitClick}
+                              >
                                 Move up
                               </s-button>
-                            </form>
-                            <form method="post">
+                            </Form>
+                            <Form method="post">
                               <input type="hidden" name="intent" value="reorder_values" />
                               <input type="hidden" name="optionGroupId" value={group.id} />
                               <input
@@ -661,12 +720,12 @@ export default function AdminOptionsRoute() {
                               />
                               <s-button
                                 type="submit"
-                                disabled={vIndex === group.values.length - 1 || isSubmitting}
+                                {...((vIndex === group.values.length - 1 || isSubmitting) ? { disabled: true } : {})}
                                 onClick={handleFormSubmitClick}
                               >
                                 Move down
                               </s-button>
-                            </form>
+                            </Form>
                             <s-link href={`/app/options/${val.id}`}>Edit</s-link>
                             <s-button
                               type="button"
@@ -719,33 +778,42 @@ export default function AdminOptionsRoute() {
                         false,
                       )}
                     </s-text>
-                    {addOn.shopifyVariantId ? (
+                    {addOn.shopifyVariantId && addOn.id !== syncFailedId ? (
                       <s-badge tone="success">Synced</s-badge>
                     ) : (
                       <s-stack direction="inline" gap="base">
                         <s-badge tone="critical">Sync failed</s-badge>
-                        <form method="post">
+                        <Form method="post">
                           <input type="hidden" name="intent" value="retry_sync" />
                           <input type="hidden" name="entity" value="addOn" />
                           <input type="hidden" name="id" value={addOn.id} />
-                          <s-button type="submit" variant="tertiary" disabled={isSubmitting} onClick={handleFormSubmitClick}>
+                          <s-button
+                            type="submit"
+                            variant="tertiary"
+                            {...(isSubmitting ? { disabled: true } : {})}
+                            onClick={handleFormSubmitClick}
+                          >
                             Retry
                           </s-button>
-                        </form>
+                        </Form>
                       </s-stack>
                     )}
-                    <form method="post">
+                    <Form method="post">
                       <input type="hidden" name="intent" value="reorder_add_ons" />
                       <input
                         type="hidden"
                         name="ids"
                         value={JSON.stringify(getReorderedIds(addOns, aIndex, -1))}
                       />
-                      <s-button type="submit" disabled={aIndex === 0 || isSubmitting} onClick={handleFormSubmitClick}>
+                      <s-button
+                        type="submit"
+                        {...((aIndex === 0 || isSubmitting) ? { disabled: true } : {})}
+                        onClick={handleFormSubmitClick}
+                      >
                         Move up
                       </s-button>
-                    </form>
-                    <form method="post">
+                    </Form>
+                    <Form method="post">
                       <input type="hidden" name="intent" value="reorder_add_ons" />
                       <input
                         type="hidden"
@@ -754,12 +822,12 @@ export default function AdminOptionsRoute() {
                       />
                       <s-button
                         type="submit"
-                        disabled={aIndex === addOns.length - 1 || isSubmitting}
+                        {...((aIndex === addOns.length - 1 || isSubmitting) ? { disabled: true } : {})}
                         onClick={handleFormSubmitClick}
                       >
                         Move down
                       </s-button>
-                    </form>
+                    </Form>
                     <s-link href={`/app/add-ons/${addOn.id}`}>Edit</s-link>
                     <s-button
                       type="button"
@@ -785,7 +853,7 @@ export default function AdminOptionsRoute() {
 
       {/* Modal for creating a new option group */}
       <s-modal id="add-option-group-modal" ref={addModalRef} heading="Add option group">
-        <form method="post" onSubmit={hideAddModal}>
+        <Form method="post" onSubmit={hideAddModal}>
           <input type="hidden" name="intent" value="create_group" />
           <s-stack direction="block" gap="base">
             <s-text-field
@@ -816,18 +884,22 @@ export default function AdminOptionsRoute() {
               <s-button
                 type="submit"
                 variant="primary"
-                loading={isSubmitting}
-                disabled={isSubmitting}
+                {...(isSubmitting ? { loading: true } : {})}
+                {...(isSubmitting ? { disabled: true } : {})}
                 onClick={handleFormSubmitClick}
               >
                 Create group
               </s-button>
-              <s-button type="button" onClick={hideAddModal} disabled={isSubmitting}>
+              <s-button
+                type="button"
+                onClick={hideAddModal}
+                {...(isSubmitting ? { disabled: true } : {})}
+              >
                 Cancel
               </s-button>
             </s-stack>
           </s-stack>
-        </form>
+        </Form>
       </s-modal>
 
       {/* Modal for confirming deletion */}
@@ -835,7 +907,7 @@ export default function AdminOptionsRoute() {
         <s-paragraph>
           Are you sure you want to delete {deleteTarget?.name}?
         </s-paragraph>
-        <form method="post" onSubmit={hideDeleteModal}>
+        <Form method="post" onSubmit={hideDeleteModal}>
           <input
             type="hidden"
             name="intent"
@@ -857,17 +929,21 @@ export default function AdminOptionsRoute() {
               type="submit"
               variant="primary"
               tone="critical"
-              loading={isSubmitting}
-              disabled={isSubmitting}
+              {...(isSubmitting ? { loading: true } : {})}
+              {...(isSubmitting ? { disabled: true } : {})}
               onClick={handleFormSubmitClick}
             >
               Confirm delete
             </s-button>
-            <s-button type="button" onClick={hideDeleteModal} disabled={isSubmitting}>
+            <s-button
+              type="button"
+              onClick={hideDeleteModal}
+              {...(isSubmitting ? { disabled: true } : {})}
+            >
               Cancel
             </s-button>
           </s-stack>
-        </form>
+        </Form>
       </s-modal>
     </s-page>
   );
