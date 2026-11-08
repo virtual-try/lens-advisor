@@ -10,17 +10,17 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | 01 | [App scaffold, workspace and unit harness](./01-scaffold.md) | Done | 00 | Heavy | — | PR #5 |
 | 02 | [Database schema and first migration](./02-database-schema.md) | Done | 01 | Heavy | — | PR #16 |
 | 03 | [rx-core domain types and schemas](./03-rx-core-contracts.md) | Done | 01 | Heavy | — | PR #14 |
-| 04 | [Configurator package, tokens and theme app block](./04-configurator-package-and-tokens.md) | Not started | 01 | Heavy | — |  |
+| 04 | [Configurator package, tokens and theme app block](./04-configurator-package-and-tokens.md) | Done | 01 | Heavy | — | PR #22 |
 | 05 | [Field encryption for prescription data](./05-field-encryption.md) | Done | 01 | Heavy | — | PR #24 |
 | 06 | [S3 storage adapter](./06-s3-storage.md) | Done | 01 | Standard | — | PR #9 |
 | 07 | [Mailer adapter (Resend)](./07-mailer.md) | Done | 01 | Light | — | PR #35 |
-| 08 | [Job queue and worker process (pg-boss)](./08-job-queue.md) | Not started | 01 | Standard | — |  |
+| 08 | [Job queue and worker process (pg-boss)](./08-job-queue.md) | Done | 01 | Standard | — | PR #17 |
 | 09 | [Plan gate (Shopify managed pricing)](./09-plan-gate.md) | Done | 01 | Standard | — | PR #15 |
 | 10 | [Rx parser and validation](./10-rx-parser-validation.md) | Done | 03 | Standard | — | PR #19 |
 | 11 | [Rx limits engine](./11-rx-limits-engine.md) | Done | 03 | Standard | — | PR #23 |
 | 12 | [Lab code compiler](./12-lab-code-compiler.md) | Done | 03 | Standard | — | PR #28 |
 | 13 | [Price calculation](./13-pricing.md) | Done | 03 | Standard | — | PR #30 |
-| 14 | [Catalog repository and service](./14-catalog-service.md) | Not started | 02, 03 | Standard | — |  |
+| 14 | [Catalog repository and service](./14-catalog-service.md) | Done | 02, 03 | Standard | — | PR #31 |
 | 15 | [Shop settings repository and service](./15-shop-settings-service.md) | Done | 02, 03 | Standard | — | PR #32 |
 | 16 | [Configurator shell, state machine and API client](./16-configurator-shell.md) | Not started | 03, 04 | Heavy | — |  |
 | 17 | [Shopify product sync for lenses, options and add-ons](./17-shopify-product-sync.md) | Not started | 13, 14 | Standard | — |  |
@@ -74,3 +74,6 @@ Not started · In progress · Blocked · Done
 - **2026-11-07** — Spec 05 merged (PR #24).
 - **2026-11-07** — Spec 07 merged (PR #35).
 - **2026-11-08** — Spec 12 merged (PR #28).
+- **2026-11-08** — Spec 04 merged (PR #22, merged by the owner on GitHub after the commit-author refusal).
+- **2026-11-08** — Spec 14 merged (PR #31).
+- **2026-11-08** — Spec 08 merged (PR #17).

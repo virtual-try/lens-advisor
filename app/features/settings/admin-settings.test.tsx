@@ -1189,4 +1189,377 @@ describe("Spec 20 — Admin Settings Component (UI)", () => {
     expect(toggle?.checked).toBe(false);
     expect(modal.showOverlay).toHaveBeenCalledTimes(2);
   });
+
+  it("dismissing privacy modal with Escape resets toggle.checked to false and subsequent Save submits false (R4-F1)", async () => {
+    const shopDomain = "privacy-escape.myshopify.com";
+    const shopId = await createShop(shopDomain);
+    mocks.currentShop = shopDomain;
+
+    const requestSubmitSpy = vi.spyOn(HTMLFormElement.prototype, "requestSubmit");
+    const fetcherSubmitSpy = vi.fn();
+
+    vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+      ...defaultLoaderData,
+      settings: {
+        ...defaultLoaderData.settings,
+        storeRxInOrder: false,
+      },
+    });
+    vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+      data: undefined,
+      state: "idle",
+      Form: ({
+        children,
+        onSubmit,
+        ...props
+      }: React.PropsWithChildren<
+        React.FormHTMLAttributes<HTMLFormElement>
+      >) => (
+        <form
+          {...props}
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit?.(e);
+            const formData = new FormData(e.currentTarget);
+            fetcherSubmitSpy(formData);
+          }}
+        >
+          {children}
+        </form>
+      ),
+      submit: fetcherSubmitSpy,
+      load: vi.fn(),
+    } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+    const { container } = render(<SettingsRoute />);
+
+    const confirmModal = container.querySelector(
+      "#privacy-confirm-modal",
+    ) as HTMLElement & {
+      showOverlay: ReturnType<typeof vi.fn>;
+      hideOverlay: ReturnType<typeof vi.fn>;
+    };
+    expect(confirmModal).not.toBeNull();
+    confirmModal.showOverlay = vi.fn();
+    confirmModal.hideOverlay = vi.fn();
+
+    const toggle = container.querySelector(
+      's-checkbox[name="storeRxInOrderCheckbox"]',
+    ) as (HTMLElement & { checked: boolean }) | null;
+    expect(toggle).not.toBeNull();
+    expect(toggle?.checked).toBe(false);
+
+    const hiddenStoreInput = container.querySelector(
+      'input[name="storeRxInOrder"]',
+    ) as HTMLInputElement | null;
+    const hiddenConfirmInput = container.querySelector(
+      'input[name="confirmStoreRxInOrder"]',
+    ) as HTMLInputElement | null;
+    expect(hiddenStoreInput?.value).toBe("false");
+    expect(hiddenConfirmInput?.value).toBe("false");
+
+    // 1. User changes the checkbox to true -> modal opens, toggle is checked
+    fireEvent.input(toggle!, {
+      target: { checked: true },
+      currentTarget: { checked: true },
+    });
+    expect(confirmModal.showOverlay).toHaveBeenCalledTimes(1);
+    expect(toggle?.checked).toBe(true);
+
+    // 2. User dismisses via Escape: modal emits hide event without confirmation
+    fireEvent.keyDown(confirmModal, { key: "Escape" });
+    fireEvent(confirmModal, new CustomEvent("hide"));
+
+    // Toggle property must be reset to off
+    expect(toggle?.checked).toBe(false);
+    expect(hiddenStoreInput?.value).toBe("false");
+    expect(hiddenConfirmInput?.value).toBe("false");
+
+    // 3. User clicks Save -> submits false, action writes false to db
+    const saveBtn = screen.getByText("Save");
+    fireEvent.click(saveBtn);
+
+    expect(requestSubmitSpy).toHaveBeenCalled();
+    expect(fetcherSubmitSpy).toHaveBeenCalledTimes(1);
+
+    const submittedFormData = fetcherSubmitSpy.mock.calls[0][0] as FormData;
+    expect(submittedFormData.get("storeRxInOrder")).toBe("false");
+    expect(submittedFormData.get("confirmStoreRxInOrder")).toBe("false");
+
+    const postRequest = new Request("https://app.test/app/settings", {
+      method: "POST",
+      body: submittedFormData,
+    });
+    const actionResult = await action(createActionArgs(postRequest));
+    const { status, data: result } = await unwrapResponse<{
+      ok: boolean;
+      settings?: { storeRxInOrder: boolean };
+    }>(actionResult);
+
+    expect(status).toBe(200);
+    expect(result.ok).toBe(true);
+    expect(result.settings?.storeRxInOrder).toBe(false);
+
+    const savedInDb = await getSettings(shopId, getTestPrisma());
+    expect(savedInDb.storeRxInOrder).toBe(false);
+  });
+
+  it("dismissing privacy modal with backdrop click resets toggle.checked to false and subsequent Save submits false (R4-F1)", async () => {
+    const shopDomain = "privacy-backdrop.myshopify.com";
+    const shopId = await createShop(shopDomain);
+    mocks.currentShop = shopDomain;
+
+    const requestSubmitSpy = vi.spyOn(HTMLFormElement.prototype, "requestSubmit");
+    const fetcherSubmitSpy = vi.fn();
+
+    vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+      ...defaultLoaderData,
+      settings: {
+        ...defaultLoaderData.settings,
+        storeRxInOrder: false,
+      },
+    });
+    vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+      data: undefined,
+      state: "idle",
+      Form: ({
+        children,
+        onSubmit,
+        ...props
+      }: React.PropsWithChildren<
+        React.FormHTMLAttributes<HTMLFormElement>
+      >) => (
+        <form
+          {...props}
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit?.(e);
+            const formData = new FormData(e.currentTarget);
+            fetcherSubmitSpy(formData);
+          }}
+        >
+          {children}
+        </form>
+      ),
+      submit: fetcherSubmitSpy,
+      load: vi.fn(),
+    } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+    const { container } = render(<SettingsRoute />);
+
+    const confirmModal = container.querySelector(
+      "#privacy-confirm-modal",
+    ) as HTMLElement & {
+      showOverlay: ReturnType<typeof vi.fn>;
+      hideOverlay: ReturnType<typeof vi.fn>;
+    };
+    expect(confirmModal).not.toBeNull();
+    confirmModal.showOverlay = vi.fn();
+    confirmModal.hideOverlay = vi.fn();
+
+    const toggle = container.querySelector(
+      's-checkbox[name="storeRxInOrderCheckbox"]',
+    ) as (HTMLElement & { checked: boolean }) | null;
+    expect(toggle).not.toBeNull();
+    expect(toggle?.checked).toBe(false);
+
+    const hiddenStoreInput = container.querySelector(
+      'input[name="storeRxInOrder"]',
+    ) as HTMLInputElement | null;
+    const hiddenConfirmInput = container.querySelector(
+      'input[name="confirmStoreRxInOrder"]',
+    ) as HTMLInputElement | null;
+
+    // 1. User changes the checkbox to true -> modal opens, toggle is checked
+    fireEvent.input(toggle!, {
+      target: { checked: true },
+      currentTarget: { checked: true },
+    });
+    expect(confirmModal.showOverlay).toHaveBeenCalledTimes(1);
+    expect(toggle?.checked).toBe(true);
+
+    // 2. User dismisses via backdrop: modal emits hide event without confirmation
+    fireEvent.click(confirmModal);
+    fireEvent(confirmModal, new CustomEvent("hide"));
+
+    // Toggle property must be reset to off
+    expect(toggle?.checked).toBe(false);
+    expect(hiddenStoreInput?.value).toBe("false");
+    expect(hiddenConfirmInput?.value).toBe("false");
+
+    // 3. User clicks Save -> submits false, action writes false to db
+    const saveBtn = screen.getByText("Save");
+    fireEvent.click(saveBtn);
+
+    expect(requestSubmitSpy).toHaveBeenCalled();
+    expect(fetcherSubmitSpy).toHaveBeenCalledTimes(1);
+
+    const submittedFormData = fetcherSubmitSpy.mock.calls[0][0] as FormData;
+    expect(submittedFormData.get("storeRxInOrder")).toBe("false");
+    expect(submittedFormData.get("confirmStoreRxInOrder")).toBe("false");
+
+    const postRequest = new Request("https://app.test/app/settings", {
+      method: "POST",
+      body: submittedFormData,
+    });
+    const actionResult = await action(createActionArgs(postRequest));
+    const { status, data: result } = await unwrapResponse<{
+      ok: boolean;
+      settings?: { storeRxInOrder: boolean };
+    }>(actionResult);
+
+    expect(status).toBe(200);
+    expect(result.ok).toBe(true);
+    expect(result.settings?.storeRxInOrder).toBe(false);
+
+    const savedInDb = await getSettings(shopId, getTestPrisma());
+    expect(savedInDb.storeRxInOrder).toBe(false);
+  });
+
+  it("modal hide event: any dismissal that is not Confirm (Escape, backdrop, Cancel) resets toggle property to off; only Confirm keeps it on (R4-F1)", async () => {
+    const shopDomain = "privacy-all-dismissals.myshopify.com";
+    const shopId = await createShop(shopDomain);
+    mocks.currentShop = shopDomain;
+
+    const requestSubmitSpy = vi.spyOn(HTMLFormElement.prototype, "requestSubmit");
+    const fetcherSubmitSpy = vi.fn();
+
+    vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+      ...defaultLoaderData,
+      settings: {
+        ...defaultLoaderData.settings,
+        storeRxInOrder: false,
+      },
+    });
+    vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+      data: undefined,
+      state: "idle",
+      Form: ({
+        children,
+        onSubmit,
+        ...props
+      }: React.PropsWithChildren<
+        React.FormHTMLAttributes<HTMLFormElement>
+      >) => (
+        <form
+          {...props}
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit?.(e);
+            const formData = new FormData(e.currentTarget);
+            fetcherSubmitSpy(formData);
+          }}
+        >
+          {children}
+        </form>
+      ),
+      submit: fetcherSubmitSpy,
+      load: vi.fn(),
+    } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+    const { container } = render(<SettingsRoute />);
+
+    const confirmModal = container.querySelector(
+      "#privacy-confirm-modal",
+    ) as HTMLElement & {
+      showOverlay: ReturnType<typeof vi.fn>;
+      hideOverlay: ReturnType<typeof vi.fn>;
+    };
+    expect(confirmModal).not.toBeNull();
+    confirmModal.showOverlay = vi.fn();
+    confirmModal.hideOverlay = vi.fn();
+
+    const toggle = container.querySelector(
+      's-checkbox[name="storeRxInOrderCheckbox"]',
+    ) as (HTMLElement & { checked: boolean }) | null;
+    expect(toggle).not.toBeNull();
+    expect(toggle?.checked).toBe(false);
+
+    const hiddenStoreInput = container.querySelector(
+      'input[name="storeRxInOrder"]',
+    ) as HTMLInputElement | null;
+    const hiddenConfirmInput = container.querySelector(
+      'input[name="confirmStoreRxInOrder"]',
+    ) as HTMLInputElement | null;
+
+    // --- 1. Dismissal via Escape resets toggle to off ---
+    fireEvent.input(toggle!, {
+      target: { checked: true },
+      currentTarget: { checked: true },
+    });
+    expect(toggle?.checked).toBe(true);
+
+    fireEvent.keyDown(confirmModal, { key: "Escape" });
+    fireEvent(confirmModal, new CustomEvent("hide"));
+    expect(toggle?.checked).toBe(false);
+    expect(hiddenStoreInput?.value).toBe("false");
+    expect(hiddenConfirmInput?.value).toBe("false");
+
+    // --- 2. Dismissal via backdrop resets toggle to off ---
+    fireEvent.input(toggle!, {
+      target: { checked: true },
+      currentTarget: { checked: true },
+    });
+    expect(toggle?.checked).toBe(true);
+
+    fireEvent.click(confirmModal);
+    fireEvent(confirmModal, new CustomEvent("hide"));
+    expect(toggle?.checked).toBe(false);
+    expect(hiddenStoreInput?.value).toBe("false");
+    expect(hiddenConfirmInput?.value).toBe("false");
+
+    // --- 3. Dismissal via Cancel button resets toggle to off ---
+    fireEvent.input(toggle!, {
+      target: { checked: true },
+      currentTarget: { checked: true },
+    });
+    expect(toggle?.checked).toBe(true);
+
+    const cancelBtn = screen.getByText("Cancel");
+    fireEvent.click(cancelBtn);
+    fireEvent(confirmModal, new CustomEvent("hide"));
+    expect(toggle?.checked).toBe(false);
+    expect(hiddenStoreInput?.value).toBe("false");
+    expect(hiddenConfirmInput?.value).toBe("false");
+
+    // --- 4. Only Confirm keeps it on ---
+    fireEvent.input(toggle!, {
+      target: { checked: true },
+      currentTarget: { checked: true },
+    });
+    expect(toggle?.checked).toBe(true);
+
+    const confirmBtn = screen.getByText("Confirm");
+    fireEvent.click(confirmBtn);
+    fireEvent(confirmModal, new CustomEvent("hide"));
+    expect(toggle?.checked).toBe(true);
+    expect(hiddenStoreInput?.value).toBe("true");
+    expect(hiddenConfirmInput?.value).toBe("true");
+
+    // Save submits true
+    const saveBtn = screen.getByText("Save");
+    fireEvent.click(saveBtn);
+
+    expect(requestSubmitSpy).toHaveBeenCalled();
+    const submittedFormData = fetcherSubmitSpy.mock.calls[0][0] as FormData;
+    expect(submittedFormData.get("storeRxInOrder")).toBe("true");
+    expect(submittedFormData.get("confirmStoreRxInOrder")).toBe("true");
+
+    const postRequest = new Request("https://app.test/app/settings", {
+      method: "POST",
+      body: submittedFormData,
+    });
+    const actionResult = await action(createActionArgs(postRequest));
+    const { status, data: result } = await unwrapResponse<{
+      ok: boolean;
+      settings?: { storeRxInOrder: boolean };
+    }>(actionResult);
+
+    expect(status).toBe(200);
+    expect(result.ok).toBe(true);
+    expect(result.settings?.storeRxInOrder).toBe(true);
+
+    const savedInDb = await getSettings(shopId, getTestPrisma());
+    expect(savedInDb.storeRxInOrder).toBe(true);
+  });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
   ActionFunctionArgs,
   HeadersFunction,
@@ -395,6 +395,57 @@ export default function SettingsRoute() {
         f.path === "storeRxInOrder" && f.code === "CONFIRMATION_REQUIRED",
     ) || actionError?.code === "CONFIRMATION_REQUIRED";
 
+  const isConfirmedRef = useRef(false);
+
+  const handleModalHide = useCallback(() => {
+    if (!isConfirmedRef.current) {
+      setStoreRxInOrder(false);
+      setPrivacyConfirmed(false);
+      if (storeRxRef.current) {
+        storeRxRef.current.checked = false;
+      }
+    }
+    isConfirmedRef.current = false;
+  }, [storeRxRef]);
+
+  useEffect(() => {
+    const modal = modalRef.current;
+    if (!modal) return;
+
+    (modal as unknown as Record<string, unknown>).onHide = handleModalHide;
+
+    const onHideListener = () => {
+      handleModalHide();
+    };
+
+    const onKeyDownListener = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        handleModalHide();
+      }
+    };
+
+    const onClickListener = (e: MouseEvent) => {
+      if (e.target === modal) {
+        handleModalHide();
+      }
+    };
+
+    modal.addEventListener("hide", onHideListener);
+    modal.addEventListener("keydown", onKeyDownListener);
+    modal.addEventListener("click", onClickListener);
+
+    return () => {
+      modal.removeEventListener("hide", onHideListener);
+      modal.removeEventListener("keydown", onKeyDownListener);
+      modal.removeEventListener("click", onClickListener);
+      if (
+        (modal as unknown as Record<string, unknown>).onHide === handleModalHide
+      ) {
+        (modal as unknown as Record<string, unknown>).onHide = undefined;
+      }
+    };
+  }, [handleModalHide]);
+
   const showModal = () => {
     modalRef.current?.showOverlay?.();
   };
@@ -405,6 +456,7 @@ export default function SettingsRoute() {
 
   const handlePrivacyToggleChange = (checked: boolean) => {
     if (checked) {
+      isConfirmedRef.current = false;
       showModal();
     } else {
       setStoreRxInOrder(false);
@@ -416,6 +468,7 @@ export default function SettingsRoute() {
   };
 
   const handleConfirmPrivacy = () => {
+    isConfirmedRef.current = true;
     setStoreRxInOrder(true);
     setPrivacyConfirmed(true);
     if (storeRxRef.current) {
@@ -425,6 +478,7 @@ export default function SettingsRoute() {
   };
 
   const handleCancelPrivacy = () => {
+    isConfirmedRef.current = false;
     setStoreRxInOrder(false);
     setPrivacyConfirmed(false);
     if (storeRxRef.current) {
@@ -642,6 +696,7 @@ export default function SettingsRoute() {
         id="privacy-confirm-modal"
         ref={modalRef}
         heading="Confirm saving prescription values in orders"
+        onHide={handleModalHide}
       >
         <s-paragraph>
           Shopify order properties are visible to every staff account with order
