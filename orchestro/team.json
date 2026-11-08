@@ -76,6 +76,42 @@
       "tier": "Heavy",
       "account": "grok",
       "effort": "high"
+    },
+    "agy-1": {
+      "engine": "agy",
+      "model": "gemini-3.8-flash-high",
+      "tier": "Standard",
+      "account": "agy-1"
+    },
+    "agy-2": {
+      "engine": "agy",
+      "model": "gemini-3.8-flash-high",
+      "tier": "Standard",
+      "account": "agy-2"
+    },
+    "agy-5": {
+      "engine": "agy",
+      "model": "gemini-3.8-flash-high",
+      "tier": "Standard",
+      "account": "agy-5"
+    },
+    "agy-6": {
+      "engine": "agy",
+      "model": "gemini-3.8-flash-high",
+      "tier": "Standard",
+      "account": "agy-6"
+    },
+    "agy-7": {
+      "engine": "agy",
+      "model": "gemini-3.8-flash-high",
+      "tier": "Standard",
+      "account": "agy-7"
+    },
+    "agy-8": {
+      "engine": "agy",
+      "model": "gemini-3.8-flash-high",
+      "tier": "Standard",
+      "account": "agy-8"
     }
   },
   "reviewers": {
@@ -98,6 +134,16 @@
   },
   "accounts": [
     {
+      "id": "agy-1",
+      "engine": "agy",
+      "launcherCommand": "agy-1"
+    },
+    {
+      "id": "agy-2",
+      "engine": "agy",
+      "launcherCommand": "agy-2"
+    },
+    {
       "id": "agy-3",
       "engine": "agy",
       "launcherCommand": "agy-3"
@@ -106,6 +152,31 @@
       "id": "agy-4",
       "engine": "agy",
       "launcherCommand": "agy-4"
+    },
+    {
+      "id": "agy-5",
+      "engine": "agy",
+      "launcherCommand": "agy-5"
+    },
+    {
+      "id": "agy-6",
+      "engine": "agy",
+      "launcherCommand": "agy-6"
+    },
+    {
+      "id": "agy-7",
+      "engine": "agy",
+      "launcherCommand": "agy-7"
+    },
+    {
+      "id": "agy-8",
+      "engine": "agy",
+      "launcherCommand": "agy-8"
+    },
+    {
+      "id": "codex-1",
+      "engine": "codex",
+      "launcherCommand": "codex-1"
     },
     {
       "id": "opencode-1",
@@ -146,11 +217,6 @@
       "id": "opencode-8",
       "engine": "opencode",
       "launcherCommand": "opencode-8"
-    },
-    {
-      "id": "codex-1",
-      "engine": "codex",
-      "launcherCommand": "codex-1"
     }
   ],
   "policy": {
@@ -163,5 +229,5 @@
       "product questions"
     ]
   },
-  "_note": "Coders: agy-3, agy-4, opencode, opencode-1..8. QA: grok, codex, codex-1. astra and terra banned on codex. GitHub via gh account mplus-s (https)."
+  "_note": "Coders: agy-1..8, grok (Heavy: agy-3, grok), opencode, opencode-1..8. Reviewers: codex, codex-1. astra and terra banned on codex. GitHub via gh account mplus-s (https)."
 }

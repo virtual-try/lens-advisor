@@ -84,4 +84,4 @@ Real, used now: pg-boss on `TEST_DATABASE_URL` in tests. Stubbed: none. Consumer
     - Sabotage INV-8 dedupe policy (`"exclusive"` switched to `"standard"`): singleton test failed with non-null duplicate enqueue (red), restored.
   - Documented reusable interfaces in `specs/inventory/08-job-queue.md` (`getQueue`, `defineJob`, jobs discovery contract).
   - Gates: `pnpm typecheck` passed (0 errors); `pnpm lint` passed (0 errors, 0 warnings); `pnpm vitest run app/shared/queue app/worker.server.test.ts` passed (4 files, 15 tests); `pnpm test` passed (9 files, 38 tests, 0 failures); `pnpm build` passed.
-- **2026-11-08** — Evidence (orchestro spec verify, tree 9ba21ab6): install pass · typecheck pass · lint pass · build pass · test pass 70/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 149292bf): install pass · typecheck pass · lint pass · build pass · test pass 74/0/0

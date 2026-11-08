@@ -531,4 +531,138 @@ describe("Queue on a real Postgres", () => {
       );
     });
   });
+
+  it("rejects payloads with inherited keys constructor, toString, and __proto__ carrying 'SPH -2.25' on enqueue and receive (R7-F1)", async () => {
+    await withTestQueue(async (queue) => {
+      const name = jobName("inherited-keys-inv2");
+      let handlerCalled = false;
+      const definition = defineJob({
+        name,
+        schema: z.object({ orderId: z.string() }),
+        retry: { retryLimit: 0, retryDelay: 0 },
+        handler: () => {
+          handlerCalled = true;
+        },
+      });
+      await queue.register(definition);
+
+      const inheritedKeys = ["constructor", "toString", "__proto__"] as const;
+
+      // 1. Enqueue path:
+      for (const key of inheritedKeys) {
+        let enqueueError: unknown;
+        try {
+          await queue.enqueue(
+            name,
+            JSON.parse(`{"orderId": "ord-${key}", "${key}": "SPH -2.25"}`),
+            { singletonKey: `enq-${key}` }
+          );
+        } catch (error) {
+          enqueueError = error;
+        }
+
+        expect(enqueueError, `Expected enqueue with ${key} to fail`).toBeInstanceOf(
+          JobPayloadValidationError
+        );
+        const enqErr = enqueueError as JobPayloadValidationError;
+        expect(enqErr.jobName).toBe(name);
+        expect(enqErr.issues).toEqual([{ path: [], code: "unrecognized_keys" }]);
+        expect(enqErr.message).toContain(name);
+        expect(enqErr.message).toContain("unrecognized_keys");
+        expect(enqErr.message).not.toContain("SPH -2.25");
+        expect(enqErr.cause).toBeUndefined();
+        expect(enqErr.stack).not.toContain("SPH -2.25");
+        expect(JSON.stringify(enqErr)).not.toContain("SPH -2.25");
+      }
+      expect(await queue.findJobs(name)).toHaveLength(0);
+
+      // 2. Receive path:
+      await queue.work(definition);
+      for (const key of inheritedKeys) {
+        await enqueueTestRaw(
+          queue,
+          name,
+          JSON.parse(`{"orderId": "ord-raw-${key}", "${key}": "SPH -2.25"}`),
+          { singletonKey: `raw-${key}` }
+        );
+      }
+
+      const deadLetters = await waitFor(
+        async () => {
+          const dl = await queue.findJobs(`${name}.dead`);
+          return dl.length === inheritedKeys.length ? dl : undefined;
+        },
+        (dl) => dl.length === inheritedKeys.length
+      );
+
+      expect(handlerCalled).toBe(false);
+      expect(deadLetters).toHaveLength(inheritedKeys.length);
+      for (const deadLetter of deadLetters) {
+        expect(deadLetter.sourceName).toBe(name);
+      }
+
+      const jobs = await queue.findJobs(name);
+      const failedJobs = jobs.filter((j) => j.state === "failed");
+      expect(failedJobs).toHaveLength(inheritedKeys.length);
+      for (const failedJob of failedJobs) {
+        const failureJson = JSON.stringify(failedJob.output);
+        expect(failureJson).not.toContain("SPH -2.25");
+        expect(failureJson).toContain(name);
+        expect(failureJson).toContain("unrecognized_keys");
+      }
+    });
+  });
+
+  it("rejects non-finite number values (Infinity, NaN) on enqueue (R7-F2)", async () => {
+    await withTestQueue(async (queue) => {
+      const name = jobName("non-finite-enqueue");
+      const definition = defineJob({
+        name,
+        schema: z.object({ orderId: z.number() }),
+        handler: () => undefined,
+      });
+      await queue.register(definition);
+
+      // 1. Infinity fails on enqueue
+      let infinityError: unknown;
+      try {
+        await queue.enqueue(name, { orderId: Infinity }, { singletonKey: "inf-1" });
+      } catch (error) {
+        infinityError = error;
+      }
+      expect(infinityError).toBeInstanceOf(JobPayloadValidationError);
+      const infErr = infinityError as JobPayloadValidationError;
+      expect(infErr.jobName).toBe(name);
+      expect(infErr.issues).toEqual([{ path: ["orderId"], code: "not_finite" }]);
+      expect(infErr.message).toContain("orderId: not_finite");
+      expect(infErr.cause).toBeUndefined();
+
+      // 2. NaN fails on enqueue
+      let nanError: unknown;
+      try {
+        await queue.enqueue(name, { orderId: NaN }, { singletonKey: "nan-1" });
+      } catch (error) {
+        nanError = error;
+      }
+      expect(nanError).toBeInstanceOf(JobPayloadValidationError);
+      const nErr = nanError as JobPayloadValidationError;
+      expect(nErr.jobName).toBe(name);
+      expect(nErr.issues).toEqual([{ path: ["orderId"], code: "invalid_type" }]);
+      expect(nErr.message).toContain("orderId: invalid_type");
+      expect(nErr.cause).toBeUndefined();
+
+      // 3. -Infinity fails on enqueue
+      await expect(
+        queue.enqueue(name, { orderId: -Infinity }, { singletonKey: "neg-inf-1" })
+      ).rejects.toBeInstanceOf(JobPayloadValidationError);
+
+      // No invalid jobs were enqueued
+      expect(await queue.findJobs(name)).toHaveLength(0);
+
+      // 4. Valid finite number succeeds on enqueue
+      const jobId = await queue.enqueue(name, { orderId: 42 }, { singletonKey: "valid-1" });
+      expect(jobId).toEqual(expect.any(String));
+      expect(await queue.findJobs(name)).toHaveLength(1);
+    });
+  });
 });

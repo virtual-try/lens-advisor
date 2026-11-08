@@ -425,7 +425,11 @@ export function validateJobPayload(
   payload: unknown
 ): unknown {
   const issues: SanitizedValidationIssue[] = [];
-  const result = definition.schema.safeParse(payload);
+  const schemaToParse =
+    definition.schema instanceof z.ZodObject
+      ? definition.schema.strict()
+      : definition.schema;
+  const result = schemaToParse.safeParse(payload);
   if (!result.success) {
     for (const issue of result.error.issues) {
       issues.push({
@@ -436,6 +440,7 @@ export function validateJobPayload(
   }
 
   collectUnknownKeys(definition.schema, payload, [], issues);
+  collectNonFiniteNumbers(definition.schema, payload, [], issues);
 
   if (issues.length > 0) {
     const seen = new Set<string>();
@@ -493,10 +498,13 @@ function collectUnknownKeys(
     const record = value as Record<string, unknown>;
     let hasUnrecognized = false;
     for (const key of Object.keys(record)) {
-      if (!(key in schema.shape)) {
+      if (!Object.hasOwn(schema.shape, key)) {
         hasUnrecognized = true;
         break;
       }
+    }
+    if (!hasUnrecognized && Object.hasOwn(record, "__proto__") && !Object.hasOwn(schema.shape, "__proto__")) {
+      hasUnrecognized = true;
     }
     if (hasUnrecognized) {
       issues.push({ path, code: "unrecognized_keys" });
@@ -541,6 +549,78 @@ function collectUnknownKeys(
     const branch = schema.optionsMap.get(discValue as string);
     if (branch) {
       collectUnknownKeys(branch, value, path, issues);
+    }
+    return;
+  }
+}
+
+function collectNonFiniteNumbers(
+  schema: z.ZodTypeAny,
+  value: unknown,
+  path: readonly (string | number)[],
+  issues: SanitizedValidationIssue[]
+): void {
+  if (value === undefined || value === null) return;
+
+  if (schema instanceof z.ZodOptional) {
+    collectNonFiniteNumbers(schema.unwrap(), value, path, issues);
+    return;
+  }
+  if (schema instanceof z.ZodNullable) {
+    collectNonFiniteNumbers(schema.unwrap(), value, path, issues);
+    return;
+  }
+  if (schema instanceof z.ZodDefault) {
+    collectNonFiniteNumbers(schema.removeDefault(), value, path, issues);
+    return;
+  }
+  if (schema instanceof z.ZodBranded || schema instanceof z.ZodReadonly) {
+    collectNonFiniteNumbers(schema.unwrap(), value, path, issues);
+    return;
+  }
+
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    issues.push({
+      path,
+      code: Number.isNaN(value) ? "invalid_type" : "not_finite",
+    });
+    return;
+  }
+
+  if (schema instanceof z.ZodObject) {
+    if (typeof value !== "object" || Array.isArray(value)) return;
+    const record = value as Record<string, unknown>;
+    for (const [key, child] of Object.entries(schema.shape)) {
+      if (Object.hasOwn(record, key)) {
+        collectNonFiniteNumbers(child as z.ZodTypeAny, record[key], [...path, key], issues);
+      }
+    }
+    return;
+  }
+
+  if (schema instanceof z.ZodArray) {
+    if (!Array.isArray(value)) return;
+    value.forEach((item, index) => {
+      collectNonFiniteNumbers(schema.element as z.ZodTypeAny, item, [...path, index], issues);
+    });
+    return;
+  }
+
+  if (schema instanceof z.ZodTuple) {
+    if (!Array.isArray(value)) return;
+    schema.items.forEach((item: z.ZodTypeAny, index: number) => {
+      collectNonFiniteNumbers(item, value[index], [...path, index], issues);
+    });
+    return;
+  }
+
+  if (schema instanceof z.ZodDiscriminatedUnion) {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return;
+    const discKey = schema.discriminator;
+    const discValue = (value as Record<string, unknown>)[discKey];
+    const branch = schema.optionsMap.get(discValue as string);
+    if (branch) {
+      collectNonFiniteNumbers(branch, value, path, issues);
     }
     return;
   }

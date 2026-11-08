@@ -588,4 +588,96 @@ describe("defineJob payload guard (INV-2)", () => {
     expect(JSON.stringify(err)).not.toContain("SPH -2.25");
     expect(JSON.stringify(err)).not.toContain("leak-value");
   });
+
+  it("rejects inherited property names such as constructor, toString, and __proto__ without leaking key or value (R7-F1)", () => {
+    const definition = defineJob({
+      name: "test.inherited-keys",
+      schema: z.object({ orderId: z.string() }),
+      handler: () => undefined,
+    });
+
+    const cases = [
+      ["constructor", { orderId: "ord-1", constructor: "SPH -2.25" }],
+      ["toString", { orderId: "ord-1", toString: "SPH -2.25" }],
+      ["__proto__", { orderId: "ord-1", ["__proto__"]: "SPH -2.25" }],
+      ["__proto__ (parsed)", JSON.parse('{"orderId": "ord-1", "__proto__": "SPH -2.25"}')],
+    ] as const;
+
+    for (const [keyName, payload] of cases) {
+      let caughtError: unknown;
+      try {
+        validateJobPayload(definition, payload);
+      } catch (error) {
+        caughtError = error;
+      }
+
+      expect(caughtError, `Expected payload with ${keyName} to be rejected`).toBeInstanceOf(
+        JobPayloadValidationError
+      );
+      const err = caughtError as JobPayloadValidationError;
+      expect(err.jobName).toBe("test.inherited-keys");
+      expect(err.issues).toEqual([{ path: [], code: "unrecognized_keys" }]);
+      expect(err.message).toContain("test.inherited-keys");
+      expect(err.message).toContain("payload: unrecognized_keys");
+      expect(err.message).not.toContain("SPH -2.25");
+      expect(err.message).not.toContain(keyName);
+      expect(err.cause).toBeUndefined();
+      expect(err.stack).not.toContain("SPH -2.25");
+      expect(JSON.stringify(err)).not.toContain("SPH -2.25");
+    }
+  });
+
+  it("rejects non-finite number values (Infinity, -Infinity, NaN) in payload fields (R7-F2)", () => {
+    const definition = defineJob({
+      name: "test.non-finite-number",
+      schema: z.object({ orderId: z.number() }),
+      handler: () => undefined,
+    });
+
+    // Infinity
+    expect(() => validateJobPayload(definition, { orderId: Infinity })).toThrowError(
+      JobPayloadValidationError
+    );
+    try {
+      validateJobPayload(definition, { orderId: Infinity });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(JobPayloadValidationError);
+      const err = error as JobPayloadValidationError;
+      expect(err.jobName).toBe("test.non-finite-number");
+      expect(err.issues).toEqual([{ path: ["orderId"], code: "not_finite" }]);
+      expect(err.message).toContain("orderId: not_finite");
+    }
+
+    // -Infinity
+    expect(() => validateJobPayload(definition, { orderId: -Infinity })).toThrowError(
+      JobPayloadValidationError
+    );
+    try {
+      validateJobPayload(definition, { orderId: -Infinity });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(JobPayloadValidationError);
+      const err = error as JobPayloadValidationError;
+      expect(err.issues).toEqual([{ path: ["orderId"], code: "not_finite" }]);
+      expect(err.message).toContain("orderId: not_finite");
+    }
+
+    // NaN
+    expect(() => validateJobPayload(definition, { orderId: NaN })).toThrowError(
+      JobPayloadValidationError
+    );
+    try {
+      validateJobPayload(definition, { orderId: NaN });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(JobPayloadValidationError);
+      const err = error as JobPayloadValidationError;
+      expect(err.issues).toEqual([{ path: ["orderId"], code: "invalid_type" }]);
+      expect(err.message).toContain("orderId: invalid_type");
+    }
+
+    // Finite number succeeds
+    expect(validateJobPayload(definition, { orderId: 42 })).toEqual({ orderId: 42 });
+  });
 });
