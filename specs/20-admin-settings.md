@@ -58,11 +58,42 @@ Real, used now: 15, 09. Tests: `testConfig()` loader/action calls. Stubbed: none
 
 ## Done when
 
-- [ ] `pnpm vitest run app/features/settings/admin-settings.test.tsx` passes: every Examples row is a case. [unit]
-- [ ] INV-1: the action ignores any `shopId` in form data and writes the session shop only. [unit]
-- [ ] INV-3: a post setting `storeRxInOrder=true` without the confirmation field is rejected. [unit]
-- [ ] INV-7: `rg 'style=|className=|<style' app/routes/app.settings.tsx` finds nothing. [static]
-- [ ] `pnpm test` passes with 0 failures. [unit]
-- [ ] `specs/inventory/20-admin-settings.md` lists the route. [static]
-- [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
-- [ ] `pnpm build` passes. [static]
+- [x] `pnpm vitest run app/features/settings/admin-settings.test.tsx` passes: every Examples row is a case. [unit]
+- [x] INV-1: the action ignores any `shopId` in form data and writes the session shop only. [unit]
+- [x] INV-3: a post setting `storeRxInOrder=true` without the confirmation field is rejected. [unit]
+- [x] INV-7: `rg 'style=|className=|<style' app/routes/app.settings.tsx` finds nothing. [static]
+- [x] `pnpm test` passes with 0 failures. [unit]
+- [x] `specs/inventory/20-admin-settings.md` lists the route. [static]
+- [x] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
+- [x] `pnpm build` passes. [static]
+
+## Log
+
+- **2026-11-08** — Spec 20 implemented by coder agy-2 (engine agy) in worktree `spec-20` (branch `spec/20-admin-settings`). No git writes (lead commits).
+- **2026-11-08** — Implemented `app/routes/app.settings.tsx`:
+  - `loader`: Gates via `requireActivePlan(request)` (spec 09). Resolves session shop from `session.shop` (INV-1), reads settings via `getSettings(shop.id)` (spec 15), builds hosted managed pricing URL via `buildPricingPlansUrl(session.shop, getConfig().billing.appHandle)`, and returns `{ settings, plan, pricingUrl }`.
+  - `action`: Authenticates via `authenticate.admin(request)`. Resolves `shop` via session domain only. Completely ignores any `shopId` submitted in form or JSON payload (INV-1). Enforces server-side confirmation check for `storeRxInOrder=true`: rejects with 400 Bad Request code `CONFIRMATION_REQUIRED` unless a confirmation field (`confirmStoreRxInOrder`, `confirm`, `confirmed`, `privacyConfirmed`) is truthy (INV-3). Delegates validation and persistence to `updateSettings(shop.id, patch)` (spec 15). Catches `ValidationError` and maps field errors (`EMAIL`, `AT_LEAST_ONE_RX_INPUT`) to inline error responses with status 400.
+  - UI Component: Built purely using Polaris web components (`<s-page>`, `<s-section>`, `<s-stack>`, `<s-text-field>`, `<s-select>`, `<s-checkbox>`, `<s-modal>`, `<s-banner>`, `<s-button>`, `<s-link>`). Zero raw CSS, `style=`, `className=`, or `<style` (INV-7). Includes:
+    - Lab fulfillment section: lab email input (comma/newline separated), ticket format dropdown (`PDF`, `CSV`, `BOTH`).
+    - Prescription inputs section: "Shoppers can type their prescription" (`manualRxEnabled`), "Shoppers can upload a prescription file" (`rxUploadEnabled`).
+    - Order privacy section: "Save prescription values in Shopify orders" (`storeRxInOrder`), with help text: "When off, orders show 'Prescription on file' and values stay encrypted in this app". Turning toggle on triggers confirmation `<s-modal id="privacy-confirm-modal">` detailing who can see order properties. Confirming retains toggle state and sets confirmation; cancelling reverts toggle to false.
+    - Plan section: displays current plan name and link to change plan in top frame (`target="_top"`).
+    - Feedback: inline error banners for `EMAIL`, `AT_LEAST_ONE_RX_INPUT`, and privacy confirmation; App Bridge success toast `shopify.toast.show("Settings saved")`.
+- **2026-11-08** — Implemented `app/features/settings/nav.ts`: exports `{ label: "Settings", href: "/app/settings", order: 90 }` for dynamic navigation discovery.
+- **2026-11-08** — Implemented `specs/inventory/20-admin-settings.md`: documents `admin-settings-route` and `admin-settings-nav`.
+- **2026-11-08** — Implemented `app/features/settings/admin-settings.test.tsx`: 13 tests covering all 5 Examples rows, INV-1, INV-3, loader, and UI rendering (fields, plan card, inline errors, modal cancel/confirm, toast).
+- **2026-11-08** — Self-checks:
+  - Self-check 1: Holds. A post setting `storeRxInOrder=true` without confirmation is rejected with 400 `CONFIRMATION_REQUIRED` and database value remains false.
+  - Self-check 2: UI checklist holds. Pure Polaris web components used, no inline style or className, accessible labels, clear inline errors, success toast via App Bridge, and responsive layout.
+- **2026-11-08** — Sabotages:
+  - Sabotage 1: Updated `action` to read `targetShopId = rawData.shopId ?? shop.id` -> INV-1 test red (`expected [] to deeply equal ['alpha@example.com']`). Restored.
+  - Sabotage 2: Commented out `storeRxInOrder` confirmation check in `action` -> INV-3 test red (`expected 200 to be 400`). Restored.
+- **2026-11-08** — Final gate verification:
+  - `pnpm vitest run app/features/settings/admin-settings.test.tsx` → `Test Files 1 passed (1)` / `Tests 13 passed (13)`
+  - `pnpm test` → `Test Files 28 passed (28)` / `Tests 353 passed (353)`
+  - `pnpm typecheck` → exit 0 (0 errors)
+  - `pnpm lint` (`eslint . --max-warnings 0`) → exit 0 (0 errors, 0 warnings)
+  - `pnpm build` → exit 0
+  - `rg 'style=|className=|<style' app/routes/app.settings.tsx` → exit 1 (0 matches, INV-7 clean)
+  - `git diff --check` → exit 0 (clean, no trailing whitespace)
+- **2026-11-08** — Evidence (orchestro spec verify, tree a471b7d6): install pass · typecheck pass · lint pass · build pass · test pass 353/0/0
