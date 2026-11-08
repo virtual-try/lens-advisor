@@ -63,6 +63,7 @@ export interface ConfiguratorAppProps {
   isOpen?: boolean;
   onClose?: () => void;
   triggerElement?: HTMLElement | null;
+  mountElement?: HTMLElement | null;
 }
 
 export function ConfiguratorApp({
@@ -73,6 +74,7 @@ export function ConfiguratorApp({
   isOpen = true,
   onClose,
   triggerElement,
+  mountElement,
 }: ConfiguratorAppProps): JSX.Element | null {
   const safeProduct = useMemo(() => {
     return parseProductData(product);
@@ -414,6 +416,8 @@ export function ConfiguratorApp({
                   state={state}
                   dispatch={dispatch}
                   api={api}
+                  mount={mountElement}
+                  product={safeProduct}
                 />
               )}
             </div>
@@ -426,6 +430,8 @@ export function ConfiguratorApp({
                 canGoBack={canGoBack}
                 canContinue={canCurrentContinue}
                 isComplete={isCurrentComplete}
+                mount={mountElement}
+                product={safeProduct}
                 onBack={handleBack}
                 onContinue={handleContinue}
               />

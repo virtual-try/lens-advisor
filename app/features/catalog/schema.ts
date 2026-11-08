@@ -68,7 +68,10 @@ export function mapZodIssueToCode(issue: z.ZodIssue): string {
   return "INVALID_INPUT";
 }
 
-export function validateInput<T>(schema: z.ZodType<T>, data: unknown): T {
+export function validateInput<TOutput>(
+  schema: z.ZodType<TOutput, z.ZodTypeDef, unknown>,
+  data: unknown,
+): TOutput {
   const result = schema.safeParse(data);
   if (!result.success) {
     const firstIssue = result.error.issues[0];
@@ -400,3 +403,108 @@ export const reorderSchema = z.object({
   ids: z.array(z.string().min(1)).min(1, "At least one ID is required"),
 });
 export type ReorderInput = z.input<typeof reorderSchema>;
+
+// ---------------------------------------------------------------------------
+// Action Boundary Schemas
+// ---------------------------------------------------------------------------
+
+export const createGroupActionSchema = z.object({
+  intent: z.literal("create_group"),
+  name: z
+    .string({ required_error: "Group name is required", invalid_type_error: "Group name is required" })
+    .trim()
+    .min(1, "Group name is required"),
+  kind: optionGroupKindSchema,
+});
+
+export const deleteGroupActionSchema = z.object({
+  intent: z.literal("delete_group"),
+  groupId: z.string({ required_error: "Group ID is required" }).trim().min(1, "Group ID is required"),
+});
+
+export const reorderIdsSchema = z.union([
+  z.array(z.string().min(1)),
+  z.string().transform((str, ctx) => {
+    try {
+      const parsed = JSON.parse(str);
+      if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === "string" && item.length > 0)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "ids must be an array of strings" });
+        return z.NEVER;
+      }
+      return parsed;
+    } catch {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid JSON for ids" });
+      return z.NEVER;
+    }
+  }),
+]);
+
+export const reorderGroupsActionSchema = z.object({
+  intent: z.literal("reorder_groups"),
+  ids: reorderIdsSchema,
+});
+
+export const reorderValuesActionSchema = z.object({
+  intent: z.literal("reorder_values"),
+  ids: reorderIdsSchema,
+  optionGroupId: z.string().trim().min(1).optional(),
+});
+
+export const reorderAddOnsActionSchema = z.object({
+  intent: z.literal("reorder_add_ons"),
+  ids: reorderIdsSchema,
+});
+
+export const deleteOptionValueActionSchema = z.object({
+  intent: z.literal("delete_option_value"),
+  id: z.string({ required_error: "ID is required" }).trim().min(1, "ID is required"),
+});
+
+export const deleteAddOnActionSchema = z.object({
+  intent: z.literal("delete_add_on"),
+  id: z.string({ required_error: "ID is required" }).trim().min(1, "ID is required"),
+});
+
+export const retrySyncActionSchema = z.object({
+  intent: z.literal("retry_sync"),
+  entity: z.enum(["optionValue", "addOn"]),
+  id: z.string({ required_error: "ID is required" }).trim().min(1, "ID is required"),
+});
+
+export const optionValueActionSchema = z.object({
+  intent: z
+    .enum(["save", "delete", "archive", "retry_sync"], {
+      errorMap: () => ({ message: "UNKNOWN_INTENT" }),
+    })
+    .optional(),
+  label: z.string().trim().optional(),
+  priceDeltaMinor: z
+    .number({ invalid_type_error: "Price delta must be an integer" })
+    .int({ message: "Price delta must be an integer" })
+    .min(0, "Price delta must be at least 0")
+    .optional(),
+  priceDelta: z.union([z.string(), z.number()]).optional(),
+  currency: z.string().optional(),
+  optionGroupId: z.string().trim().min(1).optional(),
+  codeType: z.enum(["none", "token", "override"]).optional(),
+  token: z.string().optional(),
+  tokenKey: z.string().optional(),
+  tokenValue: z.string().optional(),
+  overrideCode: z.string().optional(),
+  swatch: z.string().optional(),
+});
+
+export const addOnActionSchema = z.object({
+  intent: z
+    .enum(["save", "delete", "archive", "retry_sync"], {
+      errorMap: () => ({ message: "UNKNOWN_INTENT" }),
+    })
+    .optional(),
+  name: z.string().trim().optional(),
+  priceMinor: z
+    .number({ invalid_type_error: "Price must be an integer" })
+    .int({ message: "Price must be an integer" })
+    .optional(),
+  price: z.union([z.string(), z.number()]).optional(),
+  currency: z.string().optional(),
+});

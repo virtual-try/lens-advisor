@@ -10,6 +10,7 @@ export function createInitialState(frameVariantId = ""): ConfiguratorState {
     rxType: null,
     prescription: null,
     prescriptionRef: null,
+    lensGroupId: null,
     catalog: null,
     selection: {
       frameVariantId,
@@ -75,6 +76,7 @@ export function configuratorReducer(
           ...state,
           isOpen: false,
           status: "idle",
+          lensGroupId: null,
         };
       }
 
@@ -168,9 +170,40 @@ export function configuratorReducer(
         };
       }
 
-      case "SET_LENS": {
+      case "SET_LENS_GROUP": {
+        const lensGroupId = action.lensGroupId;
+        let selection = state.selection;
+        if (state.selection.lensId && state.catalog) {
+          const belongsToNewGroup = state.catalog.lensGroups
+            .find((g) => g.id === lensGroupId)
+            ?.lenses.some((l) => l.id === state.selection.lensId);
+          if (!belongsToNewGroup) {
+            selection = {
+              ...state.selection,
+              lensId: undefined,
+            };
+          }
+        }
         return {
           ...state,
+          lensGroupId,
+          selection,
+        };
+      }
+
+      case "SET_LENS": {
+        let lensGroupId = state.lensGroupId;
+        if (state.catalog && action.lensId) {
+          const group = state.catalog.lensGroups.find((g) =>
+            g.lenses.some((l) => l.id === action.lensId),
+          );
+          if (group) {
+            lensGroupId = group.id;
+          }
+        }
+        return {
+          ...state,
+          lensGroupId,
           selection: {
             ...state.selection,
             lensId: action.lensId,
@@ -261,8 +294,19 @@ export function configuratorReducer(
       }
 
       case "GO_TO_STEP": {
-        const target = action.stepIndex;
-        if (target >= 0 && target < steps.length && steps[target].isApplicable(state)) {
+        let target = action.stepIndex;
+        if (action.stepId) {
+          const found = steps.findIndex((s) => s.id === action.stepId);
+          if (found >= 0) {
+            target = found;
+          }
+        }
+        if (
+          target !== undefined &&
+          target >= 0 &&
+          target < steps.length &&
+          steps[target].isApplicable(state)
+        ) {
           if (target > state.stepIndex) {
             for (let i = state.stepIndex; i < target; i++) {
               if (steps[i].isApplicable(state) && !steps[i].isComplete(state)) {

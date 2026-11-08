@@ -1,0 +1,16 @@
+@import "../choice.css";
+
+.la-add-ons-step {
+  display: flex;
+  flex-direction: column;
+}
+
+.la-mark--box {
+  border-radius: var(--la-mark-radius-box);
+}
+
+.la-mark svg {
+  width: var(--la-icon-sm);
+  height: var(--la-icon-sm);
+  stroke: var(--la-on-accent);
+}

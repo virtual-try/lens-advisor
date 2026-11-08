@@ -227,6 +227,7 @@ model LabOrder {
   providerId     String?
   sentAt         DateTime?
   createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @default(now()) @updatedAt
 
   @@unique([shopId, shopifyOrderId, bundleId])
   @@index([lensId])

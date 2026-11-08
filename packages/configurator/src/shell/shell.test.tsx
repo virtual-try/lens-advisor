@@ -1,4 +1,4 @@
-import { act, fireEvent, render, waitFor } from "@testing-library/preact";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import type { JSX } from "preact";
 import { describe, expect, it, vi } from "vitest";
 import { selectionSchema, type CatalogResponse } from "../../../rx-core/src/index.js";
@@ -7,6 +7,7 @@ import { strings } from "../shared/strings";
 import shellCss from "./shell.css?inline";
 import { ConfiguratorApp } from "./ConfiguratorApp";
 import type { ConfiguratorState, StepDefinition, StepProps } from "./types";
+import lensGroupStepModule from "../steps/03-lens-group/index.js";
 
 const mockCatalog: CatalogResponse = {
   lensGroups: [
@@ -1075,5 +1076,123 @@ describe("Configurator Shell - Examples Table Rows", () => {
     });
 
     view.unmount();
+  });
+
+  describe("spec 27 findings R1-F1 and R1-F2", () => {
+    it("picking a lens group enables Continue in the shell (spec 27 R1-F1)", async () => {
+      const steps: StepDefinition[] = [
+        {
+          ...lensGroupStepModule,
+          folder: "03-lens-group",
+        },
+        {
+          id: "lens",
+          titleKey: "lens",
+          folder: "04-lens",
+          isComplete: (s) => Boolean(s.selection.lensId),
+          isApplicable: () => true,
+          Component: () => <h2>Lens Details</h2>,
+        },
+      ];
+
+      const apiClient = createMockApiClient();
+
+      const view = render(
+        <ConfiguratorApp
+          product={{ title: "Harlow" }}
+          steps={steps}
+          apiClient={apiClient}
+        />,
+      );
+
+      await view.findByRole("dialog");
+      await view.findByRole("heading", { name: "Choose your lens family" });
+
+      // Before picking a group, Continue button is disabled
+      const continueBtn = view.getByRole("button", {
+        name: strings.footer.continue,
+      }) as HTMLButtonElement;
+      expect(continueBtn.disabled).toBe(true);
+
+      // Pick a group
+      const clearGroupRadio = view.container.querySelector<HTMLInputElement>(
+        'input[value="group-1"]',
+      );
+      expect(clearGroupRadio).not.toBeNull();
+      fireEvent.click(clearGroupRadio!);
+
+      // Continue button is now ENABLED!
+      expect(continueBtn.disabled).toBe(false);
+
+      // Clicking Continue transitions to the next step
+      fireEvent.click(continueBtn);
+
+      const nextHeading = await view.findByRole("heading", { name: "Lens Details" });
+      expect(nextHeading).not.toBeNull();
+
+      view.unmount();
+    });
+
+    it("reopening for a second frame shows no group checked (spec 27 R1-F2)", async () => {
+      const steps: StepDefinition[] = [
+        {
+          ...lensGroupStepModule,
+          folder: "03-lens-group",
+        },
+      ];
+
+      const apiClient = createMockApiClient();
+
+      // Open for frame A
+      const { rerender, container, unmount } = render(
+        <ConfiguratorApp
+          isOpen={true}
+          product={{ title: "Frame A", variantId: "frame-a" }}
+          steps={steps}
+          apiClient={apiClient}
+        />,
+      );
+
+      await screen.findByRole("dialog");
+      const groupRadio = container.querySelector<HTMLInputElement>(
+        'input[value="group-1"]',
+      );
+      expect(groupRadio).not.toBeNull();
+      fireEvent.click(groupRadio!);
+      expect(groupRadio!.checked).toBe(true);
+
+      // Close modal
+      rerender(
+        <ConfiguratorApp
+          isOpen={false}
+          product={{ title: "Frame A", variantId: "frame-a" }}
+          steps={steps}
+          apiClient={apiClient}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.queryByRole("dialog")).toBeNull();
+      });
+
+      // Reopen modal for frame B
+      rerender(
+        <ConfiguratorApp
+          isOpen={true}
+          product={{ title: "Frame B", variantId: "frame-b" }}
+          steps={steps}
+          apiClient={apiClient}
+        />,
+      );
+
+      await screen.findByRole("dialog");
+      const reopenedRadio = container.querySelector<HTMLInputElement>(
+        'input[value="group-1"]',
+      );
+      expect(reopenedRadio).not.toBeNull();
+      expect(reopenedRadio!.checked).toBe(false);
+
+      unmount();
+    });
   });
 });

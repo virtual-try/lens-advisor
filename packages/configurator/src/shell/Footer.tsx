@@ -1,6 +1,7 @@
 import type { JSX } from "preact";
 import { strings } from "../shared/strings";
 import type { ApiClient } from "../shared/api";
+import type { ProductData } from "../shared/types";
 import type { ConfiguratorAction, ConfiguratorState, StepDefinition } from "./types";
 
 export interface FooterProps {
@@ -11,6 +12,8 @@ export interface FooterProps {
   canGoBack: boolean;
   canContinue?: boolean;
   isComplete: boolean;
+  mount?: HTMLElement | null;
+  product?: ProductData | null;
   onBack: () => void;
   onContinue: () => void;
 }
@@ -23,6 +26,8 @@ export function Footer({
   canGoBack,
   canContinue,
   isComplete,
+  mount,
+  product,
   onBack,
   onContinue,
 }: FooterProps): JSX.Element {
@@ -34,7 +39,13 @@ export function Footer({
     <footer class="la-footer">
       <div class="la-total">
         {SummaryComponent && (
-          <SummaryComponent state={state} dispatch={dispatch} api={api} />
+          <SummaryComponent
+            state={state}
+            dispatch={dispatch}
+            api={api}
+            mount={mount}
+            product={product}
+          />
         )}
       </div>
       <div class="la-footer__actions">
