@@ -1,6 +1,6 @@
 # Spec 20 — Admin: settings page
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 09, Spec 15
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —

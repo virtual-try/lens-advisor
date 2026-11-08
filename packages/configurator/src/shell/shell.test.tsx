@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { CatalogResponse } from "../../../rx-core/src/index.js";
 import type { ApiClient } from "../shared/api";
 import { strings } from "../shared/strings";
+import shellCss from "./shell.css?inline";
 import { ConfiguratorApp } from "./ConfiguratorApp";
 import type { StepDefinition, StepProps } from "./types";
 
@@ -514,7 +515,7 @@ describe("Configurator Shell - Examples Table Rows", () => {
     viewWithoutTitle.unmount();
   });
 
-  it("runs exiting phase before unmount on close and supports reduced-motion fallbacks (R1-F8)", async () => {
+  it("runs exiting phase before unmount on close (R1-F8, R2-F2)", async () => {
     const trigger = document.createElement("button");
     trigger.textContent = "Open";
     document.body.appendChild(trigger);
@@ -552,6 +553,162 @@ describe("Configurator Shell - Examples Table Rows", () => {
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce();
     });
+    expect(view.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+
+    trigger.remove();
+  });
+
+  it("finishes exit immediately on animationend without waiting for fallback timeout (R2-F2)", async () => {
+    const trigger = document.createElement("button");
+    trigger.textContent = "Open";
+    document.body.appendChild(trigger);
+    trigger.focus();
+
+    const steps = createFixtureSteps();
+    const apiClient = createMockApiClient();
+    const onClose = vi.fn();
+
+    const view = render(
+      <ConfiguratorApp
+        product={{ title: "Harlow" }}
+        steps={steps}
+        apiClient={apiClient}
+        triggerElement={trigger}
+        onClose={onClose}
+      />,
+    );
+
+    const dialog = await view.findByRole("dialog");
+    expect(dialog).not.toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+
+    // Trigger close via close button
+    const closeBtn = view.getByRole("button", { name: strings.header.closeLabel });
+    fireEvent.click(closeBtn);
+
+    expect(dialog.classList.contains("la-sheet--exiting")).toBe(true);
+    expect(onClose).not.toHaveBeenCalled();
+
+    // animationend fires on sheet
+    fireEvent.animationEnd(dialog, { animationName: "la-modal-exit" });
+
+    // Exit finishes immediately upon animationend
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(view.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+
+    trigger.remove();
+  });
+
+  it("supports reduced-motion with immediate unmount, no exiting delay, and focus returned (R2-F3)", async () => {
+    // Assert exact reduced-motion styles in shell.css
+    expect(shellCss).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
+    expect(shellCss).toMatch(/la-fade-enter/);
+    expect(shellCss).toMatch(/la-fade-exit/);
+    expect(shellCss).toMatch(/transform:\s*none\s*!important/);
+
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn().mockImplementation((query: string) => {
+      return {
+        matches: query.includes("prefers-reduced-motion: reduce"),
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      };
+    });
+
+    try {
+      const trigger = document.createElement("button");
+      trigger.textContent = "Open";
+      document.body.appendChild(trigger);
+      trigger.focus();
+
+      const steps = createFixtureSteps();
+      const apiClient = createMockApiClient();
+      const onClose = vi.fn();
+
+      const view = render(
+        <ConfiguratorApp
+          product={{ title: "Harlow" }}
+          steps={steps}
+          apiClient={apiClient}
+          triggerElement={trigger}
+          onClose={onClose}
+        />,
+      );
+
+      const dialog = await view.findByRole("dialog");
+      expect(dialog).not.toBeNull();
+
+      // Trigger close via Escape
+      fireEvent.keyDown(document, { key: "Escape" });
+
+      // Reduced motion: still alternative with no exiting delay / immediate unmount
+      expect(onClose).toHaveBeenCalledOnce();
+      expect(view.queryByRole("dialog")).toBeNull();
+      expect(document.activeElement).toBe(trigger);
+
+      trigger.remove();
+    } finally {
+      window.matchMedia = originalMatchMedia;
+    }
+  });
+
+  it("keeps focus trapped inside dialog during exiting phase and restores focus to trigger only after unmount (R2-F4)", async () => {
+    const trigger = document.createElement("button");
+    trigger.textContent = "Open";
+    document.body.appendChild(trigger);
+    trigger.focus();
+
+    const steps = createFixtureSteps();
+    const apiClient = createMockApiClient();
+    const onClose = vi.fn();
+
+    const view = render(
+      <ConfiguratorApp
+        product={{ title: "Harlow" }}
+        steps={steps}
+        apiClient={apiClient}
+        triggerElement={trigger}
+        onClose={onClose}
+      />,
+    );
+
+    const dialog = await view.findByRole("dialog");
+    expect(dialog).not.toBeNull();
+
+    // Trigger close via Close button click
+    const closeBtn = view.getByRole("button", { name: strings.header.closeLabel });
+    fireEvent.click(closeBtn);
+
+    // During exiting phase: sheet is still mounted and exiting
+    expect(dialog.classList.contains("la-sheet--exiting")).toBe(true);
+    expect(onClose).not.toHaveBeenCalled();
+
+    // Crucial R2-F4 assertion: focus must NOT be returned to the trigger during exiting phase
+    expect(document.activeElement).not.toBe(trigger);
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    // Tab key navigation during exit phase: must remain trapped inside dialog
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(document.activeElement).not.toBe(trigger);
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    // Shift+Tab key navigation during exit phase: must remain trapped inside dialog
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).not.toBe(trigger);
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    // Finish exit animation via animationend
+    fireEvent.animationEnd(dialog, { animationName: "la-modal-exit" });
+
+    // After unmount, focus is restored to trigger
+    expect(onClose).toHaveBeenCalledOnce();
     expect(view.queryByRole("dialog")).toBeNull();
     expect(document.activeElement).toBe(trigger);
 

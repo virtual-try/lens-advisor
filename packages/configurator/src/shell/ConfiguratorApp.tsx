@@ -14,6 +14,47 @@ import { configuratorReducer, createInitialState } from "./reducer";
 import { createFocusTrap } from "./trap";
 import type { ConfiguratorAction, ConfiguratorState, StepDefinition } from "./types";
 
+function parseDurationFromCss(css: string, token: string): number {
+  const match = css.match(new RegExp(`${token}:\\s*([0-9.]+)m?s`));
+  if (!match) return 0;
+  const val = parseFloat(match[1]);
+  return match[0].includes("ms") ? val : val * 1000;
+}
+
+const DUR_FAST = parseDurationFromCss(tokensCss, "--la-dur-fast");
+const DUR_MODAL = parseDurationFromCss(tokensCss, "--la-dur-modal");
+
+function prefersReducedMotion(): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return false;
+  }
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function getExitDuration(el: HTMLElement | null): number {
+  if (prefersReducedMotion()) {
+    return 0;
+  }
+  const isMobile =
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(max-width: 40rem)").matches
+      : false;
+  const tokenName = isMobile ? "--la-dur-modal" : "--la-dur-fast";
+
+  if (el && typeof window !== "undefined") {
+    const computed = window.getComputedStyle(el).getPropertyValue(tokenName).trim();
+    if (computed.endsWith("ms")) {
+      const val = parseFloat(computed);
+      if (!Number.isNaN(val) && val > 0) return val;
+    } else if (computed.endsWith("s")) {
+      const val = parseFloat(computed) * 1000;
+      if (!Number.isNaN(val) && val > 0) return val;
+    }
+  }
+
+  return isMobile ? DUR_MODAL : DUR_FAST;
+}
+
 export interface ConfiguratorAppProps {
   product?: ProductData;
   proxyBase?: string;
@@ -56,7 +97,70 @@ export function ConfiguratorApp({
   );
 
   const [isExiting, setIsExiting] = useState(false);
+  const isExitingRef = useRef(false);
   const exitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const triggerRef = useRef(triggerElement);
+  triggerRef.current = triggerElement;
+
+  const finishExit = useCallback(() => {
+    if (exitTimeoutRef.current) {
+      clearTimeout(exitTimeoutRef.current);
+      exitTimeoutRef.current = null;
+    }
+    dispatch({ type: "CLOSE" });
+    onClose?.();
+    setIsExiting(false);
+    isExitingRef.current = false;
+    if (triggerRef.current && typeof triggerRef.current.focus === "function") {
+      triggerRef.current.focus();
+    }
+  }, [onClose]);
+
+  const handleClose = useCallback(() => {
+    if (isExitingRef.current) return;
+
+    if (prefersReducedMotion()) {
+      finishExit();
+      return;
+    }
+
+    isExitingRef.current = true;
+    setIsExiting(true);
+
+    const sheet = sheetRef.current;
+    const duration = getExitDuration(sheet);
+
+    exitTimeoutRef.current = setTimeout(() => {
+      finishExit();
+    }, duration);
+  }, [finishExit]);
+
+  const handleCloseRef = useRef(handleClose);
+  handleCloseRef.current = handleClose;
+
+  // Listen for animationend and animationcancel on sheet during exit
+  useEffect(() => {
+    if (!isExiting || !sheetRef.current) return;
+
+    const sheet = sheetRef.current;
+    const handleAnimationEnd = (e: AnimationEvent) => {
+      if (
+        e.target === sheet ||
+        (e.target as HTMLElement)?.classList.contains("la-overlay")
+      ) {
+        finishExit();
+      }
+    };
+
+    sheet.addEventListener("animationend", handleAnimationEnd);
+    sheet.addEventListener("animationcancel", handleAnimationEnd);
+
+    return () => {
+      sheet.removeEventListener("animationend", handleAnimationEnd);
+      sheet.removeEventListener("animationcancel", handleAnimationEnd);
+    };
+  }, [isExiting, finishExit]);
 
   // Sync isOpen prop changes into reducer only when the prop value changes
   const prevIsOpenRef = useRef(isOpen);
@@ -65,6 +169,7 @@ export function ConfiguratorApp({
       prevIsOpenRef.current = isOpen;
       if (isOpen) {
         setIsExiting(false);
+        isExitingRef.current = false;
         dispatch({ type: "OPEN", frameVariantId: initialFrameVariantId });
       } else {
         if (exitTimeoutRef.current) {
@@ -72,28 +177,11 @@ export function ConfiguratorApp({
           exitTimeoutRef.current = null;
         }
         setIsExiting(false);
+        isExitingRef.current = false;
         dispatch({ type: "CLOSE" });
       }
     }
   }, [isOpen, initialFrameVariantId]);
-
-  const triggerRef = useRef(triggerElement);
-  triggerRef.current = triggerElement;
-
-  const handleClose = useCallback(() => {
-    if (isExiting) return;
-    setIsExiting(true);
-
-    exitTimeoutRef.current = setTimeout(() => {
-      dispatch({ type: "CLOSE" });
-      onClose?.();
-      setIsExiting(false);
-      exitTimeoutRef.current = null;
-      if (triggerRef.current && typeof triggerRef.current.focus === "function") {
-        triggerRef.current.focus();
-      }
-    }, 250);
-  }, [isExiting, onClose]);
 
   useEffect(() => {
     return () => {
@@ -164,16 +252,16 @@ export function ConfiguratorApp({
     };
   }, [state.isOpen]);
 
-  // Handle focus trap while open
+  // Handle focus trap while open - stays active through exit phase until unmount
   useEffect(() => {
-    if (!state.isOpen || isExiting || !sheetRef.current) return;
+    if (!state.isOpen || !sheetRef.current) return;
 
     const trap = createFocusTrap({
       container: sheetRef.current,
       trigger: triggerElement,
       lockScroll: false,
       onEscape: () => {
-        handleClose();
+        handleCloseRef.current();
       },
     });
 
@@ -182,7 +270,7 @@ export function ConfiguratorApp({
     return () => {
       trap.deactivate();
     };
-  }, [state.isOpen, isExiting, triggerElement, handleClose]);
+  }, [state.isOpen, triggerElement]);
 
   // Fetch catalog when open and status is loading
   useEffect(() => {

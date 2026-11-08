@@ -7,7 +7,6 @@ export const LENS_CONFIGURATOR_TAG = "lens-configurator";
 export class LensConfiguratorElement extends HTMLElement {
   private mountPoint: HTMLElement | null = null;
   private triggerButton: HTMLElement | null = null;
-  private handleOpenEvent: ((event: Event) => void) | null = null;
   private isOpenState = false;
   private prevBodyOverflow: string | null = null;
 
@@ -15,16 +14,6 @@ export class LensConfiguratorElement extends HTMLElement {
     if (!this.shadowRoot) {
       this.attachShadow({ mode: "open" });
     }
-
-    this.handleOpenEvent = (event: Event) => {
-      const customEvent = event as CustomEvent<{ mount: HTMLElement }>;
-      const mount = customEvent.detail?.mount;
-      if (mount) {
-        this.open(mount);
-      }
-    };
-
-    document.addEventListener("la:open", this.handleOpenEvent);
 
     // If mount was already opened before connection:
     const activeMount = document.querySelector<HTMLElement>(
@@ -36,11 +25,6 @@ export class LensConfiguratorElement extends HTMLElement {
   }
 
   disconnectedCallback(): void {
-    if (this.handleOpenEvent) {
-      document.removeEventListener("la:open", this.handleOpenEvent);
-      this.handleOpenEvent = null;
-    }
-
     if (this.isOpenState) {
       this.close();
     } else if (typeof document !== "undefined" && this.prevBodyOverflow !== null) {
@@ -50,15 +34,19 @@ export class LensConfiguratorElement extends HTMLElement {
   }
 
   open(mount: HTMLElement): void {
+    if (this.isOpenState) {
+      return;
+    }
+    this.isOpenState = true;
+
     if (!this.shadowRoot) {
       this.attachShadow({ mode: "open" });
     }
 
     this.mountPoint = mount;
     this.triggerButton = mount.querySelector<HTMLElement>("[data-la-open]") || null;
-    this.isOpenState = true;
 
-    if (typeof document !== "undefined") {
+    if (typeof document !== "undefined" && this.prevBodyOverflow === null) {
       this.prevBodyOverflow = document.body.style.overflow;
       document.body.style.overflow = "hidden";
     }

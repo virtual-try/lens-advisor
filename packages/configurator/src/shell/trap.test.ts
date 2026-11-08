@@ -71,7 +71,7 @@ describe("createFocusTrap", () => {
     trap.deactivate();
   });
 
-  it("calls onEscape when Escape key is pressed", () => {
+  it("calls onEscape when Escape key is pressed and keeps trap active until deactivated (R2-F4)", () => {
     const onEscape = vi.fn();
     const trap = createFocusTrap({ container, trigger, onEscape });
     trap.activate();
@@ -83,8 +83,27 @@ describe("createFocusTrap", () => {
     });
     document.dispatchEvent(escEvent);
     expect(onEscape).toHaveBeenCalledOnce();
+    // Trap remains active so exiting animation can complete with trap engaged
+    expect(trap.isActive()).toBe(true);
+    expect(document.activeElement).not.toBe(trigger);
 
     trap.deactivate();
+    expect(trap.isActive()).toBe(false);
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("deactivates immediately and returns focus on Escape when onEscape is not provided", () => {
+    const trap = createFocusTrap({ container, trigger });
+    trap.activate();
+
+    const escEvent = new KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(escEvent);
+    expect(trap.isActive()).toBe(false);
+    expect(document.activeElement).toBe(trigger);
   });
 
   it("releases scroll lock and focus when deactivated on disconnect", () => {

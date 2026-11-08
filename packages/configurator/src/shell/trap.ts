@@ -52,8 +52,11 @@ export function createFocusTrap(options: TrapOptions): FocusTrapController {
 
     if (event.key === "Escape") {
       event.preventDefault();
-      deactivate();
-      onEscape?.();
+      if (onEscape) {
+        onEscape();
+      } else {
+        deactivate();
+      }
       return;
     }
 
