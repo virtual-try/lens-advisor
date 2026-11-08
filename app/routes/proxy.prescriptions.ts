@@ -1,14 +1,11 @@
 import type { ActionFunctionArgs } from "react-router";
 
-import { prescriptionSubmitBodySchema } from "../../packages/rx-core/src/schemas/catalog.js";
-import { findShopByDomain } from "../features/prescriptions/prescriptions.repository.server";
 import { createPrescriptionsService } from "../features/prescriptions/prescriptions.service.server";
 import { prescriptionRateLimiter } from "../features/prescriptions/rate-limiter.server";
-import { getPrisma } from "../shared/container/prisma.server";
+import { parsePrescriptionSubmitBody } from "../features/prescriptions/schema";
 import {
   BadRequestError,
   errorResponse,
-  type FieldError,
   UnauthorizedError,
 } from "../shared/http/errors.server";
 import { authenticate } from "../shopify.server";
@@ -47,7 +44,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       throw new BadRequestError("Method not allowed", "METHOD_NOT_ALLOWED");
     }
 
-    // 5. Parse request body before any repository calls (R1-F7)
+    // 5. Parse request body before any service calls (R1-F7, R4-F1)
     let body: unknown;
     try {
       body = await request.json();
@@ -58,37 +55,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
 
-    const parsed = prescriptionSubmitBodySchema.safeParse(body);
-    if (!parsed.success) {
-      const fields: FieldError[] = parsed.error.issues.map((i) => ({
-        path: i.path.join(".") || "body",
-        code: i.code === "custom" ? i.message : "INVALID",
-      }));
-      throw new BadRequestError(
-        "Invalid prescription submission body",
-        "BAD_REQUEST",
-        fields,
-      );
-    }
+    const parsed = parsePrescriptionSubmitBody(body);
 
-    // Prescriptions endpoint accepts only MANUAL and UPLOAD prescription types (R3-F2)
-    if (parsed.data.rxType === "NON_PRESCRIPTION") {
-      throw new BadRequestError(
-        "Prescriptions endpoint does not accept NON_PRESCRIPTION",
-        "UNSUPPORTED_RX_TYPE",
-      );
-    }
-
-    // 6. Resolve shop from verified domain (INV-1)
-    const db = getPrisma();
-    const shop = await findShopByDomain(db, shopDomain);
-    if (!shop) {
-      throw new UnauthorizedError("Shop not found", "UNAUTHORIZED");
-    }
-
-    // 7. Call service
-    const service = createPrescriptionsService({ db });
-    const result = await service.submitPrescription(shop.id, parsed.data);
+    // 6. Call service (resolves verified domain inside service boundary, INV-1, R4-F2)
+    const service = createPrescriptionsService();
+    const result = await service.submitPrescriptionByDomain(shopDomain, parsed);
 
     return new Response(JSON.stringify(result), {
       status: 201,

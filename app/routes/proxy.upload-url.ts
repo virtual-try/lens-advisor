@@ -1,10 +1,8 @@
 import type { ActionFunctionArgs } from "react-router";
 
 import { uploadUrlRequestSchema } from "../../packages/rx-core/src/schemas/catalog.js";
-import { findShopByDomain } from "../features/prescriptions/prescriptions.repository.server";
 import { createPrescriptionsService } from "../features/prescriptions/prescriptions.service.server";
 import { prescriptionRateLimiter } from "../features/prescriptions/rate-limiter.server";
-import { getPrisma } from "../shared/container/prisma.server";
 import {
   BadRequestError,
   errorResponse,
@@ -47,7 +45,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       throw new BadRequestError("Method not allowed", "METHOD_NOT_ALLOWED");
     }
 
-    // 5. Parse request body before any repository calls (R1-F7)
+    // 5. Parse request body before any service calls (R1-F7)
     let body: unknown;
     try {
       body = await request.json();
@@ -71,16 +69,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
 
-    // 6. Resolve shop from verified domain (INV-1)
-    const db = getPrisma();
-    const shop = await findShopByDomain(db, shopDomain);
-    if (!shop) {
-      throw new UnauthorizedError("Shop not found", "UNAUTHORIZED");
-    }
-
-    // 7. Call service
-    const service = createPrescriptionsService({ db });
-    const result = await service.requestUploadUrl(shop.id, parsed.data);
+    // 6. Call service (resolves verified domain inside service boundary, INV-1, R4-F2)
+    const service = createPrescriptionsService();
+    const result = await service.requestUploadUrlByDomain(
+      shopDomain,
+      parsed.data,
+    );
 
     return new Response(JSON.stringify(result), {
       status: 200,

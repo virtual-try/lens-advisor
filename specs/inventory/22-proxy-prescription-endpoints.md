@@ -1,20 +1,28 @@
 # Inventory fragment — Spec 22 (App proxy: prescription submit and upload endpoints)
 
 ### `proxy-upload-url-endpoint`
-`app/routes/proxy.upload-url.ts` — Storefront app proxy endpoint `POST /apps/lens-advisor/upload-url`. Authenticates proxy signature (`authenticate.public.appProxy`, INV-6), enforces in-memory rate limiting (20 req/min/shop+IP), validates payload `{ contentType, size, draftId? }` via `uploadUrlRequestSchema`, creates a draft `Prescription` (source `UPLOAD`) when `draftId` is omitted, and returns `{ draftId, uploadUrl, key }` with an SSE-KMS presigned S3 upload URL.
+`app/routes/proxy.upload-url.ts` — Storefront app proxy endpoint `POST /apps/lens-advisor/upload-url`. Authenticates proxy signature (`authenticate.public.appProxy`, INV-6), enforces in-memory rate limiting (20 req/min/shop+IP), validates payload `{ contentType, size, draftId? }` via `uploadUrlRequestSchema`, and delegates to `PrescriptionsService.requestUploadUrlByDomain` (R4-F2) to create a draft `Prescription` (source `UPLOAD`) when `draftId` is omitted, returning `{ draftId, uploadUrl, key }` with an SSE-KMS presigned S3 upload URL.
 - **Allowed content types:** `image/jpeg`, `image/png`, `image/heic`, `application/pdf`.
 - **Upload file size limit:** 1 byte to 10 MB inclusive (1 to 10,485,760 bytes; 0 and > 10 MB rejected).
 - **Rate limit:** 20 requests per minute per verified shop domain + client IP.
+- **Architecture:** Route authenticates, rate-limits, parses body, and calls one service function with zero repository imports (R4-F2).
 **Use instead of:** Unsigned uploads or direct S3 client instantiation from storefront code.
 **Added by:** spec 22.
 
 ### `proxy-prescriptions-endpoint`
-`app/routes/proxy.prescriptions.ts` — Storefront app proxy endpoint `POST /apps/lens-advisor/prescriptions`. Authenticates proxy signature (`authenticate.public.appProxy`, INV-6), rate limits (20 req/min/shop+IP), validates payload `{ rxType, prescription?, draftId?, uploadedKeys? }` via `prescriptionSubmitBodySchema`. Re-validates clinical rules via spec 10 (`validatePrescription`); for `MANUAL` encrypts Rx payload into AES-256-GCM token using AAD `shopId:prescriptionId` (spec 05, INV-2); for `UPLOAD` validates that each key is under `shops/<shopId>/rx/<draftId>/`, exists in S3 via `headObject`, satisfies size limits (1 byte to 10 MB inclusive) and allowed content types, and caps upload keys to at most 5 keys (`MAX_UPLOAD_KEYS = 5`). Returns `{ rxRef }` (HTTP 201).
+`app/routes/proxy.prescriptions.ts` — Storefront app proxy endpoint `POST /apps/lens-advisor/prescriptions`. Authenticates proxy signature (`authenticate.public.appProxy`, INV-6), rate limits (20 req/min/shop+IP), validates payload via `parsePrescriptionSubmitBody` enforcing mutual exclusion between manual and upload modes (R4-F1). Re-validates clinical rules via spec 10 (`validatePrescription`); for `MANUAL` encrypts Rx payload into AES-256-GCM token using AAD `shopId:prescriptionId` (spec 05, INV-2); for `UPLOAD` validates that each key is under `shops/<shopId>/rx/<draftId>/`, exists in S3 via `headObject`, satisfies size limits (1 byte to 10 MB inclusive) and allowed content types, and caps upload keys to at most 5 keys (`MAX_UPLOAD_KEYS = 5`). Delegates domain lookup and submission to `PrescriptionsService.submitPrescriptionByDomain` (R4-F2). Returns `{ rxRef }` (HTTP 201).
 - **Uploaded keys limit:** 1 to 5 keys inclusive (`MAX_UPLOAD_KEYS = 5`; > 5 rejected).
 - **S3 file size limit:** 1 byte to 10 MB inclusive (1 to 10,485,760 bytes; 0 and > 10 MB rejected).
 - **Allowed content types:** `image/jpeg`, `image/png`, `image/heic`, `application/pdf`.
 - **Rate limit:** 20 requests per minute per verified shop domain + client IP.
+- **Mutual exclusion:** Ambiguous requests combining manual and upload fields return 400 `AMBIGUOUS_RX_SOURCE` without modifying draft state (R4-F1).
+- **Architecture:** Route authenticates, rate-limits, parses body, and calls one service function with zero repository imports (R4-F2).
 **Use instead of:** Storing unvalidated or plaintext prescription data in Shopify cart properties or custom tables.
+**Added by:** spec 22.
+
+### `prescriptions-schema`
+`app/features/prescriptions/schema.ts` — Spec 22 boundary schemas (`manualPrescriptionSubmitSchema`, `uploadPrescriptionSubmitSchema`) and `parsePrescriptionSubmitBody` validating prescription submission payloads. Enforces mutual exclusion: MANUAL requires typed prescription and forbids draftId/uploadedKeys; UPLOAD requires draftId + uploadedKeys and forbids prescription. Ambiguous input returns 400 `AMBIGUOUS_RX_SOURCE` (R4-F1).
+**Use instead of:** Loose validation allowing mixed manual and upload payloads.
 **Added by:** spec 22.
 
 ### `prescriptions-repository`
@@ -23,7 +31,7 @@
 **Added by:** spec 22.
 
 ### `prescriptions-service`
-`app/features/prescriptions/prescriptions.service.server.ts` — Domain service (`createPrescriptionsService`, `PrescriptionsService`) encapsulating prescription submission business rules, spec 10 re-validation, AAD binding before encryption, S3 key prefix validation, and storage integrity checks. Accepts plain values in/out with zero HTTP or `react-router` dependencies.
+`app/features/prescriptions/prescriptions.service.server.ts` — Domain service (`createPrescriptionsService`, `PrescriptionsService`) encapsulating prescription submission business rules, verified-domain shop resolution (`resolveShopByDomain`, `requestUploadUrlByDomain`, `submitPrescriptionByDomain`, R4-F2), spec 10 re-validation, AAD binding before encryption, S3 key prefix validation, mutual exclusion enforcement (R4-F1), and storage integrity checks. Accepts plain values in/out with zero HTTP or `react-router` dependencies.
 **Use instead of:** Placing prescription business logic, validation, or cipher calls inside route actions or loaders.
 **Added by:** spec 22.
 

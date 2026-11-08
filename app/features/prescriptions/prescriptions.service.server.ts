@@ -18,6 +18,7 @@ import {
   BadRequestError,
   type FieldError,
   NotFoundError,
+  UnauthorizedError,
 } from "../../shared/http/errors.server";
 import {
   ALLOWED_UPLOAD_CONTENT_TYPES,
@@ -29,6 +30,7 @@ import {
 } from "../../shared/storage/object-store.server";
 import {
   createPrescription,
+  findShopByDomain,
   getPrescriptionById,
   updatePrescriptionUpload,
   type PrescriptionRecord,
@@ -71,6 +73,43 @@ export class PrescriptionsService {
     this.cipher = deps.cipher ?? getCipher();
     this.objectStore = deps.objectStore ?? getObjectStore();
     this.idGenerator = deps.idGenerator ?? (() => randomUUID());
+  }
+
+  /**
+   * Resolves a verified shop domain to a shop record or throws UnauthorizedError if not found (R4-F2).
+   */
+  async resolveShopByDomain(
+    shopDomain: string,
+  ): Promise<{ id: string; domain: string }> {
+    const shop = await findShopByDomain(this.db, shopDomain);
+    if (!shop) {
+      throw new UnauthorizedError("Shop not found", "UNAUTHORIZED");
+    }
+    return shop;
+  }
+
+  /**
+   * Requests an upload URL for a verified shop domain.
+   * Resolves shop domain inside the service boundary (R4-F2).
+   */
+  async requestUploadUrlByDomain(
+    shopDomain: string,
+    input: UploadUrlRequest,
+  ): Promise<UploadUrlResponse> {
+    const shop = await this.resolveShopByDomain(shopDomain);
+    return this.requestUploadUrl(shop.id, input);
+  }
+
+  /**
+   * Submits a prescription for a verified shop domain.
+   * Resolves shop domain inside the service boundary (R4-F2).
+   */
+  async submitPrescriptionByDomain(
+    shopDomain: string,
+    input: PrescriptionSubmitBody,
+  ): Promise<PrescriptionSubmitResponse> {
+    const shop = await this.resolveShopByDomain(shopDomain);
+    return this.submitPrescription(shop.id, input);
   }
 
   /**
@@ -167,11 +206,21 @@ export class PrescriptionsService {
       );
     }
 
-    const isUpload = Boolean(
-      input.draftId || (input.uploadedKeys && input.uploadedKeys.length > 0),
-    );
+    const hasManual = input.prescription !== undefined;
+    const hasUpload =
+      input.draftId !== undefined ||
+      (input.uploadedKeys !== undefined && input.uploadedKeys.length > 0) ||
+      input.uploadedKeys !== undefined;
 
-    if (isUpload) {
+    // Enforce mutual exclusion at spec 22 boundary (R4-F1)
+    if (hasManual && hasUpload) {
+      throw new BadRequestError(
+        "Ambiguous prescription submission: cannot mix manual prescription and upload fields",
+        "AMBIGUOUS_RX_SOURCE",
+      );
+    }
+
+    if (hasUpload) {
       return this.submitUploadPrescription(shopId, input);
     }
 

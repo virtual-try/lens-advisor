@@ -886,5 +886,135 @@ describe("Prescriptions Service", () => {
         }),
       );
     });
+
+    it("R4-F1: ambiguous input (manual prescription + draftId/uploadedKeys) returns 400 AMBIGUOUS_RX_SOURCE and leaves draft unchanged", async () => {
+      const draft = await service.requestUploadUrl(shopA.shopId, {
+        contentType: "image/png",
+        size: 1024,
+      });
+      fakeStore.existingObjects.add(draft.key);
+
+      const validRx = {
+        od: { sph: -200, cyl: -100, axis: 90 },
+        os: { sph: -200, cyl: 0 },
+        pd: { single: 630 },
+      };
+
+      // 1. Both manual prescription AND draftId + uploadedKeys
+      await expect(
+        service.submitPrescription(shopA.shopId, {
+          rxType: "SINGLE_VISION",
+          prescription: validRx,
+          draftId: draft.draftId,
+          uploadedKeys: [draft.key],
+        }),
+      ).rejects.toThrowError(
+        expect.objectContaining({
+          status: 400,
+          code: "AMBIGUOUS_RX_SOURCE",
+        }),
+      );
+
+      // Verify draft row in DB is completely unchanged (still empty uploadKeys, unfinalized)
+      const draftRow = await db.prisma.prescription.findUnique({
+        where: { id: draft.draftId },
+      });
+      expect(draftRow).not.toBeNull();
+      expect(draftRow?.uploadKeys).toEqual([]);
+      expect(draftRow?.source).toBe("UPLOAD");
+
+      // 2. Manual prescription + draftId alone (no uploadedKeys)
+      await expect(
+        service.submitPrescription(shopA.shopId, {
+          rxType: "SINGLE_VISION",
+          prescription: validRx,
+          draftId: draft.draftId,
+        }),
+      ).rejects.toThrowError(
+        expect.objectContaining({
+          status: 400,
+          code: "AMBIGUOUS_RX_SOURCE",
+        }),
+      );
+
+      // 3. Manual prescription + uploadedKeys alone (no draftId)
+      await expect(
+        service.submitPrescription(shopA.shopId, {
+          rxType: "SINGLE_VISION",
+          prescription: validRx,
+          uploadedKeys: [draft.key],
+        }),
+      ).rejects.toThrowError(
+        expect.objectContaining({
+          status: 400,
+          code: "AMBIGUOUS_RX_SOURCE",
+        }),
+      );
+    });
+  });
+
+  describe("R4-F2: verified-domain shop resolution inside prescription service", () => {
+    it("resolveShopByDomain returns shop for known domain and throws 401 UNAUTHORIZED for unknown", async () => {
+      const shop = await service.resolveShopByDomain(shopA.domain);
+      expect(shop.id).toBe(shopA.shopId);
+      expect(shop.domain).toBe(shopA.domain);
+
+      await expect(
+        service.resolveShopByDomain("nonexistent.myshopify.com"),
+      ).rejects.toThrowError(
+        expect.objectContaining({
+          status: 401,
+          code: "UNAUTHORIZED",
+        }),
+      );
+    });
+
+    it("requestUploadUrlByDomain resolves domain and delegates to requestUploadUrl", async () => {
+      const result = await service.requestUploadUrlByDomain(shopA.domain, {
+        contentType: "image/png",
+        size: 1024,
+      });
+      expect(result.draftId).toBeDefined();
+      expect(result.uploadUrl).toContain(result.draftId);
+      expect(result.key).toContain(`shops/${shopA.shopId}/rx/${result.draftId}/`);
+
+      await expect(
+        service.requestUploadUrlByDomain("nonexistent.myshopify.com", {
+          contentType: "image/png",
+          size: 1024,
+        }),
+      ).rejects.toThrowError(
+        expect.objectContaining({
+          status: 401,
+          code: "UNAUTHORIZED",
+        }),
+      );
+    });
+
+    it("submitPrescriptionByDomain resolves domain and delegates to submitPrescription", async () => {
+      const validRx = {
+        od: { sph: -300, cyl: 0 },
+        os: { sph: -300, cyl: 0 },
+        pd: { single: 600 },
+      };
+
+      const result = await service.submitPrescriptionByDomain(shopA.domain, {
+        rxType: "SINGLE_VISION",
+        prescription: validRx,
+      });
+      expect(result.rxRef).toBeDefined();
+
+      await expect(
+        service.submitPrescriptionByDomain("nonexistent.myshopify.com", {
+          rxType: "SINGLE_VISION",
+          prescription: validRx,
+        }),
+      ).rejects.toThrowError(
+        expect.objectContaining({
+          status: 401,
+          code: "UNAUTHORIZED",
+        }),
+      );
+    });
   });
 });

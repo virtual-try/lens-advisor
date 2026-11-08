@@ -257,7 +257,6 @@ describe("Spec 22: App Proxy Prescription Endpoints (routes.test.ts)", () => {
     );
 
     const submitRes = await prescriptionsAction(createActionArgs(submitReq));
-
     expect(submitRes.status).toBe(400);
     const data = await submitRes.json();
     expect(data.error.code).toBe("INVALID_UPLOAD_KEY");
@@ -289,7 +288,6 @@ describe("Spec 22: App Proxy Prescription Endpoints (routes.test.ts)", () => {
     );
 
     const submitRes = await prescriptionsAction(createActionArgs(submitReq));
-
     expect(submitRes.status).toBe(400);
     const data = await submitRes.json();
     expect(data.error.code).toBe("UPLOAD_MISSING");
@@ -1041,6 +1039,96 @@ describe("Spec 22: App Proxy Prescription Endpoints (routes.test.ts)", () => {
       expect(resOver.status).toBe(400);
       const bodyOver = await resOver.json();
       expect(bodyOver.error.code).toBe("TOO_LARGE");
+    });
+  });
+
+  describe("R4-F1: ambiguous prescription submission and mutual exclusion", () => {
+    it("prescriptions endpoint rejects ambiguous input (manual Rx + draftId + uploadedKeys) with 400 AMBIGUOUS_RX_SOURCE and leaves draft unchanged", async () => {
+      // 1. Create a draft via upload-url
+      const uploadReq = makeSignedProxyRequest(
+        "/apps/lens-advisor/upload-url",
+        shopA.domain,
+        { contentType: "image/png", size: 1024 },
+      );
+      const uploadRes = await uploadUrlAction(createActionArgs(uploadReq));
+      expect(uploadRes.status).toBe(200);
+      const { draftId, key } = await uploadRes.json();
+      fakeStore.existingObjects.add(key);
+
+      const validRx = {
+        od: { sph: -200, cyl: -100, axis: 90 },
+        os: { sph: -200, cyl: 0 },
+        pd: { single: 62 },
+      };
+
+      // 2. Submit ambiguous request combining typed Rx with draftId and uploadedKeys
+      const ambiguousReq = makeSignedProxyRequest(
+        "/apps/lens-advisor/prescriptions",
+        shopA.domain,
+        {
+          rxType: "SINGLE_VISION",
+          prescription: validRx,
+          draftId,
+          uploadedKeys: [key],
+        },
+      );
+
+      const res = await prescriptionsAction(createActionArgs(ambiguousReq));
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error.code).toBe("AMBIGUOUS_RX_SOURCE");
+
+      // 3. Verify draft row remains unfinalized in DB (uploadKeys empty)
+      const draftRow = await db.prisma.prescription.findUnique({
+        where: { id: draftId },
+      });
+      expect(draftRow).not.toBeNull();
+      expect(draftRow?.uploadKeys).toEqual([]);
+      expect(draftRow?.source).toBe("UPLOAD");
+    });
+  });
+
+  describe("R4-F2: routes delegate domain resolution to prescription service", () => {
+    it("both routes call the service and return 401 UNAUTHORIZED when verified domain is not found in DB", async () => {
+      // Seed a session for an unseeded shop domain
+      const ghostDomain = "ghost-shop.myshopify.com";
+      await db.prisma.session.create({
+        data: {
+          id: `offline_${ghostDomain}`,
+          shop: ghostDomain,
+          state: "active",
+          accessToken: "fake-token",
+        },
+      });
+
+      // 1. Prescriptions endpoint
+      const rxReq = makeSignedProxyRequest(
+        "/apps/lens-advisor/prescriptions",
+        ghostDomain,
+        {
+          rxType: "SINGLE_VISION",
+          prescription: {
+            od: { sph: -100 },
+            os: { sph: -100 },
+            pd: { single: 600 },
+          },
+        },
+      );
+      const rxRes = await prescriptionsAction(createActionArgs(rxReq));
+      expect(rxRes.status).toBe(401);
+      const rxBody = await rxRes.json();
+      expect(rxBody.error.code).toBe("UNAUTHORIZED");
+
+      // 2. Upload-url endpoint
+      const upReq = makeSignedProxyRequest(
+        "/apps/lens-advisor/upload-url",
+        ghostDomain,
+        { contentType: "image/png", size: 1024 },
+      );
+      const upRes = await uploadUrlAction(createActionArgs(upReq));
+      expect(upRes.status).toBe(401);
+      const upBody = await upRes.json();
+      expect(upBody.error.code).toBe("UNAUTHORIZED");
     });
   });
 });
