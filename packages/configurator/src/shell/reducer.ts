@@ -124,12 +124,16 @@ export function configuratorReducer(
       }
 
       case "SET_RX_TYPE": {
+        const isDifferent = state.rxType !== action.rxType;
         return {
           ...state,
           rxType: action.rxType,
+          prescription: isDifferent ? null : state.prescription,
+          prescriptionRef: isDifferent ? null : state.prescriptionRef,
           selection: {
             ...state.selection,
             rxType: action.rxType,
+            prescriptionRef: isDifferent ? undefined : state.selection.prescriptionRef,
           },
         };
       }
@@ -138,6 +142,18 @@ export function configuratorReducer(
         return {
           ...state,
           prescription: action.prescription,
+        };
+      }
+
+      case "CLEAR_PRESCRIPTION": {
+        return {
+          ...state,
+          prescription: null,
+          prescriptionRef: null,
+          selection: {
+            ...state.selection,
+            prescriptionRef: undefined,
+          },
         };
       }
 
@@ -247,6 +263,13 @@ export function configuratorReducer(
       case "GO_TO_STEP": {
         const target = action.stepIndex;
         if (target >= 0 && target < steps.length && steps[target].isApplicable(state)) {
+          if (target > state.stepIndex) {
+            for (let i = state.stepIndex; i < target; i++) {
+              if (steps[i].isApplicable(state) && !steps[i].isComplete(state)) {
+                return state;
+              }
+            }
+          }
           return {
             ...state,
             stepIndex: target,

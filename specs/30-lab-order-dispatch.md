@@ -1,6 +1,6 @@
 # Spec 30 — Lab order dispatch job (ticket → S3 → email)
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 05, Spec 06, Spec 07, Spec 14, Spec 15, Spec 23, Spec 24
 **Model:** Heavy — `claude-opus-5-5` · `gpt-6-astra` · `gemini-3.1-pro-preview`
 **Issue:** —

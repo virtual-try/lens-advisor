@@ -9,6 +9,7 @@ export interface FooterProps {
   api: ApiClient;
   activeStep?: StepDefinition;
   canGoBack: boolean;
+  canContinue?: boolean;
   isComplete: boolean;
   onBack: () => void;
   onContinue: () => void;
@@ -20,11 +21,14 @@ export function Footer({
   api,
   activeStep,
   canGoBack,
+  canContinue,
   isComplete,
   onBack,
   onContinue,
 }: FooterProps): JSX.Element {
   const SummaryComponent = activeStep?.Summary;
+
+  const continueDisabled = canContinue !== undefined ? !canContinue : !isComplete;
 
   return (
     <footer class="la-footer">
@@ -46,7 +50,7 @@ export function Footer({
         <button
           type="button"
           class="la-btn la-btn--primary"
-          disabled={!isComplete}
+          disabled={continueDisabled}
           onClick={onContinue}
         >
           {strings.footer.continue}

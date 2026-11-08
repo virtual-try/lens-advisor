@@ -21,6 +21,7 @@ import { ApiError } from "../../shared/api";
 import type { StepProps } from "../../shell/types";
 import { strings } from "./strings";
 import prescriptionCss from "./prescription.css?inline";
+import { registerPrescriptionSubmitHandler } from "./index";
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -79,9 +80,6 @@ function mapPathToFieldKey(path: string): string | null {
     case "pd.os":
       return "dualPdOs";
     default:
-      if (normalized.startsWith("od.")) return "odSph";
-      if (normalized.startsWith("os.")) return "osSph";
-      if (normalized.startsWith("pd")) return "singlePd";
       return null;
   }
 }
@@ -287,7 +285,7 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
 
   const lastDispatchedRxRef = useRef<string | null>(null);
 
-  // Sync valid prescription into shell state
+  // Sync valid prescription into shell state, or clear when invalid
   useEffect(() => {
     const rx = buildPrescription();
     const serialized = rx ? JSON.stringify(rx) : null;
@@ -295,6 +293,8 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
       lastDispatchedRxRef.current = serialized;
       if (rx) {
         dispatch({ type: "SET_PRESCRIPTION", prescription: rx });
+      } else {
+        dispatch({ type: "CLEAR_PRESCRIPTION" });
       }
     }
   }, [buildPrescription, dispatch]);
@@ -513,14 +513,22 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
     } catch (err: unknown) {
       if (err instanceof ApiError && err.status === 400 && err.fields && err.fields.length > 0) {
         const errs: Record<string, string> = {};
+        let hasUnmappedField = false;
         for (const f of err.fields) {
           const key = mapPathToFieldKey(f.path);
           if (key) {
             const codeKey = f.code as RxValidationCode;
             errs[key] = strings.errors[codeKey] || strings.errors.GENERIC || strings.errors.INVALID;
+          } else {
+            hasUnmappedField = true;
           }
         }
-        setFieldErrors((prev) => ({ ...prev, ...errs }));
+        if (Object.keys(errs).length > 0) {
+          setFieldErrors((prev) => ({ ...prev, ...errs }));
+        }
+        if (hasUnmappedField || Object.keys(errs).length === 0) {
+          setSubmitError(strings.apiErrors.VALIDATION_FAILED);
+        }
       } else {
         const apiCode = err instanceof ApiError ? (err.code as keyof typeof strings.apiErrors) : undefined;
         setSubmitError(
@@ -596,35 +604,13 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
     dispatch({ type: "SET_PRESCRIPTION_REF", prescriptionRef: "" });
   };
 
-  // Intercept continue button click in footer
+  // Register submit handler with step definition so shell onContinue calls it
   useEffect(() => {
-    const root = containerRef.current?.getRootNode() as Document | ShadowRoot | null;
-    const sheet =
-      containerRef.current?.closest(".la-sheet") ??
-      root?.querySelector?.(".la-sheet") ??
-      containerRef.current;
-    if (!sheet) return;
-
-    const handleSheetClick = async (e: Event) => {
-      const mouseEvent = e as MouseEvent;
-      const target = mouseEvent.target as HTMLElement | null;
-      const continueBtn = target?.closest(".la-btn--primary");
-      if (!continueBtn || !continueBtn.closest(".la-footer")) return;
-
-      if (state.rxType === "NON_PRESCRIPTION") return;
-      if (state.prescriptionRef) return; // already submitted, allow continue
-
-      // Submit manual Rx whenever the typed Rx is valid and there is no rxRef, whichever tab is active
-      e.stopPropagation();
-      e.preventDefault();
-      await handleManualSubmit();
-    };
-
-    sheet.addEventListener("click", handleSheetClick, true);
+    registerPrescriptionSubmitHandler(handleManualSubmit);
     return () => {
-      sheet.removeEventListener("click", handleSheetClick, true);
+      registerPrescriptionSubmitHandler(null);
     };
-  }, [handleManualSubmit, state.prescriptionRef, state.rxType]);
+  }, [handleManualSubmit]);
 
   return (
     <div class="la-step-prescription" ref={containerRef}>

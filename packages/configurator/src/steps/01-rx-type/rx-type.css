@@ -119,6 +119,9 @@
 }
 
 .la-help summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--la-target);
   font-size: var(--la-text-sm);
   font-weight: var(--la-weight-medium);
   color: var(--la-muted);

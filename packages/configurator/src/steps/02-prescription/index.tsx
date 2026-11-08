@@ -1,12 +1,28 @@
-import type { ConfiguratorState, StepModule } from "../../shell/types";
+import type { ConfiguratorState, StepModule, StepProps } from "../../shell/types";
 import { validatePrescription } from "../../../../rx-core/src/rx/validate.js";
 import { PrescriptionStep } from "./PrescriptionStep";
+
+let activeSubmitHandler: (() => Promise<void>) | null = null;
+
+export function registerPrescriptionSubmitHandler(
+  handler: (() => Promise<void>) | null,
+): void {
+  activeSubmitHandler = handler;
+}
 
 export function isComplete(state: ConfiguratorState): boolean {
   if (state.rxType === "NON_PRESCRIPTION") {
     return true;
   }
-  if (state.prescriptionRef) {
+  return Boolean(state.prescriptionRef);
+}
+
+export function isApplicable(state: ConfiguratorState): boolean {
+  return state.rxType !== "NON_PRESCRIPTION";
+}
+
+export function canContinue(state: ConfiguratorState): boolean {
+  if (isComplete(state)) {
     return true;
   }
   if (
@@ -18,8 +34,23 @@ export function isComplete(state: ConfiguratorState): boolean {
   return false;
 }
 
-export function isApplicable(state: ConfiguratorState): boolean {
-  return state.rxType !== "NON_PRESCRIPTION";
+export async function onContinue(props: StepProps): Promise<void> {
+  if (isComplete(props.state)) {
+    props.dispatch({ type: "CONTINUE" });
+    return;
+  }
+  if (activeSubmitHandler) {
+    await activeSubmitHandler();
+    return;
+  }
+  if (props.state.prescription) {
+    const res = await props.api.submitPrescription({
+      rxType: props.state.rxType ?? "SINGLE_VISION",
+      prescription: props.state.prescription,
+    });
+    props.dispatch({ type: "SET_PRESCRIPTION_REF", prescriptionRef: res.rxRef });
+    props.dispatch({ type: "CONTINUE" });
+  }
 }
 
 export const id = "prescription";
@@ -31,6 +62,8 @@ export const prescriptionStep: StepModule = {
   titleKey,
   isComplete,
   isApplicable,
+  canContinue,
+  onContinue,
   Component,
 };
 

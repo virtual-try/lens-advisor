@@ -5,8 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CatalogResponse } from "../../../../rx-core/src/index.js";
 import { ApiError, type ApiClient } from "../../shared/api";
 import { Footer } from "../../shell/Footer";
-import { createInitialState } from "../../shell/reducer";
-import type { ConfiguratorAction, ConfiguratorState } from "../../shell/types";
+import { createInitialState, configuratorReducer } from "../../shell/reducer";
+import type { ConfiguratorAction, ConfiguratorState, StepDefinition } from "../../shell/types";
 import { PrescriptionStep } from "./PrescriptionStep";
 import { isApplicable, isComplete, prescriptionStep } from "./index";
 import prescriptionCss from "./prescription.css?inline";
@@ -62,12 +62,20 @@ function TestWrapper({
     onDispatch?.(action);
     if (action.type === "SET_PRESCRIPTION") {
       setState((prev) => ({ ...prev, prescription: action.prescription }));
+    } else if (action.type === "CLEAR_PRESCRIPTION") {
+      setState((prev) => ({ ...prev, prescription: null, prescriptionRef: null }));
     } else if (action.type === "SET_PRESCRIPTION_REF") {
       setState((prev) => ({ ...prev, prescriptionRef: action.prescriptionRef }));
+    } else if (action.type === "CONTINUE") {
+      if (prescriptionStep.isComplete(state)) {
+        setState((prev) => ({ ...prev, stepIndex: prev.stepIndex + 1 }));
+      }
     }
-  }, [onDispatch]);
+  }, [onDispatch, state]);
 
-  const complete = prescriptionStep.isComplete(state);
+  const canContinue = prescriptionStep.canContinue
+    ? prescriptionStep.canContinue(state)
+    : prescriptionStep.isComplete(state);
 
   return (
     <div class="la-sheet">
@@ -77,9 +85,16 @@ function TestWrapper({
         dispatch={handleDispatch}
         api={api}
         canGoBack={false}
-        isComplete={complete}
+        canContinue={canContinue}
+        isComplete={prescriptionStep.isComplete(state)}
         onBack={() => {}}
-        onContinue={() => handleDispatch({ type: "CONTINUE" })}
+        onContinue={async () => {
+          if (prescriptionStep.onContinue) {
+            await prescriptionStep.onContinue({ state, dispatch: handleDispatch, api });
+          } else {
+            handleDispatch({ type: "CONTINUE" });
+          }
+        }}
       />
     </div>
   );
@@ -95,6 +110,8 @@ describe("02-prescription step", () => {
     expect(prescriptionStep.titleKey).toBe("Prescription");
     expect(typeof prescriptionStep.isComplete).toBe("function");
     expect(typeof prescriptionStep.isApplicable).toBe("function");
+    expect(typeof prescriptionStep.canContinue).toBe("function");
+    expect(typeof prescriptionStep.onContinue).toBe("function");
     expect(prescriptionStep.Component).toBe(PrescriptionStep);
   });
 
@@ -189,12 +206,62 @@ describe("02-prescription step", () => {
     fireEvent.input(pdInput, { target: { value: "63" } });
     fireEvent.blur(pdInput);
 
-    // Now Continue button is enabled
+    // Now Continue button is enabled via canContinue
     await waitFor(() => {
       expect(continueBtn.disabled).toBe(false);
     });
 
-    // Click Continue
+    const expectedRx = {
+      od: { sph: -225, cyl: -50, axis: 180, add: 200 },
+      os: { sph: -200, add: 200 },
+      pd: { single: 630 },
+    };
+
+    // Before submit, prescriptionRef is absent and isComplete is false
+    const validUnsubmittedState: ConfiguratorState = {
+      ...initialState,
+      prescription: expectedRx,
+      prescriptionRef: null,
+    };
+    expect(prescriptionStep.canContinue?.(validUnsubmittedState)).toBe(true);
+    expect(prescriptionStep.isComplete(validUnsubmittedState)).toBe(false);
+
+    // Reducer refuses to advance when isComplete is false
+    const fixtureSteps: StepDefinition[] = [
+      {
+        id: "rx-type",
+        titleKey: "Vision",
+        folder: "01-rx-type",
+        isComplete: () => true,
+        isApplicable: () => true,
+        Component: () => null,
+      },
+      {
+        id: "prescription",
+        titleKey: "Prescription",
+        folder: "02-prescription",
+        isComplete: prescriptionStep.isComplete,
+        isApplicable: prescriptionStep.isApplicable,
+        canContinue: prescriptionStep.canContinue,
+        onContinue: prescriptionStep.onContinue,
+        Component: PrescriptionStep,
+      },
+      {
+        id: "lens",
+        titleKey: "Lens",
+        folder: "03-lens",
+        isComplete: () => true,
+        isApplicable: () => true,
+        Component: () => null,
+      },
+    ];
+    const blockedState = configuratorReducer(
+      { ...validUnsubmittedState, stepIndex: 1 },
+      { type: "CONTINUE", steps: fixtureSteps },
+    );
+    expect(blockedState.stepIndex).toBe(1);
+
+    // Click Continue (shell calls onContinue which asks step to submit)
     await act(async () => {
       fireEvent.click(continueBtn);
     });
@@ -202,11 +269,7 @@ describe("02-prescription step", () => {
     // Assert API submit was called with integer units per INV-5
     expect(mockApi.submitPrescription).toHaveBeenCalledWith({
       rxType: "PROGRESSIVE",
-      prescription: {
-        od: { sph: -225, cyl: -50, axis: 180, add: 200 },
-        os: { sph: -200, add: 200 },
-        pd: { single: 630 },
-      },
+      prescription: expectedRx,
     });
 
     // Assert rxRef stored
@@ -214,6 +277,20 @@ describe("02-prescription step", () => {
       type: "SET_PRESCRIPTION_REF",
       prescriptionRef: "rx_normal_123",
     });
+
+    // Advancing happens only after rxRef is set
+    const stateWithRef: ConfiguratorState = {
+      ...validUnsubmittedState,
+      stepIndex: 1,
+      prescriptionRef: "rx_normal_123",
+    };
+    expect(prescriptionStep.isComplete(stateWithRef)).toBe(true);
+    const advancedState = configuratorReducer(stateWithRef, {
+      type: "CONTINUE",
+      steps: fixtureSteps,
+    });
+    expect(advancedState.stepIndex).toBe(2);
+
     // Assert CONTINUE dispatched
     expect(dispatchedActions).toContainEqual({
       type: "CONTINUE",
@@ -1029,5 +1106,302 @@ describe("02-prescription step", () => {
     await act(async () => {
       resolveUpload!();
     });
+  });
+
+  // R2-F1: isComplete returns false on valid prescription without prescriptionRef and true only with prescriptionRef or NON_PRESCRIPTION
+  it("R2-F1: isComplete returns false on valid prescription without prescriptionRef and true only with prescriptionRef or NON_PRESCRIPTION", () => {
+    const validRx = {
+      od: { sph: -200 },
+      os: { sph: -200 },
+      pd: { single: 630 },
+    };
+
+    const stateWithValidRxOnly: ConfiguratorState = {
+      ...createInitialState(),
+      rxType: "SINGLE_VISION",
+      prescription: validRx,
+      prescriptionRef: null,
+    };
+
+    // isComplete MUST be false per spec
+    expect(isComplete(stateWithValidRxOnly)).toBe(false);
+    expect(prescriptionStep.isComplete(stateWithValidRxOnly)).toBe(false);
+
+    // canContinue is true so footer button is enabled
+    expect(prescriptionStep.canContinue!(stateWithValidRxOnly)).toBe(true);
+
+    // When prescriptionRef is set, isComplete is true
+    const stateWithRxRef: ConfiguratorState = {
+      ...stateWithValidRxOnly,
+      prescriptionRef: "rx-ref-999",
+    };
+    expect(isComplete(stateWithRxRef)).toBe(true);
+    expect(prescriptionStep.isComplete(stateWithRxRef)).toBe(true);
+
+    // For NON_PRESCRIPTION, isComplete is true
+    const nonRxState: ConfiguratorState = {
+      ...createInitialState(),
+      rxType: "NON_PRESCRIPTION",
+      prescription: null,
+      prescriptionRef: null,
+    };
+    expect(isComplete(nonRxState)).toBe(true);
+    expect(prescriptionStep.isComplete(nonRxState)).toBe(true);
+
+    // Reducer CONTINUE and GO_TO_STEP gate step 2
+    const fixtureSteps: StepDefinition[] = [
+      {
+        id: "rx-type",
+        titleKey: "Vision",
+        folder: "01-rx-type",
+        isComplete: () => true,
+        isApplicable: () => true,
+        Component: () => null,
+      },
+      {
+        id: "prescription",
+        titleKey: "Prescription",
+        folder: "02-prescription",
+        isComplete: prescriptionStep.isComplete,
+        isApplicable: prescriptionStep.isApplicable,
+        canContinue: prescriptionStep.canContinue,
+        onContinue: prescriptionStep.onContinue,
+        Component: PrescriptionStep,
+      },
+      {
+        id: "lens",
+        titleKey: "Lens",
+        folder: "03-lens",
+        isComplete: () => true,
+        isApplicable: () => true,
+        Component: () => null,
+      },
+    ];
+
+    const currentStep2: ConfiguratorState = {
+      ...stateWithValidRxOnly,
+      stepIndex: 1,
+    };
+
+    // CONTINUE does not advance without rxRef
+    const afterContinue = configuratorReducer(currentStep2, {
+      type: "CONTINUE",
+      steps: fixtureSteps,
+    });
+    expect(afterContinue.stepIndex).toBe(1);
+
+    // GO_TO_STEP to step 2 (lens, index 2) does not advance without rxRef
+    const afterGoTo = configuratorReducer(currentStep2, {
+      type: "GO_TO_STEP",
+      stepIndex: 2,
+      steps: fixtureSteps,
+    });
+    expect(afterGoTo.stepIndex).toBe(1);
+  });
+
+  // R2-F2: CLEAR_PRESCRIPTION dispatched when form becomes invalid and rehydration shows empty, never stale Rx
+  it("R2-F2: dispatches CLEAR_PRESCRIPTION when form turns invalid and rehydration shows empty, never stale Rx", async () => {
+    const initialState: ConfiguratorState = {
+      ...createInitialState(),
+      catalog: mockCatalog,
+      rxType: "SINGLE_VISION",
+    };
+
+    const mockApi: ApiClient = {
+      proxyBase: "/apps/lens-advisor",
+      getCatalog: vi.fn(),
+      submitPrescription: vi.fn().mockResolvedValue({ rxRef: "rx-123" }),
+      getUploadUrl: vi.fn(),
+      uploadFile: vi.fn(),
+    };
+
+    const dispatched: ConfiguratorAction[] = [];
+    let latestState = initialState;
+
+    const { unmount } = render(
+      <TestWrapper
+        initialState={initialState}
+        api={mockApi}
+        onDispatch={(act) => {
+          dispatched.push(act);
+          if (act.type === "SET_PRESCRIPTION") {
+            latestState = { ...latestState, prescription: act.prescription };
+          } else if (act.type === "CLEAR_PRESCRIPTION") {
+            latestState = { ...latestState, prescription: null, prescriptionRef: null };
+          }
+        }}
+      />,
+    );
+
+    const odSph = screen.getByLabelText(/Right eye.*Sphere/i);
+    const osSph = screen.getByLabelText(/Left eye.*Sphere/i);
+    const pdInput = screen.getByLabelText(/PD \(mm\)/i);
+
+    // Type valid Rx
+    fireEvent.input(odSph, { target: { value: "-2.00" } });
+    fireEvent.blur(odSph);
+    fireEvent.input(osSph, { target: { value: "-2.00" } });
+    fireEvent.blur(osSph);
+    fireEvent.input(pdInput, { target: { value: "63" } });
+    fireEvent.blur(pdInput);
+
+    await waitFor(() => {
+      expect(dispatched).toContainEqual(
+        expect.objectContaining({
+          type: "SET_PRESCRIPTION",
+          prescription: expect.objectContaining({ od: { sph: -200 } }),
+        }),
+      );
+    });
+    expect(latestState.prescription).not.toBeNull();
+
+    // Now edit SPH to an invalid value (empty)
+    fireEvent.input(odSph, { target: { value: "" } });
+    fireEvent.blur(odSph);
+
+    // Must dispatch CLEAR_PRESCRIPTION
+    await waitFor(() => {
+      expect(dispatched).toContainEqual({ type: "CLEAR_PRESCRIPTION" });
+    });
+    expect(latestState.prescription).toBeNull();
+
+    unmount();
+
+    // Remount with latestState (which had its prescription cleared)
+    render(<TestWrapper initialState={latestState} api={mockApi} />);
+
+    // Inputs must be empty, NOT the old stale -2.00
+    const remountedOdSph = screen.getByLabelText(/Right eye.*Sphere/i) as HTMLInputElement;
+    const remountedOsSph = screen.getByLabelText(/Left eye.*Sphere/i) as HTMLInputElement;
+    expect(remountedOdSph.value).toBe("");
+    expect(remountedOsSph.value).toBe("");
+  });
+
+  // R2-F3: .la-link and .la-copy have min-height var(--la-target) and inline-flex alignment
+  it("R2-F3: .la-link and .la-copy have min-height var(--la-target) and inline-flex alignment", () => {
+    expect(prescriptionCss).toMatch(
+      /\.la-link\s*\{[^}]*display:\s*inline-flex;[^}]*align-items:\s*center;[^}]*min-height:\s*var\(--la-target\);/,
+    );
+    expect(prescriptionCss).toMatch(
+      /\.la-copy\s*\{[^}]*display:\s*inline-flex;[^}]*align-items:\s*center;[^}]*min-height:\s*var\(--la-target\);/,
+    );
+  });
+
+  // R2-F4: prescriptionCss defines .la-help styles tokens only
+  it("R2-F4: prescription.css defines .la-help disclosure styles tokens only", () => {
+    expect(prescriptionCss).toMatch(/\.la-help\s*\{[^}]*border-top:[^}]*var\(--la-border-width\)/);
+    expect(prescriptionCss).toMatch(/\.la-help summary\s*\{[^}]*min-height:\s*var\(--la-target\);/);
+    expect(prescriptionCss).toMatch(/\.la-help summary:focus-visible\s*\{[^}]*outline:\s*var\(--la-focus-outline\);/);
+    expect(prescriptionCss).toMatch(/\.la-help dl\s*\{[^}]*display:\s*flex;/);
+    expect(prescriptionCss).toMatch(/\.la-help dt\s*\{[^}]*font-size:\s*var\(--la-text-sm\);/);
+    expect(prescriptionCss).toMatch(/\.la-help dd\s*\{[^}]*font-size:\s*var\(--la-text-sm\);/);
+  });
+
+  // R2-F5: unmapped server 400 field errors and unknown od.*/os.* paths show form-level error, not SPH
+  it("R2-F5: sets submitError to VALIDATION_FAILED when server 400 has unmapped fields (e.g. rxType)", async () => {
+    const state: ConfiguratorState = {
+      ...createInitialState(),
+      catalog: mockCatalog,
+      rxType: "SINGLE_VISION",
+    };
+
+    const mockApi: ApiClient = {
+      proxyBase: "/apps/lens-advisor",
+      getCatalog: vi.fn(),
+      submitPrescription: vi.fn().mockRejectedValue(
+        new ApiError({
+          status: 400,
+          code: "VALIDATION_FAILED",
+          fields: [{ path: "rxType", code: "INVALID" }],
+        }),
+      ),
+      getUploadUrl: vi.fn(),
+      uploadFile: vi.fn(),
+    };
+
+    render(<TestWrapper initialState={state} api={mockApi} />);
+
+    const odSph = screen.getByLabelText(/Right eye.*Sphere/i);
+    const osSph = screen.getByLabelText(/Left eye.*Sphere/i);
+    const pdInput = screen.getByLabelText(/PD \(mm\)/i);
+
+    fireEvent.input(odSph, { target: { value: "-2.00" } });
+    fireEvent.blur(odSph);
+    fireEvent.input(osSph, { target: { value: "-2.00" } });
+    fireEvent.blur(osSph);
+    fireEvent.input(pdInput, { target: { value: "63" } });
+    fireEvent.blur(pdInput);
+
+    const continueBtn = screen.getByRole("button", { name: "Continue" });
+    await waitFor(() => {
+      expect((continueBtn as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    await act(async () => {
+      fireEvent.click(continueBtn);
+    });
+
+    // Form-level error is displayed with strings.apiErrors.VALIDATION_FAILED
+    await waitFor(() => {
+      expect(screen.getByText(strings.apiErrors.VALIDATION_FAILED)).not.toBeNull();
+    });
+    // No error under SPH
+    const odSphInput = screen.getByLabelText(/Right eye.*Sphere/i);
+    expect(odSphInput.getAttribute("aria-invalid")).toBe("false");
+  });
+
+  it("R2-F5: maps unknown od.* or os.* paths to form-level error submitError, not SPH", async () => {
+    const state: ConfiguratorState = {
+      ...createInitialState(),
+      catalog: mockCatalog,
+      rxType: "SINGLE_VISION",
+    };
+
+    const mockApi: ApiClient = {
+      proxyBase: "/apps/lens-advisor",
+      getCatalog: vi.fn(),
+      submitPrescription: vi.fn().mockRejectedValue(
+        new ApiError({
+          status: 400,
+          code: "VALIDATION_FAILED",
+          fields: [{ path: "od.prism", code: "UNSUPPORTED" }],
+        }),
+      ),
+      getUploadUrl: vi.fn(),
+      uploadFile: vi.fn(),
+    };
+
+    render(<TestWrapper initialState={state} api={mockApi} />);
+
+    const odSph = screen.getByLabelText(/Right eye.*Sphere/i);
+    const osSph = screen.getByLabelText(/Left eye.*Sphere/i);
+    const pdInput = screen.getByLabelText(/PD \(mm\)/i);
+
+    fireEvent.input(odSph, { target: { value: "-2.00" } });
+    fireEvent.blur(odSph);
+    fireEvent.input(osSph, { target: { value: "-2.00" } });
+    fireEvent.blur(osSph);
+    fireEvent.input(pdInput, { target: { value: "63" } });
+    fireEvent.blur(pdInput);
+
+    const continueBtn = screen.getByRole("button", { name: "Continue" });
+    await waitFor(() => {
+      expect((continueBtn as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    await act(async () => {
+      fireEvent.click(continueBtn);
+    });
+
+    // Form-level error is displayed with strings.apiErrors.VALIDATION_FAILED
+    await waitFor(() => {
+      expect(screen.getByText(strings.apiErrors.VALIDATION_FAILED)).not.toBeNull();
+    });
+
+    // SPH is NOT marked invalid with error
+    const odSphInput = screen.getByLabelText(/Right eye.*Sphere/i);
+    expect(odSphInput.getAttribute("aria-invalid")).toBe("false");
+    const odSphError = document.getElementById("od-sph-error");
+    expect(odSphError?.hidden).toBe(true);
   });
 });

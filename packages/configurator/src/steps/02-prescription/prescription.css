@@ -173,7 +173,9 @@
 }
 
 .la-link {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--la-target);
   background: none;
   border: 0;
   padding: 0;
@@ -185,7 +187,11 @@
 }
 
 .la-copy {
-  display: block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 100%;
+  min-height: var(--la-target);
   margin: var(--la-space-3) 0 var(--la-space-5);
   text-align: right;
   color: var(--la-muted);
@@ -427,6 +433,53 @@
 }
 
 /* Mobile responsive */
+/* Help disclosure */
+.la-help {
+  margin-top: var(--la-space-5);
+  border-top: var(--la-border-width) solid var(--la-hairline);
+  padding-top: var(--la-space-4);
+}
+
+.la-help summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--la-target);
+  font-size: var(--la-text-sm);
+  font-weight: var(--la-weight-medium);
+  color: var(--la-muted);
+  cursor: pointer;
+  padding: var(--la-space-2) 0;
+}
+
+.la-help summary:hover {
+  color: var(--la-ink);
+}
+
+.la-help summary:focus-visible {
+  outline: var(--la-focus-outline);
+  outline-offset: var(--la-focus-offset);
+}
+
+.la-help dl {
+  margin: var(--la-space-3) 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--la-space-3);
+}
+
+.la-help dt {
+  font-size: var(--la-text-sm);
+  font-weight: var(--la-weight-medium);
+  color: var(--la-ink);
+}
+
+.la-help dd {
+  margin: var(--la-space-1) 0 0;
+  font-size: var(--la-text-sm);
+  color: var(--la-muted);
+  line-height: var(--la-leading-body);
+}
+
 @media (max-width: 40rem) {
   .la-step-head h2 {
     font-size: var(--la-text-xl-sm);

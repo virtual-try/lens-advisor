@@ -265,8 +265,7 @@ describe("01-rx-type step", () => {
       rxType: "PROGRESSIVE",
     });
     expect(dispatch).toHaveBeenCalledWith({
-      type: "SET_PRESCRIPTION_REF",
-      prescriptionRef: "",
+      type: "CLEAR_PRESCRIPTION",
     });
   });
 

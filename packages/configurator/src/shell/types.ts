@@ -32,6 +32,8 @@ export interface StepModule {
   titleKey: string;
   isComplete: (state: ConfiguratorState) => boolean;
   isApplicable: (state: ConfiguratorState) => boolean;
+  canContinue?: (state: ConfiguratorState) => boolean;
+  onContinue?: (props: StepProps) => void | Promise<void>;
   Component: ComponentType<StepProps>;
   Summary?: ComponentType<StepProps>;
 }
@@ -47,7 +49,8 @@ export type ConfiguratorAction =
   | { type: "CATALOG_LOADED"; catalog: CatalogResponse; steps?: StepDefinition[] }
   | { type: "CATALOG_ERROR"; error: { code: string; message?: string } }
   | { type: "SET_RX_TYPE"; rxType: RxType }
-  | { type: "SET_PRESCRIPTION"; prescription: Prescription }
+  | { type: "SET_PRESCRIPTION"; prescription: Prescription | null }
+  | { type: "CLEAR_PRESCRIPTION" }
   | { type: "SET_PRESCRIPTION_REF"; prescriptionRef: string }
   | { type: "SET_LENS"; lensId: string }
   | { type: "SET_OPTIONS"; optionValueIds: string[] }

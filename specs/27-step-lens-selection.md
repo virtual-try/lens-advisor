@@ -1,6 +1,6 @@
 # Spec 27 — Configurator steps 3–4: lens group and lens, with Rx limits
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 11, Spec 13, Spec 16
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —

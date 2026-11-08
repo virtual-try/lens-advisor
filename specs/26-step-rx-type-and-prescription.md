@@ -129,4 +129,4 @@ Real, used now: shell (16), rx-core (10). Tests: fake API client in context. Stu
   - `pnpm build`: passed (`configurator.js` 142948 B, `loader.css` 3319 B, `loader.js` 1314 B <= 10240 B limit).
   - `pnpm test`: 60 test files passed, 1009 tests passed (0 failures).
   - `git diff --check`: clean (no whitespace errors or conflict markers).
-- **2026-11-08** — Evidence (orchestro spec verify, tree e8ed7449): install pass · typecheck pass · lint pass · build pass · test pass 1018/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree b6c383c1): install pass · typecheck pass · lint pass · build pass · test pass 1035/0/0
