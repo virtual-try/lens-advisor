@@ -1,6 +1,6 @@
 # Spec 14 — Catalog repository and service
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 02, Spec 03
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —
@@ -95,4 +95,4 @@ Stubbed: none. Consumers: 17, 18, 19, 21, 31.
 - **2026-11-08** — Review R2 fixes implemented (coder agy-4).
   - R2-F1: Fixed parent reassignment in `updateLens` and `updateOptionValue` in `catalog.repository.server.ts` to look up the target parent (`LensGroup` via `groupId` or `OptionGroup` via `optionGroupId`) by compound unique key `shopId_id: { shopId, id }` inside the same transaction (`runInTx`) and throw `NotFoundError` if not in caller's shop. Added two-shop reparenting tests in `app/features/catalog/catalog.repository.server.test.ts` and `app/features/catalog/catalog.service.server.test.ts` asserting `NotFoundError` and leaving both shops' rows unchanged.
   - R2-F4: Corrected Self-check 2 in Log to clarify that rollback is proven by injected second-update failure (since invalid IDs fail during preflight), and recorded the R82 sabotage: removing `$transaction` failed at `expect(check3?.position).toBe(30)` (`expected +0 to be 30`), restored, green.
-- **2026-11-08** — Evidence (orchestro spec verify, tree 8fcc90c1): install pass · typecheck pass · lint pass · build pass · test pass 359/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 68faccc5): install pass · typecheck pass · lint pass · build pass · test pass 507/0/0

@@ -20,7 +20,7 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | 11 | [Rx limits engine](./11-rx-limits-engine.md) | Done | 03 | Standard | — | PR #23 |
 | 12 | [Lab code compiler](./12-lab-code-compiler.md) | Done | 03 | Standard | — | PR #28 |
 | 13 | [Price calculation](./13-pricing.md) | Done | 03 | Standard | — | PR #30 |
-| 14 | [Catalog repository and service](./14-catalog-service.md) | Not started | 02, 03 | Standard | — |  |
+| 14 | [Catalog repository and service](./14-catalog-service.md) | Done | 02, 03 | Standard | — | PR #31 |
 | 15 | [Shop settings repository and service](./15-shop-settings-service.md) | Done | 02, 03 | Standard | — | PR #32 |
 | 16 | [Configurator shell, state machine and API client](./16-configurator-shell.md) | Not started | 03, 04 | Heavy | — |  |
 | 17 | [Shopify product sync for lenses, options and add-ons](./17-shopify-product-sync.md) | Not started | 13, 14 | Standard | — |  |
@@ -75,3 +75,4 @@ Not started · In progress · Blocked · Done
 - **2026-11-07** — Spec 07 merged (PR #35).
 - **2026-11-08** — Spec 12 merged (PR #28).
 - **2026-11-08** — Spec 04 merged (PR #22, merged by the owner on GitHub after the commit-author refusal).
+- **2026-11-08** — Spec 14 merged (PR #31).
