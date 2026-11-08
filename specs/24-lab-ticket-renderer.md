@@ -1,6 +1,6 @@
 # Spec 24 — Lab job ticket renderer (PDF and CSV)
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 03, Spec 12
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —
