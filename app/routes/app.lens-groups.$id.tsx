@@ -13,6 +13,7 @@ import {
   useRouteError,
 } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
+import { z } from "zod";
 
 import { authenticate } from "../shopify.server";
 import { getPrisma } from "../shared/container/prisma.server";
@@ -30,6 +31,28 @@ import {
   updateLensGroup,
   ValidationError,
 } from "../features/catalog/catalog.service.server";
+import { mapZodIssueToCode } from "../features/catalog/schema";
+
+const saveLensGroupSchema = z.object({
+  intent: z.literal("save").optional().default("save"),
+  name: z
+    .string({
+      required_error: "Name is required",
+      invalid_type_error: "Name must be a string",
+    })
+    .trim()
+    .min(1, "Name is required"),
+  description: z
+    .string({
+      invalid_type_error: "Description must be a string",
+    })
+    .optional()
+    .default(""),
+});
+
+const archiveLensGroupSchema = z.object({
+  intent: z.literal("archive"),
+});
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await requireActivePlan(request);
@@ -51,6 +74,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   try {
     const group = await getLensGroup(shop.id, id);
+    if (group.archivedAt) {
+      throw new NotFoundError("Lens group not found");
+    }
     return data({ group, isNew: false });
   } catch (error) {
     if (error instanceof NotFoundError) {
@@ -110,38 +136,77 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
   }
 
-  const intent = String(rawData.intent ?? "save");
+  const intent = typeof rawData.intent === "string" ? rawData.intent : "save";
   const id = params.id;
 
   try {
     if (intent === "archive") {
+      const parseResult = archiveLensGroupSchema.safeParse(rawData);
+      if (!parseResult.success) {
+        const fields = parseResult.error.issues.map((issue) => ({
+          path: issue.path.join(".") || "intent",
+          code: mapZodIssueToCode(issue),
+        }));
+        return errorResponse(
+          new BadRequestError("Invalid archive payload", "INVALID_INPUT", fields),
+        );
+      }
       if (!id || id === "new") {
         return errorResponse(
           new BadRequestError("Cannot archive unsaved group", "INVALID_INPUT"),
         );
       }
+      const existing = await getLensGroup(shop.id, id);
+      if (!existing || existing.archivedAt) {
+        return errorResponse(new NotFoundError("Lens group not found"));
+      }
       await archiveLensGroup(shop.id, id);
       return redirect("/app/lenses");
     }
 
-    const name = String(rawData.name ?? "").trim();
-    const description = String(rawData.description ?? "").trim();
+    if (intent === "save") {
+      const parseResult = saveLensGroupSchema.safeParse(rawData);
+      if (!parseResult.success) {
+        const firstIssue = parseResult.error.issues[0];
+        const fields = parseResult.error.issues.map((issue) => {
+          const path = issue.path.join(".") || "name";
+          const code =
+            path === "name" && (issue.code === "too_small" || issue.message === "Name is required")
+              ? "REQUIRED"
+              : mapZodIssueToCode(issue);
+          return { path, code };
+        });
+        const topCode =
+          fields[0]?.path === "name" && fields[0]?.code === "REQUIRED"
+            ? "NAME_REQUIRED"
+            : "INVALID_INPUT";
+        return errorResponse(
+          new BadRequestError(firstIssue?.message || "Invalid input", topCode, fields),
+        );
+      }
 
-    if (!name) {
-      return errorResponse(
-        new BadRequestError("Name is required", "NAME_REQUIRED", [
-          { path: "name", code: "REQUIRED" },
-        ]),
-      );
+      if (id && id !== "new") {
+        const existing = await getLensGroup(shop.id, id);
+        if (!existing || existing.archivedAt) {
+          return errorResponse(new NotFoundError("Lens group not found"));
+        }
+      }
+
+      const { name, description } = parseResult.data;
+      if (!id || id === "new") {
+        await createLensGroup(shop.id, { name, description });
+        return redirect("/app/lenses");
+      } else {
+        await updateLensGroup(shop.id, id, { name, description });
+        return redirect("/app/lenses");
+      }
     }
 
-    if (!id || id === "new") {
-      await createLensGroup(shop.id, { name, description });
-      return redirect("/app/lenses");
-    } else {
-      await updateLensGroup(shop.id, id, { name, description });
-      return redirect("/app/lenses");
-    }
+    return errorResponse(
+      new BadRequestError(`Unknown intent: ${intent}`, "INVALID_INTENT", [
+        { path: "intent", code: "INVALID_INTENT" },
+      ]),
+    );
   } catch (error) {
     if (error instanceof ValidationError) {
       return errorResponse(

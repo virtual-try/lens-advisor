@@ -15,11 +15,13 @@ import { testConfig } from "@shopify/shopify-app-react-router/test-helpers";
 
 import { createTestDb, type TestDb } from "../../../test/db";
 import { createCatalogRepository } from "./catalog.repository.server";
+import * as catalogService from "./catalog.service.server";
 import { createCatalogService } from "./catalog.service.server";
 import {
   formatLimitsSummary,
   formatPriceDisplay,
   LensesList,
+  ErrorBoundary as ListErrorBoundary,
   action as listAction,
   loader as listLoader,
 } from "../../routes/app.lenses._index";
@@ -675,22 +677,36 @@ describe("Spec 18 — Admin: lens groups and lenses", () => {
       render(<LensesList groups={initialGroups} />);
       expect(screen.getByText("To Be Archived Lens")).not.toBeNull();
 
-      // 2. Click "Archive lens" to open confirmation modal (R1-F5)
-      const archiveButtons = screen.getAllByText("Archive lens");
+      // Spy on modal showOverlay/hideOverlay (R2-F4)
+      const modal = document.getElementById("archive-confirm-modal") as HTMLElement & {
+        showOverlay?: ReturnType<typeof vi.fn>;
+        hideOverlay?: ReturnType<typeof vi.fn>;
+      };
+      expect(modal).not.toBeNull();
+      const showOverlaySpy = vi.fn();
+      const hideOverlaySpy = vi.fn();
+      modal.showOverlay = showOverlaySpy;
+      modal.hideOverlay = hideOverlaySpy;
+
+      expect(showOverlaySpy).not.toHaveBeenCalled();
+      expect(hideOverlaySpy).not.toHaveBeenCalled();
+
+      // 2. Click "Archive lens" by role to open confirmation modal (R1-F5, R2-F4)
+      const archiveButtons = screen.getAllByRole("button", { name: "Archive lens" });
       fireEvent.click(archiveButtons[0]);
 
-      // 3. Verify confirmation modal is shown and contains the lens name
-      const modal = document.getElementById("archive-confirm-modal");
-      expect(modal).not.toBeNull();
+      // 3. Verify confirmation modal is shown (showOverlay called) and contains the lens name
+      expect(showOverlaySpy).toHaveBeenCalledTimes(1);
       expect(
         screen.getByText(/Are you sure you want to archive To Be Archived Lens/),
       ).not.toBeNull();
 
-      // 4. Click "Confirm archive" inside the modal
-      const confirmBtn = screen.getByText("Confirm archive");
+      // 4. Click "Confirm archive" inside the modal by role
+      const confirmBtn = screen.getByRole("button", { name: "Confirm archive" });
       fireEvent.click(confirmBtn);
 
-      // Verify clicking confirm archive submitted archive-lens intent
+      // Verify hideOverlay was called and submit was triggered
+      expect(hideOverlaySpy).toHaveBeenCalledTimes(1);
       expect(mocks.fetcherSubmit).toHaveBeenCalledWith(
         { intent: "archive-lens", lensId: lens.id },
         { method: "POST" },
@@ -924,6 +940,291 @@ describe("Spec 18 — Admin: lens groups and lenses", () => {
       }
     }, DB_TIMEOUT_MS);
 
+    it("rejects malformed field types across all three actions with 400 and field paths (R2-F1)", async () => {
+      const shopDomain = "malformed-fields-test.myshopify.com";
+      const shopId = await createShop(shopDomain);
+      mocks.currentShop = shopDomain;
+
+      const repo = createCatalogRepository(getTestPrisma());
+      const group = await repo.createLensGroup(shopId, { name: "Schema Test Group" });
+
+      // 1. groupAction: malformed name field { name: {} }
+      const groupReq = new Request("https://app.test/app/lens-groups/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: "save", name: {}, description: "Test" }),
+      });
+      const groupRes = await groupAction(createActionArgs(groupReq, { id: "new" }));
+      const groupUnwrapped = await unwrapResponse<{ error: { code: string; fields?: Array<{ path: string; code: string }> } }>(groupRes);
+      expect(groupUnwrapped.status).toBe(400);
+      expect(groupUnwrapped.data.error.fields?.some((f) => f.path === "name")).toBe(true);
+
+      // groupAction: malformed description field { description: 123 }
+      const groupDescReq = new Request("https://app.test/app/lens-groups/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: "save", name: "Valid Name", description: 123 }),
+      });
+      const groupDescRes = await groupAction(createActionArgs(groupDescReq, { id: "new" }));
+      const groupDescUnwrapped = await unwrapResponse<{ error: { code: string; fields?: Array<{ path: string; code: string }> } }>(groupDescRes);
+      expect(groupDescUnwrapped.status).toBe(400);
+      expect(groupDescUnwrapped.data.error.fields?.some((f) => f.path === "description")).toBe(true);
+
+      // 2. listAction: malformed lensId in archive-lens { intent: "archive-lens", lensId: {} }
+      const listReq = new Request("https://app.test/app/lenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: "archive-lens", lensId: {} }),
+      });
+      const listRes = await listAction(createActionArgs(listReq));
+      const listUnwrapped = await unwrapResponse<{ error: { code: string; fields?: Array<{ path: string; code: string }> } }>(listRes);
+      expect(listUnwrapped.status).toBe(400);
+      expect(listUnwrapped.data.error.fields?.some((f) => f.path === "lensId")).toBe(true);
+
+      // listAction: malformed ids in reorder-lenses { intent: "reorder-lenses", groupId: group.id, ids: {} }
+      const listReorderReq = new Request("https://app.test/app/lenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: "reorder-lenses", groupId: group.id, ids: {} }),
+      });
+      const listReorderRes = await listAction(createActionArgs(listReorderReq));
+      const listReorderUnwrapped = await unwrapResponse<{ error: { code: string; fields?: Array<{ path: string; code: string }> } }>(listReorderRes);
+      expect(listReorderUnwrapped.status).toBe(400);
+      expect(listReorderUnwrapped.data.error.fields?.some((f) => f.path === "ids")).toBe(true);
+
+      // 3. lensAction: malformed name { name: {} }
+      const lensReq = new Request("https://app.test/app/lenses/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent: "save",
+          groupId: group.id,
+          name: {},
+          price: "50.00",
+          sphMin: "-2.00",
+          sphMax: "+2.00",
+          cylMin: "-1.00",
+          cylMax: "0.00",
+          rxTypes: ["SINGLE_VISION"],
+          labCodeTemplate: "TEST-[material=POLY]",
+        }),
+      });
+      const lensRes = await lensAction(createActionArgs(lensReq, { id: "new" }));
+      const lensUnwrapped = await unwrapResponse<{ error: { code: string; fields?: Array<{ path: string; code: string }> } }>(lensRes);
+      expect(lensUnwrapped.status).toBe(400);
+      expect(lensUnwrapped.data.error.fields?.some((f) => f.path === "name")).toBe(true);
+
+      // lensAction: invalid enum members in rxTypes (must be rejected, not filtered)
+      const lensRxReq = new Request("https://app.test/app/lenses/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent: "save",
+          groupId: group.id,
+          name: "Invalid Rx Lens",
+          price: "50.00",
+          sphMin: "-2.00",
+          sphMax: "+2.00",
+          cylMin: "-1.00",
+          cylMax: "0.00",
+          rxTypes: ["NOT_A_VALID_RX_TYPE"],
+          labCodeTemplate: "TEST-[material=POLY]",
+        }),
+      });
+      const lensRxRes = await lensAction(createActionArgs(lensRxReq, { id: "new" }));
+      const lensRxUnwrapped = await unwrapResponse<{ error: { code: string; fields?: Array<{ path: string; code: string }> } }>(lensRxRes);
+      expect(lensRxUnwrapped.status).toBe(400);
+      expect(lensRxUnwrapped.data.error.fields?.some((f) => f.path.startsWith("rxTypes"))).toBe(true);
+    }, DB_TIMEOUT_MS);
+
+    it("fails the save with visible error and no write when Shopify currency is missing or erroneous (R2-F2)", async () => {
+      const shopDomain = "currency-fail-test.myshopify.com";
+      const shopId = await createShop(shopDomain);
+      mocks.currentShop = shopDomain;
+
+      const repo = createCatalogRepository(getTestPrisma());
+      const group = await repo.createLensGroup(shopId, { name: "No Currency Group" });
+
+      const countBefore = await getTestPrisma().lens.count({ where: { shopId } });
+
+      // Mock admin GraphQL to return error for ShopCurrency
+      const originalAdminGraphql = mocks.adminGraphql.getMockImplementation();
+      mocks.adminGraphql.mockImplementation(async (query: string, vars?: Record<string, unknown>) => {
+        if (query.includes("ShopCurrency")) {
+          return new Response(
+            JSON.stringify({ errors: [{ message: "Internal server error" }] }),
+            { status: 200 },
+          );
+        }
+        return originalAdminGraphql?.(query, vars);
+      });
+
+      const req = new Request("https://app.test/app/lenses/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent: "save",
+          groupId: group.id,
+          name: "Failed Currency Lens",
+          price: "100.00",
+          sphMin: "-2.00",
+          sphMax: "+2.00",
+          cylMin: "-1.00",
+          cylMax: "0.00",
+          rxTypes: ["SINGLE_VISION"],
+          labCodeTemplate: "TEST-[material=POLY]",
+        }),
+      });
+
+      const res = await lensAction(createActionArgs(req, { id: "new" }));
+      const unwrapped = await unwrapResponse<{ error: { code: string; message: string } }>(res);
+      expect(unwrapped.status).toBe(400);
+      expect(unwrapped.data.error.code).toBe("CURRENCY_FETCH_FAILED");
+
+      // Verify no DB write occurred
+      const countAfter = await getTestPrisma().lens.count({ where: { shopId } });
+      expect(countAfter).toBe(countBefore);
+
+      // Verify GraphQL returning null currencyCode also fails save
+      mocks.adminGraphql.mockImplementation(async (query: string, vars?: Record<string, unknown>) => {
+        if (query.includes("ShopCurrency")) {
+          return new Response(
+            JSON.stringify({ data: { shop: { currencyCode: null } } }),
+            { status: 200 },
+          );
+        }
+        return originalAdminGraphql?.(query, vars);
+      });
+
+      const reqNull = new Request("https://app.test/app/lenses/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent: "save",
+          groupId: group.id,
+          name: "Failed Currency Lens 2",
+          price: "100.00",
+          sphMin: "-2.00",
+          sphMax: "+2.00",
+          cylMin: "-1.00",
+          cylMax: "0.00",
+          rxTypes: ["SINGLE_VISION"],
+          labCodeTemplate: "TEST-[material=POLY]",
+        }),
+      });
+
+      const resNull = await lensAction(createActionArgs(reqNull, { id: "new" }));
+      const unwrappedNull = await unwrapResponse<{ error: { code: string; message: string } }>(resNull);
+      expect(unwrappedNull.status).toBe(400);
+      expect(unwrappedNull.data.error.code).toBe("CURRENCY_FETCH_FAILED");
+
+      const countAfterNull = await getTestPrisma().lens.count({ where: { shopId } });
+      expect(countAfterNull).toBe(countBefore);
+
+      if (originalAdminGraphql) {
+        mocks.adminGraphql.mockImplementation(originalAdminGraphql);
+      }
+    }, DB_TIMEOUT_MS);
+
+    it("refuses loader and save action for archived lenses and archived target groups with 404 (R2-F3)", async () => {
+      const shopDomain = "archived-lens-refusal.myshopify.com";
+      const shopId = await createShop(shopDomain);
+      mocks.currentShop = shopDomain;
+
+      const repo = createCatalogRepository(getTestPrisma());
+      const group = await repo.createLensGroup(shopId, { name: "Active Group" });
+      const archivedGroup = await repo.createLensGroup(shopId, { name: "Archived Group" });
+      await repo.deleteLensGroup(shopId, archivedGroup.id);
+
+      const lens = await repo.createLens(shopId, {
+        groupId: group.id,
+        name: "Lens To Archive",
+        priceMinor: 5000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -200,
+        sphMax: 200,
+        cylMin: -100,
+        cylMax: 0,
+        labCodeTemplate: "LENS-[material=POLY]",
+      });
+
+      // Archive the lens
+      await repo.deleteLens(shopId, lens.id);
+
+      // 1. Loader returns 404 for archived lens
+      const loaderReq = new Request(`https://app.test/app/lenses/${lens.id}`);
+      try {
+        await lensLoader(createLoaderArgs(loaderReq, { id: lens.id }));
+        expect.unreachable("Loader should throw on archived lens");
+      } catch (thrown) {
+        const unwrapped = await unwrapResponse(thrown);
+        expect(unwrapped.status).toBe(404);
+      }
+
+      // 2. Save action refuses editing archived lens (404, no write, no sync)
+      mocks.adminGraphql.mockClear();
+      const saveReq = new Request(`https://app.test/app/lenses/${lens.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent: "save",
+          groupId: group.id,
+          name: "Attempted Re-edit",
+          price: "60.00",
+          sphMin: "-2.00",
+          sphMax: "+2.00",
+          cylMin: "-1.00",
+          cylMax: "0.00",
+          rxTypes: ["SINGLE_VISION"],
+          labCodeTemplate: "LENS-[material=POLY]",
+        }),
+      });
+
+      const saveRes = await lensAction(createActionArgs(saveReq, { id: lens.id }));
+      const saveUnwrapped = await unwrapResponse(saveRes);
+      expect(saveUnwrapped.status).toBe(404);
+
+      // Assert no DB write happened
+      const dbLens = await getTestPrisma().lens.findUnique({
+        where: { shopId_id: { shopId, id: lens.id } },
+      });
+      expect(dbLens?.name).toBe("Lens To Archive");
+
+      // Assert no syncItem / productUpdate was called
+      const calls = mocks.adminGraphql.mock.calls;
+      const productUpdateCall = calls.find((call) =>
+        String(call[0]).includes("ProductUpdate") || String(call[0]).includes("productUpdate"),
+      );
+      expect(productUpdateCall).toBeUndefined();
+
+      // 3. Save action refuses saving into archived target group (404, no write, no sync)
+      const saveToArchivedGroupReq = new Request("https://app.test/app/lenses/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent: "save",
+          groupId: archivedGroup.id,
+          name: "Lens In Archived Group",
+          price: "60.00",
+          sphMin: "-2.00",
+          sphMax: "+2.00",
+          cylMin: "-1.00",
+          cylMax: "0.00",
+          rxTypes: ["SINGLE_VISION"],
+          labCodeTemplate: "LENS-[material=POLY]",
+        }),
+      });
+
+      const groupRes = await lensAction(createActionArgs(saveToArchivedGroupReq, { id: "new" }));
+      const groupUnwrapped = await unwrapResponse(groupRes);
+      expect(groupUnwrapped.status).toBe(404);
+      const afterCount = await getTestPrisma().lens.count({
+        where: { shopId, groupId: archivedGroup.id },
+      });
+      expect(afterCount).toBe(0);
+    }, DB_TIMEOUT_MS);
+
     it("derives shop currency server-side for new lenses and rejects form data currency override (R1-F2)", async () => {
       const shopDomain = "currency-test.myshopify.com";
       const shopId = await createShop(shopDomain);
@@ -1106,15 +1407,28 @@ describe("Spec 18 — Admin: lens groups and lenses", () => {
       expect(spinner).not.toBeNull();
     });
 
-    it("renders list error state with Retry button when loader fails (R1-F7)", () => {
-      const onRetry = vi.fn();
-      const { container } = render(
-        <LensesList
-          groups={[]}
-          error="Failed to load lenses from server"
-          onRetry={onRetry}
-        />,
+    it("renders list error state with Retry button when loader fails (R1-F7, R2-F5)", async () => {
+      // 1. Loader failure path: make loader fail when service throws
+      const shopDomain = "loader-error-test.myshopify.com";
+      await createShop(shopDomain);
+      mocks.currentShop = shopDomain;
+
+      const serviceSpy = vi.spyOn(catalogService, "listLensGroups").mockRejectedValueOnce(
+        new Error("Failed to load lenses from server"),
       );
+
+      const request = new Request("https://app.test/app/lenses");
+      await expect(listLoader(createLoaderArgs(request))).rejects.toThrow(
+        "Failed to load lenses from server",
+      );
+      serviceSpy.mockRestore();
+
+      // 2. Render route ErrorBoundary with the routed error
+      vi.spyOn(ReactRouter, "useRouteError").mockReturnValue(
+        new Error("Failed to load lenses from server"),
+      );
+
+      const { container } = render(<ListErrorBoundary />);
 
       const banner = container.querySelector(
         's-banner[heading="Failed to load lenses"]',
@@ -1123,9 +1437,7 @@ describe("Spec 18 — Admin: lens groups and lenses", () => {
       expect(screen.getByText("Failed to load lenses from server")).not.toBeNull();
       const retryBtn = screen.getByText("Retry");
       expect(retryBtn).not.toBeNull();
-
-      fireEvent.click(retryBtn);
-      expect(onRetry).toHaveBeenCalledTimes(1);
+      expect(retryBtn.getAttribute("href")).toBe("/app/lenses");
     });
 
     it("renders all four RxType choices including NON_PRESCRIPTION with correct label (R1-F4)", () => {

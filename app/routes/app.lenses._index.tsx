@@ -13,6 +13,7 @@ import {
   useRouteError,
 } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
+import { z } from "zod";
 
 import { formatDiopter } from "../../packages/rx-core/src/format/index.js";
 import { toShopifyDecimal } from "../../packages/rx-core/src/pricing/index.js";
@@ -37,6 +38,69 @@ import {
   type CatalogLensGroupDto,
 } from "../features/catalog/catalog.service.server";
 import { archiveItem, syncItem } from "../features/product-sync/product-sync.server";
+import { mapZodIssueToCode } from "../features/catalog/schema";
+
+const retrySyncSchema = z.object({
+  intent: z.literal("retry-sync"),
+  lensId: z
+    .string({
+      required_error: "Lens ID is required",
+      invalid_type_error: "Lens ID must be a string",
+    })
+    .trim()
+    .min(1, "REQUIRED"),
+});
+
+const archiveLensSchema = z.object({
+  intent: z.literal("archive-lens"),
+  lensId: z
+    .string({
+      required_error: "Lens ID is required",
+      invalid_type_error: "Lens ID must be a string",
+    })
+    .trim()
+    .min(1, "REQUIRED"),
+});
+
+const archiveGroupSchema = z.object({
+  intent: z.literal("archive-group"),
+  groupId: z
+    .string({
+      required_error: "Group ID is required",
+      invalid_type_error: "Group ID must be a string",
+    })
+    .trim()
+    .min(1, "REQUIRED"),
+});
+
+const reorderLensesSchema = z.object({
+  intent: z.literal("reorder-lenses"),
+  groupId: z
+    .string({
+      required_error: "Group ID is required",
+      invalid_type_error: "Group ID must be a string",
+    })
+    .trim()
+    .min(1, "REQUIRED"),
+  ids: z.union([
+    z.array(
+      z.string({ invalid_type_error: "ID must be a string" }).min(1, "REQUIRED"),
+      { invalid_type_error: "IDs must be a string or array" },
+    ),
+    z.string({ invalid_type_error: "IDs must be a string or array" }),
+  ]),
+});
+
+const reorderGroupsSchema = z.object({
+  intent: z.literal("reorder-groups"),
+  ids: z.union([
+    z.array(
+      z.string({ invalid_type_error: "ID must be a string" }).min(1, "REQUIRED"),
+      { invalid_type_error: "IDs must be a string or array" },
+    ),
+    z.string({ invalid_type_error: "IDs must be a string or array" }),
+  ]),
+});
 
 export function formatLimitsSummary(
   limits: Pick<RxLimits, "sphMin" | "sphMax"> & Partial<RxLimits>,
@@ -144,16 +208,36 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
-  const intent = String(rawData.intent ?? "");
+  const intent = typeof rawData.intent === "string" ? rawData.intent : "";
+  if (!intent) {
+    return errorResponse(
+      new BadRequestError("Intent is required", "INVALID_INTENT", [
+        { path: "intent", code: "REQUIRED" },
+      ]),
+    );
+  }
 
   try {
     if (intent === "retry-sync") {
-      const lensId = String(rawData.lensId ?? "").trim();
-      if (!lensId) {
+      const parseResult = retrySyncSchema.safeParse(rawData);
+      if (!parseResult.success) {
+        const fields = parseResult.error.issues.map((issue) => ({
+          path: issue.path.join(".") || "lensId",
+          code: mapZodIssueToCode(issue),
+        }));
         return errorResponse(
-          new BadRequestError("Lens ID is required", "REQUIRED"),
+          new BadRequestError("Invalid retry-sync payload", "INVALID_INPUT", fields),
         );
       }
+
+      const { lensId } = parseResult.data;
+      const existing = await prisma.lens.findUnique({
+        where: { shopId_id: { shopId: shop.id, id: lensId } },
+      });
+      if (!existing || existing.archivedAt) {
+        return errorResponse(new NotFoundError("Lens not found"));
+      }
+
       try {
         await syncItem(admin, shop.id, "lens", lensId);
         return data({ ok: true, retriedLensId: lensId, synced: true });
@@ -171,38 +255,74 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     if (intent === "archive-lens") {
-      const lensId = String(rawData.lensId ?? "").trim();
-      if (!lensId) {
+      const parseResult = archiveLensSchema.safeParse(rawData);
+      if (!parseResult.success) {
+        const fields = parseResult.error.issues.map((issue) => ({
+          path: issue.path.join(".") || "lensId",
+          code: mapZodIssueToCode(issue),
+        }));
         return errorResponse(
-          new BadRequestError("Lens ID is required", "REQUIRED"),
+          new BadRequestError("Invalid archive-lens payload", "INVALID_INPUT", fields),
         );
       }
+
+      const { lensId } = parseResult.data;
+      const existing = await prisma.lens.findUnique({
+        where: { shopId_id: { shopId: shop.id, id: lensId } },
+      });
+      if (!existing || existing.archivedAt) {
+        return errorResponse(new NotFoundError("Lens not found"));
+      }
+
       await archiveLens(shop.id, lensId);
       await archiveItem(admin, shop.id, "lens", lensId);
       return data({ ok: true, archivedLensId: lensId });
     }
 
     if (intent === "archive-group") {
-      const groupId = String(rawData.groupId ?? "").trim();
-      if (!groupId) {
+      const parseResult = archiveGroupSchema.safeParse(rawData);
+      if (!parseResult.success) {
+        const fields = parseResult.error.issues.map((issue) => ({
+          path: issue.path.join(".") || "groupId",
+          code: mapZodIssueToCode(issue),
+        }));
         return errorResponse(
-          new BadRequestError("Group ID is required", "REQUIRED"),
+          new BadRequestError("Invalid archive-group payload", "INVALID_INPUT", fields),
         );
       }
+
+      const { groupId } = parseResult.data;
+      const existing = await prisma.lensGroup.findUnique({
+        where: { shopId_id: { shopId: shop.id, id: groupId } },
+      });
+      if (!existing || existing.archivedAt) {
+        return errorResponse(new NotFoundError("Lens group not found"));
+      }
+
       await archiveLensGroup(shop.id, groupId);
       return data({ ok: true, archivedGroupId: groupId });
     }
 
     if (intent === "reorder-lenses") {
-      const groupId = String(rawData.groupId ?? "").trim();
-      if (!groupId) {
+      const parseResult = reorderLensesSchema.safeParse(rawData);
+      if (!parseResult.success) {
+        const fields = parseResult.error.issues.map((issue) => ({
+          path: issue.path.join(".") || "ids",
+          code: mapZodIssueToCode(issue),
+        }));
         return errorResponse(
-          new BadRequestError("Group ID is required", "REQUIRED", [
-            { path: "groupId", code: "REQUIRED" },
-          ]),
+          new BadRequestError("Invalid reorder-lenses payload", "INVALID_INPUT", fields),
         );
       }
-      const idsRaw = rawData.ids;
+
+      const { groupId, ids: idsRaw } = parseResult.data;
+      const targetGroup = await prisma.lensGroup.findUnique({
+        where: { shopId_id: { shopId: shop.id, id: groupId } },
+      });
+      if (!targetGroup || targetGroup.archivedAt) {
+        return errorResponse(new NotFoundError("Lens group not found"));
+      }
+
       let ids: string[] = [];
       if (Array.isArray(idsRaw)) {
         ids = idsRaw.map(String);
@@ -236,7 +356,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     if (intent === "reorder-groups") {
-      const idsRaw = rawData.ids;
+      const parseResult = reorderGroupsSchema.safeParse(rawData);
+      if (!parseResult.success) {
+        const fields = parseResult.error.issues.map((issue) => ({
+          path: issue.path.join(".") || "ids",
+          code: mapZodIssueToCode(issue),
+        }));
+        return errorResponse(
+          new BadRequestError("Invalid reorder-groups payload", "INVALID_INPUT", fields),
+        );
+      }
+
+      const idsRaw = parseResult.data.ids;
       let ids: string[] = [];
       if (Array.isArray(idsRaw)) {
         ids = idsRaw.map(String);
@@ -270,7 +401,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     return errorResponse(
-      new BadRequestError(`Unknown intent: ${intent}`, "INVALID_INTENT"),
+      new BadRequestError(`Unknown intent: ${intent}`, "INVALID_INTENT", [
+        { path: "intent", code: "INVALID_INTENT" },
+      ]),
     );
   } catch (error) {
     if (error instanceof NotFoundError) {
@@ -287,14 +420,10 @@ export function LensesList({
   groups: initialGroups,
   syncFailedId: initialSyncFailedId,
   isLoading = false,
-  error = null,
-  onRetry,
 }: {
   groups: CatalogLensGroupDto[];
   syncFailedId?: string | null;
   isLoading?: boolean;
-  error?: string | Error | null;
-  onRetry?: () => void;
 }) {
   const fetcher = useFetcher<typeof action>();
   const [syncFailedIds, setSyncFailedIds] = useState<Set<string>>(() => {
@@ -423,30 +552,6 @@ export function LensesList({
       ...g,
       lenses: (g.lenses ?? []).filter((l) => l.id !== archivedLensId),
     }));
-
-  if (error) {
-    const errorMessage =
-      typeof error === "string"
-        ? error
-        : error?.message || "Failed to load lenses from server";
-    return (
-      <s-page heading="Lenses">
-        <s-banner tone="critical" heading="Failed to load lenses">
-          {errorMessage}
-        </s-banner>
-        <s-stack direction="block" gap="base">
-          <s-paragraph>
-            There was a problem loading your lenses. Please try again.
-          </s-paragraph>
-          {onRetry ? (
-            <s-button onClick={onRetry}>Retry</s-button>
-          ) : (
-            <s-button href="/app/lenses">Retry</s-button>
-          )}
-        </s-stack>
-      </s-page>
-    );
-  }
 
   if (isLoading) {
     return (
@@ -596,6 +701,7 @@ export function LensesList({
                                 Move lens down
                               </s-button>
                               <s-button
+                                {...({ role: "button" } as Record<string, unknown>)}
                                 tone="critical"
                                 onClick={() =>
                                   openArchiveModal("lens", lens.id, lens.name)
@@ -629,6 +735,7 @@ export function LensesList({
             : " It will be removed from your active groups list."}
         </s-paragraph>
         <s-button
+          {...({ role: "button" } as Record<string, unknown>)}
           slot="primary-action"
           tone="critical"
           onClick={handleConfirmArchive}
@@ -636,6 +743,7 @@ export function LensesList({
           Confirm archive
         </s-button>
         <s-button
+          {...({ role: "button" } as Record<string, unknown>)}
           slot="secondary-actions"
           variant="secondary"
           onClick={handleModalHide}
