@@ -9,6 +9,7 @@ export class LensConfiguratorElement extends HTMLElement {
   private triggerButton: HTMLElement | null = null;
   private isOpenState = false;
   private prevBodyOverflow: string | null = null;
+  private copiedMerchantProps: string[] = [];
 
   connectedCallback(): void {
     if (!this.shadowRoot) {
@@ -33,6 +34,75 @@ export class LensConfiguratorElement extends HTMLElement {
     }
   }
 
+  private copyMerchantProperties(mount: HTMLElement): void {
+    this.clearMerchantProperties();
+
+    const win =
+      mount.ownerDocument?.defaultView ??
+      (typeof window !== "undefined" ? window : null);
+    const computed = win ? win.getComputedStyle(mount) : null;
+    const merchantProps = new Set<string>();
+
+    if (computed) {
+      for (let i = 0; i < computed.length; i++) {
+        const prop = computed[i];
+        if (prop.startsWith("--la-merchant-")) {
+          merchantProps.add(prop);
+        }
+      }
+    }
+
+    for (let i = 0; i < mount.style.length; i++) {
+      const prop = mount.style[i];
+      if (prop.startsWith("--la-merchant-")) {
+        merchantProps.add(prop);
+      }
+    }
+
+    const rawStyle = mount.getAttribute("style");
+    if (rawStyle) {
+      const matches = rawStyle.match(/--la-merchant-[a-z0-9_-]+/g);
+      if (matches) {
+        for (const m of matches) {
+          merchantProps.add(m);
+        }
+      }
+    }
+
+    const KNOWN_MERCHANT_PROPS = [
+      "--la-merchant-accent",
+      "--la-merchant-font-family",
+      "--la-merchant-radius",
+    ];
+    for (const prop of KNOWN_MERCHANT_PROPS) {
+      merchantProps.add(prop);
+    }
+
+    for (const prop of merchantProps) {
+      const val =
+        computed?.getPropertyValue(prop)?.trim() ||
+        mount.style.getPropertyValue(prop)?.trim();
+      if (val) {
+        this.style.setProperty(prop, val);
+        this.copiedMerchantProps.push(prop);
+      }
+    }
+  }
+
+  private clearMerchantProperties(): void {
+    for (const prop of this.copiedMerchantProps) {
+      this.style.removeProperty(prop);
+    }
+    this.copiedMerchantProps = [];
+
+    for (let i = this.style.length - 1; i >= 0; i--) {
+      const prop = this.style[i];
+      if (prop.startsWith("--la-merchant-")) {
+        this.style.removeProperty(prop);
+      }
+    }
+  }
+
   open(mount: HTMLElement): void {
     if (this.isOpenState) {
       return;
@@ -50,6 +120,8 @@ export class LensConfiguratorElement extends HTMLElement {
       this.prevBodyOverflow = document.body.style.overflow;
       document.body.style.overflow = "hidden";
     }
+
+    this.copyMerchantProperties(mount);
 
     const rawJson = mount.getAttribute("data-product-json");
     const product = parseProductData(rawJson);
@@ -83,6 +155,8 @@ export class LensConfiguratorElement extends HTMLElement {
       document.body.style.overflow = this.prevBodyOverflow;
       this.prevBodyOverflow = null;
     }
+
+    this.clearMerchantProperties();
 
     if (this.mountPoint) {
       this.mountPoint.removeAttribute("data-la-state");

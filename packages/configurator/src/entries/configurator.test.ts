@@ -293,4 +293,104 @@ describe("configurator entry", () => {
     mountBadSchema.remove();
     configurator2.remove();
   });
+
+  it("copies --la-merchant-* custom properties from mount onto host on open, and clears them on close (R6-F1)", () => {
+    // Mount 1 with accent and radius overrides
+    const mount1 = document.createElement("div");
+    mount1.className = "la-block";
+    mount1.setAttribute("data-la-mount", "");
+    mount1.setAttribute("data-product-json", JSON.stringify({ id: "prod-override-1" }));
+    mount1.style.setProperty("--la-merchant-accent", "coral");
+    mount1.style.setProperty("--la-merchant-radius", "0.5rem");
+    const btn1 = document.createElement("button");
+    btn1.setAttribute("data-la-open", "");
+    mount1.appendChild(btn1);
+    document.body.appendChild(mount1);
+
+    // Mount 2 with different accent and no radius override
+    const mount2 = document.createElement("div");
+    mount2.className = "la-block";
+    mount2.setAttribute("data-la-mount", "");
+    mount2.setAttribute("data-product-json", JSON.stringify({ id: "prod-override-2" }));
+    mount2.style.setProperty("--la-merchant-accent", "deepskyblue");
+    const btn2 = document.createElement("button");
+    btn2.setAttribute("data-la-open", "");
+    mount2.appendChild(btn2);
+    document.body.appendChild(mount2);
+
+    const configurator = ensureConfigurator(document);
+    expect(configurator.style.getPropertyValue("--la-merchant-accent")).toBe("");
+    expect(configurator.style.getPropertyValue("--la-merchant-radius")).toBe("");
+
+    // Open mount 1: host inherits mount 1's custom properties
+    configurator.open(mount1);
+    expect(configurator.isOpen).toBe(true);
+    expect(configurator.style.getPropertyValue("--la-merchant-accent")).toBe("coral");
+    expect(configurator.style.getPropertyValue("--la-merchant-radius")).toBe("0.5rem");
+
+    // Close: host clears copied custom properties
+    configurator.close();
+    expect(configurator.isOpen).toBe(false);
+    expect(configurator.style.getPropertyValue("--la-merchant-accent")).toBe("");
+    expect(configurator.style.getPropertyValue("--la-merchant-radius")).toBe("");
+
+    // Open mount 2: host inherits mount 2's custom properties with no stale properties from mount 1
+    configurator.open(mount2);
+    expect(configurator.isOpen).toBe(true);
+    expect(configurator.style.getPropertyValue("--la-merchant-accent")).toBe("deepskyblue");
+    expect(configurator.style.getPropertyValue("--la-merchant-radius")).toBe("");
+
+    // Close: host clears again
+    configurator.close();
+    expect(configurator.style.getPropertyValue("--la-merchant-accent")).toBe("");
+    expect(configurator.style.getPropertyValue("--la-merchant-radius")).toBe("");
+
+    mount1.remove();
+    mount2.remove();
+    configurator.remove();
+  });
+
+  it("copies merchant custom properties from stylesheet rules and across la:open events (R6-F1)", () => {
+    const styleEl = document.createElement("style");
+    styleEl.textContent = `
+      .custom-merchant-theme {
+        --la-merchant-accent: tomato;
+        --la-merchant-font-family: Comic Sans MS;
+        --la-merchant-custom-token: custom-val;
+      }
+    `;
+    document.head.appendChild(styleEl);
+
+    const mount = document.createElement("div");
+    mount.className = "la-block custom-merchant-theme";
+    mount.setAttribute("data-la-mount", "");
+    mount.setAttribute("data-product-json", JSON.stringify({ id: "prod-theme" }));
+    const btn = document.createElement("button");
+    btn.setAttribute("data-la-open", "");
+    mount.appendChild(btn);
+    document.body.appendChild(mount);
+
+    const configurator = ensureConfigurator(document);
+
+    mount.dispatchEvent(
+      new CustomEvent("la:open", {
+        bubbles: true,
+        detail: { mount },
+      }),
+    );
+
+    expect(configurator.isOpen).toBe(true);
+    expect(configurator.style.getPropertyValue("--la-merchant-accent")).toBe("tomato");
+    expect(configurator.style.getPropertyValue("--la-merchant-font-family")).toBe("Comic Sans MS");
+    expect(configurator.style.getPropertyValue("--la-merchant-custom-token")).toBe("custom-val");
+
+    configurator.close();
+    expect(configurator.style.getPropertyValue("--la-merchant-accent")).toBe("");
+    expect(configurator.style.getPropertyValue("--la-merchant-font-family")).toBe("");
+    expect(configurator.style.getPropertyValue("--la-merchant-custom-token")).toBe("");
+
+    styleEl.remove();
+    mount.remove();
+    configurator.remove();
+  });
 });
