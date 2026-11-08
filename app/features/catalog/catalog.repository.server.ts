@@ -304,11 +304,11 @@ export class CatalogRepository {
 
   async createLens(shopId: string, data: CreateLensData): Promise<Lens> {
     return this.runInTx(async (tx) => {
-      // Verify groupId belongs to shopId
+      // Verify groupId belongs to shopId and is not archived
       const group = await tx.lensGroup.findUnique({
         where: { shopId_id: { shopId, id: data.groupId } },
       });
-      if (!group) {
+      if (!group || group.archivedAt) {
         throw new NotFoundError("LensGroup not found");
       }
 
@@ -355,7 +355,7 @@ export class CatalogRepository {
         const group = await tx.lensGroup.findUnique({
           where: { shopId_id: { shopId, id: data.groupId } },
         });
-        if (!group) {
+        if (!group || group.archivedAt) {
           throw new NotFoundError("LensGroup not found");
         }
       }
