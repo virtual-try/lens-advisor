@@ -4,7 +4,14 @@ import type {
   HeadersFunction,
   LoaderFunctionArgs,
 } from "react-router";
-import { data, useActionData, useLoaderData, useNavigate } from "react-router";
+import {
+  data,
+  useActionData,
+  useLoaderData,
+  useNavigate,
+  useNavigation,
+  useRouteError,
+} from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
 
@@ -22,7 +29,14 @@ import {
   ValidationError as CatalogValidationError,
   type CatalogAddOnDto,
 } from "../features/catalog/catalog.service.server";
-import { parseMoneyText } from "../../packages/rx-core/src/pricing/index.js";
+import {
+  addOnActionSchema,
+  validateInput,
+} from "../features/catalog/schema";
+import {
+  parseMoneyText,
+  toShopifyDecimal,
+} from "../../packages/rx-core/src/pricing/index.js";
 import { archiveItem, syncItem } from "../features/product-sync";
 
 async function getShopByDomain(domain: string, prisma: PrismaClient) {
@@ -81,10 +95,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     const contentType = request.headers.get("content-type") || "";
-    let rawData: Record<string, unknown> = {};
+    let rawData: unknown = {};
     if (contentType.includes("application/json")) {
       try {
-        rawData = (await request.json()) as Record<string, unknown>;
+        rawData = await request.json();
       } catch {
         return errorResponse(new BadRequestError("Malformed JSON body", "INVALID_INPUT"));
       }
@@ -93,7 +107,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       rawData = Object.fromEntries(formData.entries());
     }
 
-    const intent = typeof rawData.intent === "string" ? rawData.intent : "save";
+    if (rawData === null || typeof rawData !== "object" || Array.isArray(rawData)) {
+      return errorResponse(new BadRequestError("Invalid request body", "INVALID_INPUT"));
+    }
+
+    const payload = validateInput(addOnActionSchema, rawData);
+    const intent = typeof payload.intent === "string" ? payload.intent : "save";
 
     // Intent: Delete / Archive
     if (intent === "delete" || intent === "archive") {
@@ -104,9 +123,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
       if (existing.shopifyVariantId) {
         try {
-          await archiveItem(admin, shop.id, "addOn", id);
+          const res = await archiveItem(admin, shop.id, "addOn", id);
+          if (!res || !res.ok) {
+            throw new Error("Shopify archive failed");
+          }
         } catch {
-          // proceed with local archiving
+          return errorResponse(
+            new BadRequestError(
+              "Failed to archive add-on in Shopify. Please retry.",
+              "SHOPIFY_ARCHIVE_FAILED",
+            ),
+          );
         }
       }
 
@@ -124,8 +151,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     const name =
-      typeof rawData.name === "string"
-        ? rawData.name.trim()
+      typeof payload.name === "string"
+        ? payload.name.trim()
         : existing?.name ?? "";
 
     if (!name) {
@@ -137,30 +164,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     const currency =
-      typeof rawData.currency === "string" && rawData.currency.trim()
-        ? rawData.currency.trim().toUpperCase()
+      typeof payload.currency === "string" && payload.currency.trim()
+        ? payload.currency.trim().toUpperCase()
         : existing?.price.currency || "USD";
 
     let priceMinor = 0;
-    if (rawData.priceMinor !== undefined && rawData.priceMinor !== null) {
-      const num = Number(rawData.priceMinor);
-      if (!Number.isInteger(num)) {
-        return errorResponse(
-          new BadRequestError("Price must be an integer", "NOT_INTEGER", [
-            { path: "price", code: "NOT_INTEGER" },
-          ]),
-        );
-      }
-      if (num < 0) {
-        return errorResponse(
-          new BadRequestError("Price must be at least 0", "NEGATIVE_PRICE", [
-            { path: "price", code: "NEGATIVE_PRICE" },
-          ]),
-        );
-      }
-      priceMinor = num;
-    } else if (rawData.price !== undefined && rawData.price !== null) {
-      const priceStr = String(rawData.price).trim();
+    if (payload.priceMinor !== undefined && payload.priceMinor !== null) {
+      priceMinor = payload.priceMinor;
+    } else if (payload.price !== undefined && payload.price !== null) {
+      const priceStr = String(payload.price).trim();
       if (priceStr !== "") {
         const parsed = parseMoneyText(priceStr, currency);
         if (!parsed.ok) {
@@ -243,9 +255,20 @@ export default function AddOnRoute() {
   const actionResult = useActionData<typeof action>();
   const navigate = useNavigate();
 
+  let isSubmitting = false;
+  try {
+    const navigation = useNavigation();
+    isSubmitting = navigation.state === "submitting" || navigation.state === "loading";
+  } catch {
+    isSubmitting = false;
+  }
+
+  const currency = addOn?.price.currency ?? "USD";
   const [name, setName] = useState(addOn?.name ?? "");
   const [price, setPrice] = useState(
-    addOn ? String(addOn.price.amountMinor / 100) : "0.00",
+    addOn
+      ? toShopifyDecimal(addOn.price.amountMinor, currency)
+      : toShopifyDecimal(0, currency),
   );
 
   const actionError = (
@@ -263,7 +286,8 @@ export default function AddOnRoute() {
     fieldErrors[actionError.code] = actionError.message;
     if (actionError.fields) {
       for (const field of actionError.fields) {
-        fieldErrors[field.path] = field.code;
+        fieldErrors[field.path] = actionError.message || field.code;
+        fieldErrors[field.code] = actionError.message;
       }
     }
   }
@@ -312,12 +336,18 @@ export default function AddOnRoute() {
             />
 
             <s-stack direction="inline" gap="base">
-              <s-button type="submit" variant="primary">
+              <s-button
+                type="submit"
+                variant="primary"
+                loading={isSubmitting}
+                disabled={isSubmitting}
+              >
                 Save add-on
               </s-button>
               <s-button
                 type="button"
                 onClick={() => navigate("/app/options")}
+                disabled={isSubmitting}
               >
                 Cancel
               </s-button>
@@ -330,7 +360,7 @@ export default function AddOnRoute() {
 }
 
 export function ErrorBoundary() {
-  return boundary.error(useActionData());
+  return boundary.error(useRouteError());
 }
 
 export const headers: HeadersFunction = (headersArgs) => {

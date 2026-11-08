@@ -3,7 +3,14 @@ import type {
   HeadersFunction,
   LoaderFunctionArgs,
 } from "react-router";
-import { data, useActionData, useLoaderData, useNavigate } from "react-router";
+import {
+  data,
+  useActionData,
+  useLoaderData,
+  useNavigate,
+  useNavigation,
+  useRouteError,
+} from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
 
@@ -22,7 +29,14 @@ import {
   type CatalogOptionGroupDto,
   type CatalogOptionValueDto,
 } from "../features/catalog/catalog.service.server";
-import { parseMoneyText } from "../../packages/rx-core/src/pricing/index.js";
+import {
+  optionValueActionSchema,
+  validateInput,
+} from "../features/catalog/schema";
+import {
+  parseMoneyText,
+  toShopifyDecimal,
+} from "../../packages/rx-core/src/pricing/index.js";
 import { archiveItem, syncItem } from "../features/product-sync";
 import {
   OptionValueForm,
@@ -99,10 +113,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     const contentType = request.headers.get("content-type") || "";
-    let rawData: Record<string, unknown> = {};
+    let rawData: unknown = {};
     if (contentType.includes("application/json")) {
       try {
-        rawData = (await request.json()) as Record<string, unknown>;
+        rawData = await request.json();
       } catch {
         return errorResponse(new BadRequestError("Malformed JSON body", "INVALID_INPUT"));
       }
@@ -111,7 +125,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       rawData = Object.fromEntries(formData.entries());
     }
 
-    const intent = typeof rawData.intent === "string" ? rawData.intent : "save";
+    if (rawData === null || typeof rawData !== "object" || Array.isArray(rawData)) {
+      return errorResponse(new BadRequestError("Invalid request body", "INVALID_INPUT"));
+    }
+
+    const payload = validateInput(optionValueActionSchema, rawData);
+    const intent = typeof payload.intent === "string" ? payload.intent : "save";
 
     // Intent: Delete / Archive
     if (intent === "delete" || intent === "archive") {
@@ -122,9 +141,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
       if (existing.shopifyVariantId) {
         try {
-          await archiveItem(admin, shop.id, "optionValue", id);
+          const res = await archiveItem(admin, shop.id, "optionValue", id);
+          if (!res || !res.ok) {
+            throw new Error("Shopify archive failed");
+          }
         } catch {
-          // proceed with local archiving even if shopify product archive fails
+          return errorResponse(
+            new BadRequestError(
+              "Failed to archive item in Shopify. Please retry.",
+              "SHOPIFY_ARCHIVE_FAILED",
+            ),
+          );
         }
       }
 
@@ -142,8 +169,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     const label =
-      typeof rawData.label === "string"
-        ? rawData.label.trim()
+      typeof payload.label === "string"
+        ? payload.label.trim()
         : existing?.label ?? "";
 
     if (!label) {
@@ -155,31 +182,16 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     const currency =
-      typeof rawData.currency === "string" && rawData.currency.trim()
-        ? rawData.currency.trim().toUpperCase()
+      typeof payload.currency === "string" && payload.currency.trim()
+        ? payload.currency.trim().toUpperCase()
         : existing?.priceDelta.currency || "USD";
 
     // Parse price delta
     let priceDeltaMinor = 0;
-    if (rawData.priceDeltaMinor !== undefined && rawData.priceDeltaMinor !== null) {
-      const num = Number(rawData.priceDeltaMinor);
-      if (!Number.isInteger(num)) {
-        return errorResponse(
-          new BadRequestError("Price delta must be an integer", "NOT_INTEGER", [
-            { path: "priceDelta", code: "NOT_INTEGER" },
-          ]),
-        );
-      }
-      if (num < 0) {
-        return errorResponse(
-          new BadRequestError("Price delta must be at least 0", "NEGATIVE_PRICE", [
-            { path: "priceDelta", code: "NEGATIVE_PRICE" },
-          ]),
-        );
-      }
-      priceDeltaMinor = num;
-    } else if (rawData.priceDelta !== undefined && rawData.priceDelta !== null) {
-      const priceStr = String(rawData.priceDelta).trim();
+    if (payload.priceDeltaMinor !== undefined && payload.priceDeltaMinor !== null) {
+      priceDeltaMinor = payload.priceDeltaMinor;
+    } else if (payload.priceDelta !== undefined && payload.priceDelta !== null) {
+      const priceStr = String(payload.priceDelta).trim();
       if (priceStr !== "") {
         const parsed = parseMoneyText(priceStr, currency);
         if (!parsed.ok) {
@@ -216,26 +228,26 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     let tokenValue: string | null = null;
     let overrideCode: string | null = null;
 
-    if (typeof rawData.token === "string" && rawData.token.trim()) {
-      const parts = rawData.token.trim().split("=");
+    if (typeof payload.token === "string" && payload.token.trim()) {
+      const parts = payload.token.trim().split("=");
       tokenKey = parts[0]?.trim() || null;
       tokenValue = parts.slice(1).join("=").trim() || null;
     }
-    if (typeof rawData.tokenKey === "string" && rawData.tokenKey.trim()) {
-      tokenKey = rawData.tokenKey.trim();
+    if (typeof payload.tokenKey === "string" && payload.tokenKey.trim()) {
+      tokenKey = payload.tokenKey.trim();
     }
-    if (typeof rawData.tokenValue === "string" && rawData.tokenValue.trim()) {
-      tokenValue = rawData.tokenValue.trim();
+    if (typeof payload.tokenValue === "string" && payload.tokenValue.trim()) {
+      tokenValue = payload.tokenValue.trim();
     }
-    if (typeof rawData.overrideCode === "string" && rawData.overrideCode.trim()) {
-      overrideCode = rawData.overrideCode.trim();
+    if (typeof payload.overrideCode === "string" && payload.overrideCode.trim()) {
+      overrideCode = payload.overrideCode.trim();
     }
 
-    if (rawData.token === "" || rawData.token === null) {
+    if (payload.token === "" || payload.token === null) {
       tokenKey = null;
       tokenValue = null;
     }
-    if (rawData.overrideCode === "" || rawData.overrideCode === null) {
+    if (payload.overrideCode === "" || payload.overrideCode === null) {
       overrideCode = null;
     }
 
@@ -256,14 +268,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     const swatch =
-      typeof rawData.swatch === "string"
-        ? rawData.swatch.trim() || null
+      typeof payload.swatch === "string"
+        ? payload.swatch.trim() || null
         : existing?.swatch ?? null;
 
     if (id === "new") {
       const url = new URL(request.url);
       const optionGroupId =
-        (typeof rawData.optionGroupId === "string" && rawData.optionGroupId.trim()) ||
+        (typeof payload.optionGroupId === "string" && payload.optionGroupId.trim()) ||
         url.searchParams.get("groupId");
 
       if (!optionGroupId) {
@@ -315,16 +327,22 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
       // Price removed: delta changed from > 0 to 0 on an item that had a Shopify variant
       if (previousDelta > 0 && priceDeltaMinor === 0 && hadVariant) {
+        let archiveSuccess = false;
         try {
-          await archiveItem(admin, shop.id, "optionValue", id);
+          const res = await archiveItem(admin, shop.id, "optionValue", id);
+          archiveSuccess = Boolean(res && res.ok && (res.archived || res.reason === "NOT_SYNCED"));
         } catch {
-          // ignore shopify archive error
+          archiveSuccess = false;
         }
-        await catalogService.updateOptionValue(shop.id, id, {
-          shopifyVariantId: null,
-        });
+
+        if (archiveSuccess) {
+          await catalogService.updateOptionValue(shop.id, id, {
+            shopifyVariantId: null,
+          });
+        }
+
         const finalValue = await catalogService.getOptionValue(shop.id, id);
-        return data({ ok: true, optionValue: finalValue });
+        return data({ ok: true, optionValue: finalValue, syncFailed: !archiveSuccess });
       }
 
       // Delta > 0: sync to Shopify
@@ -360,6 +378,14 @@ export default function OptionValueRoute() {
   const actionResult = useActionData<typeof action>();
   const navigate = useNavigate();
 
+  let isSubmitting = false;
+  try {
+    const navigation = useNavigation();
+    isSubmitting = navigation.state === "submitting" || navigation.state === "loading";
+  } catch {
+    isSubmitting = false;
+  }
+
   const actionError = (
     actionResult as {
       error?: {
@@ -374,21 +400,32 @@ export default function OptionValueRoute() {
     fieldErrors[actionError.code] = actionError.message;
     if (actionError.fields) {
       for (const field of actionError.fields) {
-        fieldErrors[field.path] = field.code;
+        fieldErrors[field.path] = actionError.message || field.code;
+        fieldErrors[field.code] = actionError.message;
       }
     }
   }
 
+  const currency = optionValue?.priceDelta.currency ?? "USD";
   const initialData: OptionValueFormData = {
     id: optionValue?.id,
     optionGroupId: optionValue?.optionGroupId ?? group?.id,
     label: optionValue?.label ?? "",
-    priceDelta: optionValue ? String(optionValue.priceDelta.amountMinor / 100) : "0",
+    priceDelta: optionValue
+      ? toShopifyDecimal(optionValue.priceDelta.amountMinor, currency)
+      : toShopifyDecimal(0, currency),
     tokenKey: optionValue?.tokenKey,
     tokenValue: optionValue?.tokenValue,
     overrideCode: optionValue?.overrideCode,
     swatch: optionValue?.swatch,
   };
+
+  const syncFailed = Boolean(
+    (actionResult as { syncFailed?: boolean } | undefined)?.syncFailed ||
+      (optionValue &&
+        optionValue.priceDelta.amountMinor === 0 &&
+        optionValue.shopifyVariantId),
+  );
 
   return (
     <s-page heading={optionValue ? `Edit: ${optionValue.label}` : "New option value"}>
@@ -396,20 +433,30 @@ export default function OptionValueRoute() {
         Options & add-ons
       </s-link>
       <s-section heading="Option value details">
-        <OptionValueForm
-          initialData={initialData}
-          groupKind={group?.kind ?? "MATERIAL"}
-          currency={optionValue?.priceDelta.currency ?? "USD"}
-          errors={fieldErrors}
-          onCancel={() => navigate("/app/options")}
-        />
+        <s-stack direction="block" gap="base">
+          {syncFailed && (
+            <s-banner tone="critical" heading="Shopify sync failed">
+              <s-paragraph>
+                Failed to archive product variant in Shopify.
+              </s-paragraph>
+            </s-banner>
+          )}
+          <OptionValueForm
+            initialData={initialData}
+            groupKind={group?.kind ?? "MATERIAL"}
+            currency={currency}
+            errors={fieldErrors}
+            isSubmitting={isSubmitting}
+            onCancel={() => navigate("/app/options")}
+          />
+        </s-stack>
       </s-section>
     </s-page>
   );
 }
 
 export function ErrorBoundary() {
-  return boundary.error(useActionData());
+  return boundary.error(useRouteError());
 }
 
 export const headers: HeadersFunction = (headersArgs) => {

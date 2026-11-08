@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type {
   ActionFunctionArgs,
   HeadersFunction,
   LoaderFunctionArgs,
 } from "react-router";
-import { data, useActionData, useLoaderData } from "react-router";
+import { data, useLoaderData, useNavigation, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
 
@@ -23,6 +23,18 @@ import {
   type CatalogOptionGroupDto,
   type CatalogOptionValueDto,
 } from "../features/catalog/catalog.service.server";
+import {
+  createGroupActionSchema,
+  deleteAddOnActionSchema,
+  deleteGroupActionSchema,
+  deleteOptionValueActionSchema,
+  reorderAddOnsActionSchema,
+  reorderGroupsActionSchema,
+  reorderValuesActionSchema,
+  retrySyncActionSchema,
+  validateInput,
+} from "../features/catalog/schema";
+import { toShopifyDecimal } from "../../packages/rx-core/src/pricing/index.js";
 import { archiveItem, syncItem } from "../features/product-sync";
 
 export interface OptionGroupWithValues extends CatalogOptionGroupDto {
@@ -47,13 +59,22 @@ export function formatMoneyDisplay(
   prefixPlus: boolean = false,
 ): string {
   if (amountMinor === 0) return "Included";
-  const decimals = currency === "JPY" ? 0 : 2;
+  const decimal = toShopifyDecimal(amountMinor, currency);
   const formatted = new Intl.NumberFormat("en-US", {
     style: "currency",
     currency,
-    minimumFractionDigits: decimals,
-  }).format(amountMinor / 100);
+  }).format(decimal as unknown as number);
   return prefixPlus && amountMinor > 0 ? `+${formatted}` : formatted;
+}
+
+function getReorderedIds(list: Array<{ id: string }>, index: number, direction: -1 | 1): string[] {
+  const ids = list.map((item) => item.id);
+  const targetIndex = index + direction;
+  if (targetIndex < 0 || targetIndex >= ids.length) return ids;
+  const temp = ids[index];
+  ids[index] = ids[targetIndex];
+  ids[targetIndex] = temp;
+  return ids;
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -93,10 +114,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const catalogService = createCatalogService({ prisma });
 
     const contentType = request.headers.get("content-type") || "";
-    let rawData: Record<string, unknown> = {};
+    let rawData: unknown = {};
     if (contentType.includes("application/json")) {
       try {
-        rawData = (await request.json()) as Record<string, unknown>;
+        rawData = await request.json();
       } catch {
         return errorResponse(new BadRequestError("Malformed JSON body", "INVALID_INPUT"));
       }
@@ -105,116 +126,116 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       rawData = Object.fromEntries(formData.entries());
     }
 
-    const intent = typeof rawData.intent === "string" ? rawData.intent : "";
+    if (rawData === null || typeof rawData !== "object" || Array.isArray(rawData)) {
+      return errorResponse(new BadRequestError("Invalid request body", "INVALID_INPUT"));
+    }
+
+    const payload = rawData as Record<string, unknown>;
+    const intent = typeof payload.intent === "string" ? payload.intent : "";
 
     if (intent === "create_group") {
-      const name = typeof rawData.name === "string" ? rawData.name.trim() : "";
-      const kind = typeof rawData.kind === "string" ? rawData.kind.trim() : "MATERIAL";
-      if (!name) {
-        return errorResponse(
-          new BadRequestError("Group name is required", "REQUIRED", [
-            { path: "name", code: "REQUIRED" },
-          ]),
-        );
-      }
-      if (kind !== "MATERIAL" && kind !== "TINT_TYPE" && kind !== "COLOR") {
-        return errorResponse(
-          new BadRequestError("Invalid option group kind", "INVALID_INPUT", [
-            { path: "kind", code: "INVALID_INPUT" },
-          ]),
-        );
-      }
+      const validated = validateInput(createGroupActionSchema, payload);
       const group = await catalogService.createOptionGroup(shop.id, {
-        name,
-        kind: kind as "MATERIAL" | "TINT_TYPE" | "COLOR",
+        name: validated.name,
+        kind: validated.kind,
       });
       return data({ ok: true, group });
     }
 
     if (intent === "delete_group") {
-      const groupId = typeof rawData.groupId === "string" ? rawData.groupId.trim() : "";
-      if (!groupId) {
-        return errorResponse(new BadRequestError("Group ID is required", "REQUIRED"));
-      }
-      await catalogService.archiveOptionGroup(shop.id, groupId);
+      const validated = validateInput(deleteGroupActionSchema, payload);
+      await catalogService.archiveOptionGroup(shop.id, validated.groupId);
       return data({ ok: true, archived: true });
     }
 
     if (intent === "reorder_groups") {
-      const ids = Array.isArray(rawData.ids)
-        ? (rawData.ids as string[])
-        : typeof rawData.ids === "string"
-          ? JSON.parse(rawData.ids)
-          : [];
-      await catalogService.reorderOptionGroups(shop.id, ids);
+      const validated = validateInput(reorderGroupsActionSchema, payload);
+      await catalogService.reorderOptionGroups(shop.id, validated.ids as string[]);
       return data({ ok: true });
     }
 
     if (intent === "reorder_values") {
-      const ids = Array.isArray(rawData.ids)
-        ? (rawData.ids as string[])
-        : typeof rawData.ids === "string"
-          ? JSON.parse(rawData.ids)
-          : [];
-      const optionGroupId =
-        typeof rawData.optionGroupId === "string" ? rawData.optionGroupId.trim() : undefined;
-      await catalogService.reorderOptionValues(shop.id, ids, optionGroupId);
+      const validated = validateInput(reorderValuesActionSchema, payload);
+      await catalogService.reorderOptionValues(shop.id, validated.ids as string[], validated.optionGroupId);
       return data({ ok: true });
     }
 
     if (intent === "reorder_add_ons") {
-      const ids = Array.isArray(rawData.ids)
-        ? (rawData.ids as string[])
-        : typeof rawData.ids === "string"
-          ? JSON.parse(rawData.ids)
-          : [];
-      await catalogService.reorderAddOns(shop.id, ids);
+      const validated = validateInput(reorderAddOnsActionSchema, payload);
+      await catalogService.reorderAddOns(shop.id, validated.ids as string[]);
       return data({ ok: true });
     }
 
     if (intent === "delete_option_value") {
-      const id = typeof rawData.id === "string" ? rawData.id.trim() : "";
-      if (!id) return errorResponse(new BadRequestError("ID is required", "REQUIRED"));
-      const existing = await catalogService.getOptionValue(shop.id, id);
+      const validated = validateInput(deleteOptionValueActionSchema, payload);
+      const existing = await catalogService.getOptionValue(shop.id, validated.id);
       if (!existing) return errorResponse(new NotFoundError("Option value not found"));
       if (existing.shopifyVariantId) {
         try {
-          await archiveItem(admin, shop.id, "optionValue", id);
+          const res = await archiveItem(admin, shop.id, "optionValue", validated.id);
+          if (!res || !res.ok) {
+            throw new Error("Shopify archive failed");
+          }
         } catch {
-          // ignore shopify archive error
+          return errorResponse(
+            new BadRequestError(
+              "Failed to archive item in Shopify. Please retry.",
+              "SHOPIFY_ARCHIVE_FAILED",
+            ),
+          );
         }
       }
-      await catalogService.archiveOptionValue(shop.id, id);
+      await catalogService.archiveOptionValue(shop.id, validated.id);
       return data({ ok: true });
     }
 
     if (intent === "delete_add_on") {
-      const id = typeof rawData.id === "string" ? rawData.id.trim() : "";
-      if (!id) return errorResponse(new BadRequestError("ID is required", "REQUIRED"));
-      const existing = await catalogService.getAddOn(shop.id, id);
+      const validated = validateInput(deleteAddOnActionSchema, payload);
+      const existing = await catalogService.getAddOn(shop.id, validated.id);
       if (!existing) return errorResponse(new NotFoundError("Add-on not found"));
       if (existing.shopifyVariantId) {
         try {
-          await archiveItem(admin, shop.id, "addOn", id);
+          const res = await archiveItem(admin, shop.id, "addOn", validated.id);
+          if (!res || !res.ok) {
+            throw new Error("Shopify archive failed");
+          }
         } catch {
-          // ignore shopify archive error
+          return errorResponse(
+            new BadRequestError(
+              "Failed to archive add-on in Shopify. Please retry.",
+              "SHOPIFY_ARCHIVE_FAILED",
+            ),
+          );
         }
       }
-      await catalogService.archiveAddOn(shop.id, id);
+      await catalogService.archiveAddOn(shop.id, validated.id);
       return data({ ok: true });
     }
 
     if (intent === "retry_sync") {
-      const entity = rawData.entity as "optionValue" | "addOn";
-      const id = typeof rawData.id === "string" ? rawData.id.trim() : "";
-      if (!id || (entity !== "optionValue" && entity !== "addOn")) {
-        return errorResponse(new BadRequestError("Invalid sync retry request", "INVALID_INPUT"));
+      const validated = validateInput(retrySyncActionSchema, payload);
+      if (validated.entity === "optionValue") {
+        const optVal = await catalogService.getOptionValue(shop.id, validated.id);
+        if (optVal && optVal.priceDelta.amountMinor === 0 && optVal.shopifyVariantId) {
+          try {
+            const res = await archiveItem(admin, shop.id, "optionValue", validated.id);
+            if (!res || !res.ok) {
+              throw new Error("Shopify archive failed");
+            }
+          } catch {
+            return errorResponse(
+              new BadRequestError("Shopify archive failed on retry", "SYNC_FAILED"),
+            );
+          }
+          await catalogService.updateOptionValue(shop.id, validated.id, { shopifyVariantId: null });
+          return data({ ok: true, synced: true });
+        }
       }
-      await syncItem(admin, shop.id, entity, id);
+      await syncItem(admin, shop.id, validated.entity, validated.id);
       return data({ ok: true, synced: true });
     }
 
-    return errorResponse(new BadRequestError(`Unknown intent: ${intent}`, "INVALID_INPUT"));
+    return errorResponse(new BadRequestError(`Unknown intent: ${intent || "none"}`, "INVALID_INPUT"));
   } catch (err) {
     if (err instanceof NotFoundError) {
       return errorResponse(err);
@@ -231,9 +252,48 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 export default function AdminOptionsRoute() {
   const { groups, addOns } = useLoaderData<typeof loader>();
-  const [modalOpen, setModalOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
   const [newGroupKind, setNewGroupKind] = useState<"MATERIAL" | "TINT_TYPE" | "COLOR">("MATERIAL");
+
+  let isSubmitting = false;
+  try {
+    const navigation = useNavigation();
+    isSubmitting = navigation.state === "submitting" || navigation.state === "loading";
+  } catch {
+    isSubmitting = false;
+  }
+
+  const addModalRef = useRef<HTMLElementTagNameMap["s-modal"] | null>(null);
+  const deleteModalRef = useRef<HTMLElementTagNameMap["s-modal"] | null>(null);
+
+  const [deleteTarget, setDeleteTarget] = useState<{
+    type: "group" | "value" | "addOn";
+    id: string;
+    name: string;
+  } | null>(null);
+
+  const showAddModal = (kind: "MATERIAL" | "TINT_TYPE" | "COLOR" = "MATERIAL") => {
+    setNewGroupKind(kind);
+    setNewGroupName("");
+    addModalRef.current?.showOverlay?.();
+  };
+
+  const hideAddModal = () => {
+    addModalRef.current?.hideOverlay?.();
+  };
+
+  const showDeleteModal = (target: {
+    type: "group" | "value" | "addOn";
+    id: string;
+    name: string;
+  }) => {
+    setDeleteTarget(target);
+    deleteModalRef.current?.showOverlay?.();
+  };
+
+  const hideDeleteModal = () => {
+    deleteModalRef.current?.hideOverlay?.();
+  };
 
   const materialGroups = groups.filter((g) => g.kind === "MATERIAL");
   const tintAndColorGroups = groups.filter(
@@ -245,7 +305,7 @@ export default function AdminOptionsRoute() {
       <s-button
         slot="primary-action"
         variant="primary"
-        onClick={() => setModalOpen(true)}
+        onClick={() => showAddModal("MATERIAL")}
       >
         Add option group
       </s-button>
@@ -261,10 +321,7 @@ export default function AdminOptionsRoute() {
                 </s-paragraph>
                 <s-button
                   type="button"
-                  onClick={() => {
-                    setNewGroupKind("MATERIAL");
-                    setModalOpen(true);
-                  }}
+                  onClick={() => showAddModal("MATERIAL")}
                 >
                   Add material group
                 </s-button>
@@ -272,15 +329,56 @@ export default function AdminOptionsRoute() {
             </s-box>
           ) : (
             <s-stack direction="block" gap="base">
-              {materialGroups.map((group) => (
+              {materialGroups.map((group, gIndex) => (
                 <s-box key={group.id}>
                   <s-stack direction="block" gap="base">
-                    <s-heading>{group.name}</s-heading>
+                    <s-stack direction="inline" gap="base">
+                      <s-heading>{group.name}</s-heading>
+                      <form method="post">
+                        <input type="hidden" name="intent" value="reorder_groups" />
+                        <input
+                          type="hidden"
+                          name="ids"
+                          value={JSON.stringify(getReorderedIds(materialGroups, gIndex, -1))}
+                        />
+                        <s-button type="submit" disabled={gIndex === 0 || isSubmitting}>
+                          Move up
+                        </s-button>
+                      </form>
+                      <form method="post">
+                        <input type="hidden" name="intent" value="reorder_groups" />
+                        <input
+                          type="hidden"
+                          name="ids"
+                          value={JSON.stringify(getReorderedIds(materialGroups, gIndex, 1))}
+                        />
+                        <s-button
+                          type="submit"
+                          disabled={gIndex === materialGroups.length - 1 || isSubmitting}
+                        >
+                          Move down
+                        </s-button>
+                      </form>
+                      <s-button
+                        type="button"
+                        tone="critical"
+                        onClick={() =>
+                          showDeleteModal({
+                            type: "group",
+                            id: group.id,
+                            name: group.name,
+                          })
+                        }
+                      >
+                        Delete group
+                      </s-button>
+                    </s-stack>
+
                     {group.values.length === 0 ? (
                       <s-paragraph>No option values yet.</s-paragraph>
                     ) : (
                       <s-stack direction="block" gap="base">
-                        {group.values.map((val) => (
+                        {group.values.map((val, vIndex) => (
                           <s-stack key={val.id} direction="inline" gap="base">
                             <s-text type="strong">{val.label}</s-text>
                             <s-text>
@@ -297,13 +395,77 @@ export default function AdminOptionsRoute() {
                               <s-text>Override: {val.overrideCode}</s-text>
                             )}
                             {val.priceDelta.amountMinor === 0 ? (
-                              <s-badge tone="info">Included</s-badge>
+                              val.shopifyVariantId ? (
+                                <s-stack direction="inline" gap="base">
+                                  <s-badge tone="critical">Sync failed</s-badge>
+                                  <form method="post">
+                                    <input type="hidden" name="intent" value="retry_sync" />
+                                    <input type="hidden" name="entity" value="optionValue" />
+                                    <input type="hidden" name="id" value={val.id} />
+                                    <s-button type="submit" variant="tertiary" disabled={isSubmitting}>
+                                      Retry
+                                    </s-button>
+                                  </form>
+                                </s-stack>
+                              ) : (
+                                <s-badge tone="info">Included</s-badge>
+                              )
                             ) : val.shopifyVariantId ? (
                               <s-badge tone="success">Synced</s-badge>
                             ) : (
-                              <s-badge tone="warning">Not synced</s-badge>
+                              <s-stack direction="inline" gap="base">
+                                <s-badge tone="critical">Sync failed</s-badge>
+                                <form method="post">
+                                  <input type="hidden" name="intent" value="retry_sync" />
+                                  <input type="hidden" name="entity" value="optionValue" />
+                                  <input type="hidden" name="id" value={val.id} />
+                                  <s-button type="submit" variant="tertiary" disabled={isSubmitting}>
+                                    Retry
+                                  </s-button>
+                                </form>
+                              </s-stack>
                             )}
+                            <form method="post">
+                              <input type="hidden" name="intent" value="reorder_values" />
+                              <input type="hidden" name="optionGroupId" value={group.id} />
+                              <input
+                                type="hidden"
+                                name="ids"
+                                value={JSON.stringify(getReorderedIds(group.values, vIndex, -1))}
+                              />
+                              <s-button type="submit" disabled={vIndex === 0 || isSubmitting}>
+                                Move up
+                              </s-button>
+                            </form>
+                            <form method="post">
+                              <input type="hidden" name="intent" value="reorder_values" />
+                              <input type="hidden" name="optionGroupId" value={group.id} />
+                              <input
+                                type="hidden"
+                                name="ids"
+                                value={JSON.stringify(getReorderedIds(group.values, vIndex, 1))}
+                              />
+                              <s-button
+                                type="submit"
+                                disabled={vIndex === group.values.length - 1 || isSubmitting}
+                              >
+                                Move down
+                              </s-button>
+                            </form>
                             <s-link href={`/app/options/${val.id}`}>Edit</s-link>
+                            <s-button
+                              type="button"
+                              tone="critical"
+                              onClick={() =>
+                                showDeleteModal({
+                                  type: "value",
+                                  id: val.id,
+                                  name: val.label,
+                                })
+                              }
+                            >
+                              Delete
+                            </s-button>
                           </s-stack>
                         ))}
                       </s-stack>
@@ -328,10 +490,7 @@ export default function AdminOptionsRoute() {
                 </s-paragraph>
                 <s-button
                   type="button"
-                  onClick={() => {
-                    setNewGroupKind("TINT_TYPE");
-                    setModalOpen(true);
-                  }}
+                  onClick={() => showAddModal("TINT_TYPE")}
                 >
                   Add tint or colour group
                 </s-button>
@@ -339,17 +498,58 @@ export default function AdminOptionsRoute() {
             </s-box>
           ) : (
             <s-stack direction="block" gap="base">
-              {tintAndColorGroups.map((group) => (
+              {tintAndColorGroups.map((group, gIndex) => (
                 <s-box key={group.id}>
                   <s-stack direction="block" gap="base">
-                    <s-heading>
-                      {group.name} ({group.kind === "COLOR" ? "Colour" : "Tint type"})
-                    </s-heading>
+                    <s-stack direction="inline" gap="base">
+                      <s-heading>
+                        {group.name} ({group.kind === "COLOR" ? "Colour" : "Tint type"})
+                      </s-heading>
+                      <form method="post">
+                        <input type="hidden" name="intent" value="reorder_groups" />
+                        <input
+                          type="hidden"
+                          name="ids"
+                          value={JSON.stringify(getReorderedIds(tintAndColorGroups, gIndex, -1))}
+                        />
+                        <s-button type="submit" disabled={gIndex === 0 || isSubmitting}>
+                          Move up
+                        </s-button>
+                      </form>
+                      <form method="post">
+                        <input type="hidden" name="intent" value="reorder_groups" />
+                        <input
+                          type="hidden"
+                          name="ids"
+                          value={JSON.stringify(getReorderedIds(tintAndColorGroups, gIndex, 1))}
+                        />
+                        <s-button
+                          type="submit"
+                          disabled={gIndex === tintAndColorGroups.length - 1 || isSubmitting}
+                        >
+                          Move down
+                        </s-button>
+                      </form>
+                      <s-button
+                        type="button"
+                        tone="critical"
+                        onClick={() =>
+                          showDeleteModal({
+                            type: "group",
+                            id: group.id,
+                            name: group.name,
+                          })
+                        }
+                      >
+                        Delete group
+                      </s-button>
+                    </s-stack>
+
                     {group.values.length === 0 ? (
                       <s-paragraph>No option values yet.</s-paragraph>
                     ) : (
                       <s-stack direction="block" gap="base">
-                        {group.values.map((val) => (
+                        {group.values.map((val, vIndex) => (
                           <s-stack key={val.id} direction="inline" gap="base">
                             <s-text type="strong">{val.label}</s-text>
                             <s-text>
@@ -369,13 +569,77 @@ export default function AdminOptionsRoute() {
                               <s-text>Swatch: {val.swatch}</s-text>
                             )}
                             {val.priceDelta.amountMinor === 0 ? (
-                              <s-badge tone="info">Included</s-badge>
+                              val.shopifyVariantId ? (
+                                <s-stack direction="inline" gap="base">
+                                  <s-badge tone="critical">Sync failed</s-badge>
+                                  <form method="post">
+                                    <input type="hidden" name="intent" value="retry_sync" />
+                                    <input type="hidden" name="entity" value="optionValue" />
+                                    <input type="hidden" name="id" value={val.id} />
+                                    <s-button type="submit" variant="tertiary" disabled={isSubmitting}>
+                                      Retry
+                                    </s-button>
+                                  </form>
+                                </s-stack>
+                              ) : (
+                                <s-badge tone="info">Included</s-badge>
+                              )
                             ) : val.shopifyVariantId ? (
                               <s-badge tone="success">Synced</s-badge>
                             ) : (
-                              <s-badge tone="warning">Not synced</s-badge>
+                              <s-stack direction="inline" gap="base">
+                                <s-badge tone="critical">Sync failed</s-badge>
+                                <form method="post">
+                                  <input type="hidden" name="intent" value="retry_sync" />
+                                  <input type="hidden" name="entity" value="optionValue" />
+                                  <input type="hidden" name="id" value={val.id} />
+                                  <s-button type="submit" variant="tertiary" disabled={isSubmitting}>
+                                    Retry
+                                  </s-button>
+                                </form>
+                              </s-stack>
                             )}
+                            <form method="post">
+                              <input type="hidden" name="intent" value="reorder_values" />
+                              <input type="hidden" name="optionGroupId" value={group.id} />
+                              <input
+                                type="hidden"
+                                name="ids"
+                                value={JSON.stringify(getReorderedIds(group.values, vIndex, -1))}
+                              />
+                              <s-button type="submit" disabled={vIndex === 0 || isSubmitting}>
+                                Move up
+                              </s-button>
+                            </form>
+                            <form method="post">
+                              <input type="hidden" name="intent" value="reorder_values" />
+                              <input type="hidden" name="optionGroupId" value={group.id} />
+                              <input
+                                type="hidden"
+                                name="ids"
+                                value={JSON.stringify(getReorderedIds(group.values, vIndex, 1))}
+                              />
+                              <s-button
+                                type="submit"
+                                disabled={vIndex === group.values.length - 1 || isSubmitting}
+                              >
+                                Move down
+                              </s-button>
+                            </form>
                             <s-link href={`/app/options/${val.id}`}>Edit</s-link>
+                            <s-button
+                              type="button"
+                              tone="critical"
+                              onClick={() =>
+                                showDeleteModal({
+                                  type: "value",
+                                  id: val.id,
+                                  name: val.label,
+                                })
+                              }
+                            >
+                              Delete
+                            </s-button>
                           </s-stack>
                         ))}
                       </s-stack>
@@ -404,7 +668,7 @@ export default function AdminOptionsRoute() {
           ) : (
             <s-stack direction="block" gap="base">
               <s-stack direction="block" gap="base">
-                {addOns.map((addOn) => (
+                {addOns.map((addOn, aIndex) => (
                   <s-stack key={addOn.id} direction="inline" gap="base">
                     <s-text type="strong">{addOn.name}</s-text>
                     <s-text>
@@ -417,9 +681,57 @@ export default function AdminOptionsRoute() {
                     {addOn.shopifyVariantId ? (
                       <s-badge tone="success">Synced</s-badge>
                     ) : (
-                      <s-badge tone="warning">Not synced</s-badge>
+                      <s-stack direction="inline" gap="base">
+                        <s-badge tone="critical">Sync failed</s-badge>
+                        <form method="post">
+                          <input type="hidden" name="intent" value="retry_sync" />
+                          <input type="hidden" name="entity" value="addOn" />
+                          <input type="hidden" name="id" value={addOn.id} />
+                          <s-button type="submit" variant="tertiary" disabled={isSubmitting}>
+                            Retry
+                          </s-button>
+                        </form>
+                      </s-stack>
                     )}
+                    <form method="post">
+                      <input type="hidden" name="intent" value="reorder_add_ons" />
+                      <input
+                        type="hidden"
+                        name="ids"
+                        value={JSON.stringify(getReorderedIds(addOns, aIndex, -1))}
+                      />
+                      <s-button type="submit" disabled={aIndex === 0 || isSubmitting}>
+                        Move up
+                      </s-button>
+                    </form>
+                    <form method="post">
+                      <input type="hidden" name="intent" value="reorder_add_ons" />
+                      <input
+                        type="hidden"
+                        name="ids"
+                        value={JSON.stringify(getReorderedIds(addOns, aIndex, 1))}
+                      />
+                      <s-button
+                        type="submit"
+                        disabled={aIndex === addOns.length - 1 || isSubmitting}
+                      >
+                        Move down
+                      </s-button>
+                    </form>
                     <s-link href={`/app/add-ons/${addOn.id}`}>Edit</s-link>
+                    <s-button
+                      type="button"
+                      tone="critical"
+                      onClick={() =>
+                        showDeleteModal({
+                          type: "addOn",
+                          id: addOn.id,
+                          name: addOn.name,
+                        })
+                      }
+                    >
+                      Delete
+                    </s-button>
                   </s-stack>
                 ))}
               </s-stack>
@@ -430,53 +742,95 @@ export default function AdminOptionsRoute() {
       </s-stack>
 
       {/* Modal for creating a new option group */}
-      {modalOpen && (
-        <s-modal heading="Add option group">
-          <form method="post">
-            <input type="hidden" name="intent" value="create_group" />
-            <s-stack direction="block" gap="base">
-              <s-text-field
-                label="Group name"
-                name="name"
-                value={newGroupName}
-                onInput={(e) => setNewGroupName(e.currentTarget.value)}
-                required
-              />
-              <s-select
-                label="Kind"
-                name="kind"
-                value={newGroupKind}
-                onChange={(e) =>
-                  setNewGroupKind(
-                    (e.currentTarget as unknown as HTMLSelectElement).value as
-                      | "MATERIAL"
-                      | "TINT_TYPE"
-                      | "COLOR",
-                  )
-                }
+      <s-modal id="add-option-group-modal" ref={addModalRef} heading="Add option group">
+        <form method="post" onSubmit={hideAddModal}>
+          <input type="hidden" name="intent" value="create_group" />
+          <s-stack direction="block" gap="base">
+            <s-text-field
+              label="Group name"
+              name="name"
+              value={newGroupName}
+              onInput={(e) => setNewGroupName(e.currentTarget.value)}
+              required
+            />
+            <s-select
+              label="Kind"
+              name="kind"
+              value={newGroupKind}
+              onChange={(e) =>
+                setNewGroupKind(
+                  (e.currentTarget as unknown as HTMLSelectElement).value as
+                    | "MATERIAL"
+                    | "TINT_TYPE"
+                    | "COLOR",
+                )
+              }
+            >
+              <s-option value="MATERIAL">Material / Index</s-option>
+              <s-option value="TINT_TYPE">Tint type</s-option>
+              <s-option value="COLOR">Colour</s-option>
+            </s-select>
+            <s-stack direction="inline" gap="base">
+              <s-button
+                type="submit"
+                variant="primary"
+                loading={isSubmitting}
+                disabled={isSubmitting}
               >
-                <s-option value="MATERIAL">Material / Index</s-option>
-                <s-option value="TINT_TYPE">Tint type</s-option>
-                <s-option value="COLOR">Colour</s-option>
-              </s-select>
-              <s-stack direction="inline" gap="base">
-                <s-button type="submit" variant="primary">
-                  Create group
-                </s-button>
-                <s-button type="button" onClick={() => setModalOpen(false)}>
-                  Cancel
-                </s-button>
-              </s-stack>
+                Create group
+              </s-button>
+              <s-button type="button" onClick={hideAddModal} disabled={isSubmitting}>
+                Cancel
+              </s-button>
             </s-stack>
-          </form>
-        </s-modal>
-      )}
+          </s-stack>
+        </form>
+      </s-modal>
+
+      {/* Modal for confirming deletion */}
+      <s-modal id="delete-confirm-modal" ref={deleteModalRef} heading="Confirm delete">
+        <s-paragraph>
+          Are you sure you want to delete {deleteTarget?.name}?
+        </s-paragraph>
+        <form method="post" onSubmit={hideDeleteModal}>
+          <input
+            type="hidden"
+            name="intent"
+            value={
+              deleteTarget?.type === "group"
+                ? "delete_group"
+                : deleteTarget?.type === "addOn"
+                  ? "delete_add_on"
+                  : "delete_option_value"
+            }
+          />
+          {deleteTarget?.type === "group" ? (
+            <input type="hidden" name="groupId" value={deleteTarget?.id ?? ""} />
+          ) : (
+            <input type="hidden" name="id" value={deleteTarget?.id ?? ""} />
+          )}
+          <s-stack direction="inline" gap="base">
+            <s-button
+              type="submit"
+              variant="primary"
+              tone="critical"
+              loading={isSubmitting}
+              disabled={isSubmitting}
+            >
+              Confirm delete
+            </s-button>
+            <s-button type="button" onClick={hideDeleteModal} disabled={isSubmitting}>
+              Cancel
+            </s-button>
+          </s-stack>
+        </form>
+      </s-modal>
     </s-page>
   );
 }
 
 export function ErrorBoundary() {
-  return boundary.error(useActionData());
+  return boundary.error(useRouteError());
 }
 
 export const headers: HeadersFunction = (headersArgs) => {
