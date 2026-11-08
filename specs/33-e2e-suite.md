@@ -1,6 +1,6 @@
 # Spec 33 — End-to-end suite
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 18, Spec 19, Spec 20, Spec 21, Spec 22, Spec 25, Spec 26, Spec 27, Spec 29, Spec 31, Spec 32
 **Model:** Heavy — `claude-opus-5-5` · `gpt-6-astra` · `gemini-3.1-pro-preview`
 **Issue:** —
