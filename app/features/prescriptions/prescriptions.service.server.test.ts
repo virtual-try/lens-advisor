@@ -14,6 +14,7 @@ import type {
 import {
   createPrescriptionsService,
   PrescriptionsService,
+  type PrescriptionSubmitResponse,
 } from "./prescriptions.service.server";
 
 const DB_TIMEOUT = 120_000;
@@ -152,6 +153,53 @@ describe("Prescriptions Service", () => {
         expect.objectContaining({
           status: 400,
           code: "TOO_LARGE",
+        }),
+      );
+    });
+
+    it("R2-F3: accepts exactly 1 byte for upload-url (lower boundary)", async () => {
+      const result = await service.requestUploadUrl(shopA.shopId, {
+        contentType: "image/png",
+        size: 1,
+      });
+      expect(result.draftId).toBeDefined();
+      expect(result.uploadUrl).toBeDefined();
+    });
+
+    it("R2-F3: accepts exactly 10 MB for upload-url (upper boundary, MAX_UPLOAD_BYTES)", async () => {
+      const result = await service.requestUploadUrl(shopA.shopId, {
+        contentType: "image/png",
+        size: 10 * 1024 * 1024,
+      });
+      expect(result.draftId).toBeDefined();
+      expect(result.uploadUrl).toBeDefined();
+    });
+
+    it("R2-F1: rejects reuse of already finalized draftId with DRAFT_NOT_FOUND", async () => {
+      const draft = await service.requestUploadUrl(shopA.shopId, {
+        contentType: "image/png",
+        size: 1024,
+      });
+      fakeStore.existingObjects.add(draft.key);
+
+      // Finalize the draft
+      await service.submitPrescription(shopA.shopId, {
+        rxType: "SINGLE_VISION",
+        draftId: draft.draftId,
+        uploadedKeys: [draft.key],
+      });
+
+      // Attempting to reuse the finalized draftId must be rejected
+      await expect(
+        service.requestUploadUrl(shopA.shopId, {
+          draftId: draft.draftId,
+          contentType: "image/png",
+          size: 1024,
+        }),
+      ).rejects.toThrowError(
+        expect.objectContaining({
+          status: 400,
+          code: "DRAFT_NOT_FOUND",
         }),
       );
     });
@@ -548,6 +596,153 @@ describe("Prescriptions Service", () => {
       const row = await service.getPrescription(shopA.shopId, draft.draftId);
       expect(row?.rxType).toBe("PROGRESSIVE");
       expect(row?.uploadKeys).toEqual([draft.key]);
+    });
+
+    it("R2-F1: rejects re-submission of already finalized draft and leaves row unchanged", async () => {
+      const draft = await service.requestUploadUrl(shopA.shopId, {
+        contentType: "image/png",
+        size: 1024,
+      });
+      fakeStore.existingObjects.add(draft.key);
+
+      const firstSubmit = await service.submitPrescription(shopA.shopId, {
+        rxType: "SINGLE_VISION",
+        draftId: draft.draftId,
+        uploadedKeys: [draft.key],
+      });
+      expect(firstSubmit.rxRef).toBe(draft.draftId);
+
+      // Prepare a second key
+      const secondKey = `shops/${shopA.shopId}/rx/${draft.draftId}/second.png`;
+      fakeStore.existingObjects.add(secondKey);
+
+      // Re-submission must be rejected
+      await expect(
+        service.submitPrescription(shopA.shopId, {
+          rxType: "PROGRESSIVE",
+          draftId: draft.draftId,
+          uploadedKeys: [secondKey],
+        }),
+      ).rejects.toThrowError(
+        expect.objectContaining({
+          status: 400,
+          code: "DRAFT_NOT_FOUND",
+        }),
+      );
+
+      // Row and its rxRef and uploadKeys must remain unchanged
+      const row = await service.getPrescription(shopA.shopId, draft.draftId);
+      expect(row?.rxType).toBe("SINGLE_VISION");
+      expect(row?.uploadKeys).toEqual([draft.key]);
+    });
+
+    it("R2-F1: two concurrent finalizations on same draft: exactly one succeeds, row and rxRef unchanged by second", async () => {
+      const draft = await service.requestUploadUrl(shopA.shopId, {
+        contentType: "image/png",
+        size: 1024,
+      });
+      const key1 = draft.key;
+      const key2 = `shops/${shopA.shopId}/rx/${draft.draftId}/second.png`;
+      fakeStore.existingObjects.add(key1);
+      fakeStore.existingObjects.add(key2);
+
+      const results = await Promise.allSettled([
+        service.submitPrescription(shopA.shopId, {
+          rxType: "SINGLE_VISION",
+          draftId: draft.draftId,
+          uploadedKeys: [key1],
+        }),
+        service.submitPrescription(shopA.shopId, {
+          rxType: "PROGRESSIVE",
+          draftId: draft.draftId,
+          uploadedKeys: [key2],
+        }),
+      ]);
+
+      const fulfilled = results.filter((r) => r.status === "fulfilled");
+      const rejected = results.filter((r) => r.status === "rejected");
+
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+
+      const winnerResult = (fulfilled[0] as PromiseFulfilledResult<PrescriptionSubmitResponse>).value;
+      expect(winnerResult.rxRef).toBe(draft.draftId);
+
+      // Verify row is unchanged by the loser
+      const row = await service.getPrescription(shopA.shopId, draft.draftId);
+      expect(row).not.toBeNull();
+      if (row?.rxType === "SINGLE_VISION") {
+        expect(row.uploadKeys).toEqual([key1]);
+      } else {
+        expect(row?.rxType).toBe("PROGRESSIVE");
+        expect(row?.uploadKeys).toEqual([key2]);
+      }
+    });
+
+    it("R2-F3: S3 object metadata accepts exactly 1 byte and exactly 10 MB; rejects 0 and 10 MB + 1", async () => {
+      // 1. Boundary: exactly 1 byte in S3 -> accepted
+      const draft1 = await service.requestUploadUrl(shopA.shopId, {
+        contentType: "image/png",
+        size: 1024,
+      });
+      fakeStore.customHeadResults.set(draft1.key, { contentLength: 1 });
+      const res1 = await service.submitPrescription(shopA.shopId, {
+        rxType: "SINGLE_VISION",
+        draftId: draft1.draftId,
+        uploadedKeys: [draft1.key],
+      });
+      expect(res1.rxRef).toBe(draft1.draftId);
+
+      // 2. Boundary: exactly 10 MB (MAX_UPLOAD_BYTES) in S3 -> accepted
+      const draft2 = await service.requestUploadUrl(shopA.shopId, {
+        contentType: "image/png",
+        size: 1024,
+      });
+      fakeStore.customHeadResults.set(draft2.key, { contentLength: 10 * 1024 * 1024 });
+      const res10MB = await service.submitPrescription(shopA.shopId, {
+        rxType: "SINGLE_VISION",
+        draftId: draft2.draftId,
+        uploadedKeys: [draft2.key],
+      });
+      expect(res10MB.rxRef).toBe(draft2.draftId);
+
+      // 3. Boundary: exactly 0 bytes in S3 -> rejected with INVALID_UPLOAD
+      const draft3 = await service.requestUploadUrl(shopA.shopId, {
+        contentType: "image/png",
+        size: 1024,
+      });
+      fakeStore.customHeadResults.set(draft3.key, { contentLength: 0 });
+      await expect(
+        service.submitPrescription(shopA.shopId, {
+          rxType: "SINGLE_VISION",
+          draftId: draft3.draftId,
+          uploadedKeys: [draft3.key],
+        }),
+      ).rejects.toThrowError(
+        expect.objectContaining({
+          status: 400,
+          code: "INVALID_UPLOAD",
+        }),
+      );
+
+      // 4. Boundary: 10 MB + 1 byte in S3 -> rejected with INVALID_UPLOAD
+      const draft4 = await service.requestUploadUrl(shopA.shopId, {
+        contentType: "image/png",
+        size: 1024,
+      });
+      fakeStore.customHeadResults.set(draft4.key, { contentLength: 10 * 1024 * 1024 + 1 });
+      await expect(
+        service.submitPrescription(shopA.shopId, {
+          rxType: "SINGLE_VISION",
+          draftId: draft4.draftId,
+          uploadedKeys: [draft4.key],
+        }),
+      ).rejects.toThrowError(
+        expect.objectContaining({
+          status: 400,
+          code: "INVALID_UPLOAD",
+        }),
+      );
     });
   });
 });

@@ -671,4 +671,282 @@ describe("Spec 22: App Proxy Prescription Endpoints (routes.test.ts)", () => {
     warnSpy.mockRestore();
     errorSpy.mockRestore();
   });
+
+  describe("R2-F2: rate-limiting occurs before method/body validation and DB lookup on both endpoints", () => {
+    it("prescriptions endpoint: 21st malformed-body request returns 429", async () => {
+      const clientIp = "10.0.1.1";
+      const findShopSpy = vi.spyOn(repo, "findShopByDomain");
+
+      try {
+        for (let i = 1; i <= 20; i++) {
+          const req = makeSignedProxyRequest(
+            "/apps/lens-advisor/prescriptions",
+            shopA.domain,
+            "{ malformed json !!",
+            { ip: clientIp },
+          );
+          const res = await prescriptionsAction(createActionArgs(req));
+          expect(res.status).toBe(400);
+          const body = await res.json();
+          expect(body.error.code).toBe("BAD_REQUEST");
+        }
+
+        // 21st request must return 429
+        const req21 = makeSignedProxyRequest(
+          "/apps/lens-advisor/prescriptions",
+          shopA.domain,
+          "{ malformed json !!",
+          { ip: clientIp },
+        );
+        const res21 = await prescriptionsAction(createActionArgs(req21));
+        expect(res21.status).toBe(429);
+        const body21 = await res21.json();
+        expect(body21.error.code).toBe("RATE_LIMITED");
+
+        // Assert DB was never hit for shop lookup
+        expect(findShopSpy).not.toHaveBeenCalled();
+      } finally {
+        findShopSpy.mockRestore();
+      }
+    });
+
+    it("upload-url endpoint: 21st malformed-body request returns 429", async () => {
+      const clientIp = "10.0.1.2";
+      const findShopSpy = vi.spyOn(repo, "findShopByDomain");
+
+      try {
+        for (let i = 1; i <= 20; i++) {
+          const req = makeSignedProxyRequest(
+            "/apps/lens-advisor/upload-url",
+            shopA.domain,
+            "{ malformed json !!",
+            { ip: clientIp },
+          );
+          const res = await uploadUrlAction(createActionArgs(req));
+          expect(res.status).toBe(400);
+          const body = await res.json();
+          expect(body.error.code).toBe("BAD_REQUEST");
+        }
+
+        // 21st request must return 429
+        const req21 = makeSignedProxyRequest(
+          "/apps/lens-advisor/upload-url",
+          shopA.domain,
+          "{ malformed json !!",
+          { ip: clientIp },
+        );
+        const res21 = await uploadUrlAction(createActionArgs(req21));
+        expect(res21.status).toBe(429);
+        const body21 = await res21.json();
+        expect(body21.error.code).toBe("RATE_LIMITED");
+
+        // Assert DB was never hit for shop lookup
+        expect(findShopSpy).not.toHaveBeenCalled();
+      } finally {
+        findShopSpy.mockRestore();
+      }
+    });
+
+    it("both endpoints: 21st signed non-POST request returns 429", async () => {
+      const clientIp = "10.0.1.3";
+      for (let i = 1; i <= 20; i++) {
+        const req = makeSignedProxyRequest(
+          "/apps/lens-advisor/prescriptions",
+          shopA.domain,
+          undefined,
+          { ip: clientIp, method: "GET" },
+        );
+        const res = await prescriptionsAction(createActionArgs(req));
+        expect(res.status).toBe(400);
+      }
+
+      const req21 = makeSignedProxyRequest(
+        "/apps/lens-advisor/prescriptions",
+        shopA.domain,
+        undefined,
+        { ip: clientIp, method: "GET" },
+      );
+      const res21 = await prescriptionsAction(createActionArgs(req21));
+      expect(res21.status).toBe(429);
+    });
+  });
+
+  describe("R2-F1: unfinalized draft enforcement and concurrency on endpoints", () => {
+    it("prescriptions endpoint: rejects re-submitting valid keys for already finalized draft and leaves row unchanged", async () => {
+      // 1. Create a draft
+      const uploadReq = makeSignedProxyRequest(
+        "/apps/lens-advisor/upload-url",
+        shopA.domain,
+        { contentType: "image/png", size: 1024 },
+      );
+      const uploadRes = await uploadUrlAction(createActionArgs(uploadReq));
+      expect(uploadRes.status).toBe(200);
+      const { draftId, key: key1 } = await uploadRes.json();
+      fakeStore.existingObjects.add(key1);
+
+      // 2. First submission finalizes the draft
+      const submitReq1 = makeSignedProxyRequest(
+        "/apps/lens-advisor/prescriptions",
+        shopA.domain,
+        {
+          rxType: "SINGLE_VISION",
+          draftId,
+          uploadedKeys: [key1],
+        },
+      );
+      const submitRes1 = await prescriptionsAction(createActionArgs(submitReq1));
+      expect(submitRes1.status).toBe(201);
+      const { rxRef: originalRxRef } = await submitRes1.json();
+      expect(originalRxRef).toBe(draftId);
+
+      // 3. Re-submission attempt with another valid key under the same draft
+      const key2 = `shops/${shopA.shopId}/rx/${draftId}/second-key.png`;
+      fakeStore.existingObjects.add(key2);
+
+      const submitReq2 = makeSignedProxyRequest(
+        "/apps/lens-advisor/prescriptions",
+        shopA.domain,
+        {
+          rxType: "PROGRESSIVE",
+          draftId,
+          uploadedKeys: [key2],
+        },
+      );
+      const submitRes2 = await prescriptionsAction(createActionArgs(submitReq2));
+      expect(submitRes2.status).toBe(400);
+      const errBody = await submitRes2.json();
+      expect(errBody.error.code).toBe("DRAFT_NOT_FOUND");
+
+      // Verify DB row remains unchanged
+      const row = await db.prisma.prescription.findUnique({
+        where: { id: draftId },
+      });
+      expect(row?.rxType).toBe("SINGLE_VISION");
+      expect(row?.uploadKeys).toEqual([key1]);
+    });
+
+    it("prescriptions endpoint: two concurrent finalization requests -> exactly one succeeds, row unchanged by second", async () => {
+      const uploadReq = makeSignedProxyRequest(
+        "/apps/lens-advisor/upload-url",
+        shopA.domain,
+        { contentType: "image/png", size: 1024 },
+      );
+      const uploadRes = await uploadUrlAction(createActionArgs(uploadReq));
+      expect(uploadRes.status).toBe(200);
+      const { draftId, key: key1 } = await uploadRes.json();
+      const key2 = `shops/${shopA.shopId}/rx/${draftId}/concurrent-2.png`;
+      fakeStore.existingObjects.add(key1);
+      fakeStore.existingObjects.add(key2);
+
+      const req1 = makeSignedProxyRequest(
+        "/apps/lens-advisor/prescriptions",
+        shopA.domain,
+        { rxType: "SINGLE_VISION", draftId, uploadedKeys: [key1] },
+        { ip: "10.0.2.1" },
+      );
+      const req2 = makeSignedProxyRequest(
+        "/apps/lens-advisor/prescriptions",
+        shopA.domain,
+        { rxType: "PROGRESSIVE", draftId, uploadedKeys: [key2] },
+        { ip: "10.0.2.2" },
+      );
+
+      const [res1, res2] = await Promise.all([
+        prescriptionsAction(createActionArgs(req1)),
+        prescriptionsAction(createActionArgs(req2)),
+      ]);
+
+      const statuses = [res1.status, res2.status];
+      const count201 = statuses.filter((s) => s === 201).length;
+      expect(count201).toBe(1);
+
+      // Verify DB row matches the single successful response
+      const row = await db.prisma.prescription.findUnique({
+        where: { id: draftId },
+      });
+      expect(row).not.toBeNull();
+      if (row?.rxType === "SINGLE_VISION") {
+        expect(row.uploadKeys).toEqual([key1]);
+      } else {
+        expect(row?.rxType).toBe("PROGRESSIVE");
+        expect(row?.uploadKeys).toEqual([key2]);
+      }
+    });
+
+    it("upload-url endpoint: rejects reuse of already finalized draftId", async () => {
+      const uploadReq = makeSignedProxyRequest(
+        "/apps/lens-advisor/upload-url",
+        shopA.domain,
+        { contentType: "image/png", size: 1024 },
+      );
+      const uploadRes = await uploadUrlAction(createActionArgs(uploadReq));
+      expect(uploadRes.status).toBe(200);
+      const { draftId, key } = await uploadRes.json();
+      fakeStore.existingObjects.add(key);
+
+      // Finalize
+      const submitReq = makeSignedProxyRequest(
+        "/apps/lens-advisor/prescriptions",
+        shopA.domain,
+        { rxType: "SINGLE_VISION", draftId, uploadedKeys: [key] },
+      );
+      const submitRes = await prescriptionsAction(createActionArgs(submitReq));
+      expect(submitRes.status).toBe(201);
+
+      // Attempt to reuse finalized draftId
+      const reuseReq = makeSignedProxyRequest(
+        "/apps/lens-advisor/upload-url",
+        shopA.domain,
+        { draftId, contentType: "image/png", size: 1024 },
+      );
+      const reuseRes = await uploadUrlAction(createActionArgs(reuseReq));
+      expect(reuseRes.status).toBe(400);
+      const body = await reuseRes.json();
+      expect(body.error.code).toBe("DRAFT_NOT_FOUND");
+    });
+  });
+
+  describe("R2-F3: API limit boundaries on endpoints", () => {
+    it("upload-url accepts exactly 1 byte and 10 MB; rejects 0 and 10 MB + 1", async () => {
+      // 1. Exactly 1 byte -> 200
+      const req1 = makeSignedProxyRequest(
+        "/apps/lens-advisor/upload-url",
+        shopA.domain,
+        { contentType: "image/png", size: 1 },
+      );
+      const res1 = await uploadUrlAction(createActionArgs(req1));
+      expect(res1.status).toBe(200);
+
+      // 2. Exactly 10 MB (10485760 bytes) -> 200
+      const req10MB = makeSignedProxyRequest(
+        "/apps/lens-advisor/upload-url",
+        shopA.domain,
+        { contentType: "image/png", size: 10 * 1024 * 1024 },
+      );
+      const res10MB = await uploadUrlAction(createActionArgs(req10MB));
+      expect(res10MB.status).toBe(200);
+
+      // 3. 0 bytes -> 400 INVALID_SIZE
+      const req0 = makeSignedProxyRequest(
+        "/apps/lens-advisor/upload-url",
+        shopA.domain,
+        { contentType: "image/png", size: 0 },
+      );
+      const res0 = await uploadUrlAction(createActionArgs(req0));
+      expect(res0.status).toBe(400);
+      const body0 = await res0.json();
+      expect(body0.error.code).toBe("INVALID_SIZE");
+
+      // 4. 10 MB + 1 byte -> 400 TOO_LARGE
+      const reqOver = makeSignedProxyRequest(
+        "/apps/lens-advisor/upload-url",
+        shopA.domain,
+        { contentType: "image/png", size: 10 * 1024 * 1024 + 1 },
+      );
+      const resOver = await uploadUrlAction(createActionArgs(reqOver));
+      expect(resOver.status).toBe(400);
+      const bodyOver = await resOver.json();
+      expect(bodyOver.error.code).toBe("TOO_LARGE");
+    });
+  });
 });

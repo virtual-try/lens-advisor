@@ -139,9 +139,9 @@ export async function attachOrder(
 }
 
 /**
- * Updates a draft prescription for UPLOAD, strictly scoped to shopId and draft state (INV-1, R1-F6).
+ * Updates a draft prescription for UPLOAD, strictly scoped to shopId and unfinalized draft state (INV-1, R1-F6, R2-F1).
  * Uses an atomic conditional update and returns null if the prescription does not belong to the shop
- * or is not in UPLOAD draft state.
+ * or is already finalized (uploadKeys not empty).
  */
 export async function updatePrescriptionUpload(
   db: PrescriptionDb,
@@ -154,6 +154,7 @@ export async function updatePrescriptionUpload(
       shopId,
       id,
       source: "UPLOAD",
+      uploadKeys: { isEmpty: true },
     },
     data: {
       ...(data.rxType ? { rxType: data.rxType } : {}),

@@ -167,4 +167,65 @@ describe("Prescriptions Repository (INV-1 shop scoping)", () => {
     const shopBAfter = await snapshotShopRows(shopB.shopId);
     expect(shopBAfter).toEqual(shopBBefore);
   });
+
+  it("R2-F1: updatePrescriptionUpload returns null if draft is already finalized (uploadKeys not empty)", async () => {
+    const draftId = randomUUID();
+    const initialKeys = [`shops/${shopA.shopId}/rx/${draftId}/initial.png`];
+    await createPrescription(db.prisma, shopA.shopId, {
+      id: draftId,
+      rxType: "SINGLE_VISION",
+      source: "UPLOAD",
+      cipher: "v1.initial.cipher",
+      uploadKeys: initialKeys, // already finalized
+    });
+
+    // Re-submission / second update must return null because uploadKeys is not empty
+    const secondUpdate = await updatePrescriptionUpload(db.prisma, shopA.shopId, draftId, {
+      rxType: "PROGRESSIVE",
+      uploadKeys: [`shops/${shopA.shopId}/rx/${draftId}/overwriting.png`],
+    });
+    expect(secondUpdate).toBeNull();
+
+    // Verify row remains completely untouched
+    const row = await getPrescriptionById(db.prisma, shopA.shopId, draftId);
+    expect(row).not.toBeNull();
+    expect(row?.rxType).toBe("SINGLE_VISION");
+    expect(row?.uploadKeys).toEqual(initialKeys);
+  });
+
+  it("R2-F1: concurrent updatePrescriptionUpload calls on same draft: exactly one succeeds and second returns null", async () => {
+    const draftId = randomUUID();
+    await createPrescription(db.prisma, shopA.shopId, {
+      id: draftId,
+      rxType: "SINGLE_VISION",
+      source: "UPLOAD",
+      cipher: "v1.draft.cipher",
+      uploadKeys: [],
+    });
+
+    const keys1 = [`shops/${shopA.shopId}/rx/${draftId}/winner.png`];
+    const keys2 = [`shops/${shopA.shopId}/rx/${draftId}/loser.png`];
+
+    const [res1, res2] = await Promise.all([
+      updatePrescriptionUpload(db.prisma, shopA.shopId, draftId, {
+        rxType: "PROGRESSIVE",
+        uploadKeys: keys1,
+      }),
+      updatePrescriptionUpload(db.prisma, shopA.shopId, draftId, {
+        rxType: "READING",
+        uploadKeys: keys2,
+      }),
+    ]);
+
+    const successes = [res1, res2].filter((r) => r !== null);
+    const failures = [res1, res2].filter((r) => r === null);
+
+    expect(successes).toHaveLength(1);
+    expect(failures).toHaveLength(1);
+
+    const winner = successes[0]!;
+    const row = await getPrescriptionById(db.prisma, shopA.shopId, draftId);
+    expect(row?.rxType).toBe(winner.rxType);
+    expect(row?.uploadKeys).toEqual(winner.uploadKeys);
+  });
 });

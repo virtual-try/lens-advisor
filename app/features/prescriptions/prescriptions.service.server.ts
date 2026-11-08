@@ -105,7 +105,7 @@ export class PrescriptionsService {
     let draftId: string;
     if (input.draftId) {
       const existing = await getPrescriptionById(this.db, shopId, input.draftId);
-      if (!existing || existing.source !== "UPLOAD") {
+      if (!existing || existing.source !== "UPLOAD" || existing.uploadKeys.length > 0) {
         throw new BadRequestError("Draft prescription not found", "DRAFT_NOT_FOUND");
       }
       draftId = existing.id;
@@ -185,9 +185,9 @@ export class PrescriptionsService {
       throw new BadRequestError("Too many uploaded keys", "TOO_MANY_UPLOADS");
     }
 
-    // Verify draft prescription exists for this shop (INV-1)
+    // Verify draft prescription exists for this shop and is not finalized (INV-1, R2-F1)
     const draft = await getPrescriptionById(this.db, shopId, input.draftId);
-    if (!draft || draft.source !== "UPLOAD") {
+    if (!draft || draft.source !== "UPLOAD" || draft.uploadKeys.length > 0) {
       throw new BadRequestError("Draft prescription not found", "DRAFT_NOT_FOUND");
     }
 

@@ -26,12 +26,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
 
-    // 2. Request method validation runs AFTER authentication (R1-F2)
-    if (request.method !== "POST") {
-      throw new BadRequestError("Method not allowed", "METHOD_NOT_ALLOWED");
-    }
-
-    // 3. Tenancy strictly from verified offline session context (INV-1, R1-F3)
+    // 2. Tenancy strictly from verified offline session context (INV-1, R1-F3)
     const shopDomain = context.session?.shop;
     if (!shopDomain) {
       throw new UnauthorizedError(
@@ -40,7 +35,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
 
-    // 4. Parse request body before any repository calls (R1-F7)
+    // 3. Rate limit: 20 req/min/shop+IP immediately after verified tenancy, before method/body validation and DB lookup (R2-F2)
+    const ip =
+      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      request.headers.get("cf-connecting-ip") ||
+      "127.0.0.1";
+    prescriptionRateLimiter.assertAllowed(`${shopDomain}:${ip}`);
+
+    // 4. Request method validation runs AFTER authentication and rate limit (R1-F2, R2-F2)
+    if (request.method !== "POST") {
+      throw new BadRequestError("Method not allowed", "METHOD_NOT_ALLOWED");
+    }
+
+    // 5. Parse request body before any repository calls (R1-F7)
     let body: unknown;
     try {
       body = await request.json();
@@ -64,19 +71,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
 
-    // 5. Resolve shop from verified domain (INV-1)
+    // 6. Resolve shop from verified domain (INV-1)
     const db = getPrisma();
     const shop = await findShopByDomain(db, shopDomain);
     if (!shop) {
       throw new UnauthorizedError("Shop not found", "UNAUTHORIZED");
     }
-
-    // 6. Rate limit: 20 req/min/shop+IP
-    const ip =
-      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-      request.headers.get("cf-connecting-ip") ||
-      "127.0.0.1";
-    prescriptionRateLimiter.assertAllowed(`${shop.id}:${ip}`);
 
     // 7. Call service
     const service = createPrescriptionsService({ db });
