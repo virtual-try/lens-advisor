@@ -1,0 +1,55 @@
+{% if product != blank and product.variants.size > 0 %}
+  {%- assign currency = cart.currency.iso_code | default: shop.currency -%}
+  {%- capture product_json -%}{"productId":{{ product.id | json }},"variantIds":[{%- for variant in product.variants -%}{{ variant.id | json }}{%- unless forloop.last -%},{%- endunless -%}{%- endfor -%}],"priceMinor":{{ product.selected_or_first_available_variant.price | json }},"currency":{{ currency | json }},"variants":[{%- for variant in product.variants -%}{"id":{{ variant.id | json }},"priceMinor":{{ variant.price | json }}}{%- unless forloop.last -%},{%- endunless -%}{%- endfor -%}]}{%- endcapture -%}
+  <div
+    class="la-block"
+    id="la-{{ block.id }}"
+    data-la-mount
+    data-product-json="{{ product_json | strip | escape }}"
+    data-proxy="/apps/lens-advisor"
+    data-configurator-src="{{ 'configurator.js' | asset_url }}"
+    style="{%- if block.settings.accent_color != blank -%}--la-merchant-accent: {{ block.settings.accent_color }};{%- endif -%}--la-merchant-radius: {{ block.settings.corner_radius }}px;"
+  >
+    <button type="button" class="la-select-lenses" data-la-open>
+      {%- if block.settings.button_label != blank -%}
+        {{ block.settings.button_label | escape }}
+      {%- else -%}
+        {{ 'select_lenses.button_label' | t }}
+      {%- endif -%}
+    </button>
+  </div>
+{% endif %}
+
+{% schema %}
+{
+  "name": "t:select_lenses.name",
+  "target": "content",
+  "enabled_on": {
+    "templates": ["product"]
+  },
+  "stylesheet": "loader.css",
+  "javascript": "loader.js",
+  "settings": [
+    {
+      "type": "text",
+      "id": "button_label",
+      "label": "t:select_lenses.settings.button_label.label"
+    },
+    {
+      "type": "color",
+      "id": "accent_color",
+      "label": "t:select_lenses.settings.accent_color.label"
+    },
+    {
+      "type": "range",
+      "id": "corner_radius",
+      "label": "t:select_lenses.settings.corner_radius.label",
+      "min": 0,
+      "max": 24,
+      "step": 1,
+      "unit": "t:select_lenses.settings.corner_radius.unit",
+      "default": 14
+    }
+  ]
+}
+{% endschema %}

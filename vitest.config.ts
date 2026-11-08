@@ -22,6 +22,14 @@ export default defineConfig({
       },
       {
         test: {
+          name: "configurator",
+          include: ["packages/configurator/**/*.test.ts"],
+          environment: "jsdom",
+          setupFiles: ["packages/configurator/src/test/setup.ts"],
+        },
+      },
+      {
+        test: {
           name: "db",
           include: ["test/**/*.test.ts"],
           environment: "node",
