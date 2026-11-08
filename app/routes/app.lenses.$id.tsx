@@ -36,10 +36,11 @@ import {
   ValidationError,
 } from "../features/catalog/catalog.service.server";
 import { archiveItem, syncItem } from "../features/product-sync/product-sync.server";
+import { SHOP_CURRENCY_QUERY } from "../features/product-sync/graphql";
 import LensForm from "../features/catalog/components/lens-form";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session } = await requireActivePlan(request);
+  const { admin, session } = await requireActivePlan(request);
   const prisma = getPrisma();
 
   let shop = await prisma.shop.findUnique({
@@ -50,6 +51,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       data: { domain: session.shop },
     });
   }
+
+  // Load shop currency via admin GraphQL client
+  const currencyRes = await admin.graphql(SHOP_CURRENCY_QUERY);
+  const currencyJson = (await currencyRes.json()) as {
+    data?: { shop?: { currencyCode?: string } };
+  };
+  const shopCurrency = currencyJson?.data?.shop?.currencyCode ?? "USD";
 
   const groups = await listLensGroups(shop.id, { includeArchived: false });
   const id = params.id;
@@ -62,7 +70,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       groups,
       isNew: true,
       defaultGroupId,
-      shopCurrency: "USD",
+      shopCurrency,
     });
   }
 
@@ -73,7 +81,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       groups,
       isNew: false,
       defaultGroupId: lens.groupId,
-      shopCurrency: lens.price.currency,
+      shopCurrency,
     });
   } catch (error) {
     if (error instanceof NotFoundError) {
@@ -102,15 +110,26 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   const contentType = request.headers.get("content-type") || "";
   if (contentType.includes("application/json")) {
+    let parsed: unknown;
     try {
-      rawData = (await request.json()) as Record<string, unknown>;
-      if (Array.isArray(rawData.rxTypes)) {
-        rawRxTypes = rawData.rxTypes.map(String);
-      }
+      parsed = await request.json();
     } catch {
       return errorResponse(
-        new BadRequestError("Invalid JSON", "INVALID_INPUT"),
+        new BadRequestError("Invalid JSON", "INVALID_INPUT", [
+          { path: "body", code: "INVALID_JSON" },
+        ]),
       );
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return errorResponse(
+        new BadRequestError("Payload must be a JSON object", "INVALID_INPUT", [
+          { path: "body", code: "OBJECT_REQUIRED" },
+        ]),
+      );
+    }
+    rawData = parsed as Record<string, unknown>;
+    if (Array.isArray(rawData.rxTypes)) {
+      rawRxTypes = rawData.rxTypes.map(String);
     }
   } else {
     try {
@@ -129,10 +148,19 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       }
     } catch {
       return errorResponse(
-        new BadRequestError("Invalid form data", "INVALID_INPUT"),
+        new BadRequestError("Invalid form data", "INVALID_INPUT", [
+          { path: "body", code: "INVALID_FORM_DATA" },
+        ]),
       );
     }
   }
+
+  // Derive currency server-side from shop's currency; never trust form data
+  const currencyRes = await admin.graphql(SHOP_CURRENCY_QUERY);
+  const currencyJson = (await currencyRes.json()) as {
+    data?: { shop?: { currencyCode?: string } };
+  };
+  const shopCurrency = currencyJson?.data?.shop?.currencyCode ?? "USD";
 
   const intent = String(rawData.intent ?? "save");
   const id = params.id;
@@ -153,7 +181,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const name = String(rawData.name ?? "").trim();
     const description = String(rawData.description ?? "").trim();
     const price = String(rawData.price ?? "").trim();
-    const currency = String(rawData.currency ?? "USD").trim();
+    const currency = shopCurrency;
     const sphMin = String(rawData.sphMin ?? "").trim();
     const sphMax = String(rawData.sphMax ?? "").trim();
     const cylMin = String(rawData.cylMin ?? "").trim();

@@ -77,13 +77,24 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   let rawData: Record<string, unknown> = {};
   const contentType = request.headers.get("content-type") || "";
   if (contentType.includes("application/json")) {
+    let parsed: unknown;
     try {
-      rawData = (await request.json()) as Record<string, unknown>;
+      parsed = await request.json();
     } catch {
       return errorResponse(
-        new BadRequestError("Invalid JSON", "INVALID_INPUT"),
+        new BadRequestError("Invalid JSON", "INVALID_INPUT", [
+          { path: "body", code: "INVALID_JSON" },
+        ]),
       );
     }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return errorResponse(
+        new BadRequestError("Payload must be a JSON object", "INVALID_INPUT", [
+          { path: "body", code: "OBJECT_REQUIRED" },
+        ]),
+      );
+    }
+    rawData = parsed as Record<string, unknown>;
   } else {
     try {
       const formData = await request.formData();
@@ -92,7 +103,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       }
     } catch {
       return errorResponse(
-        new BadRequestError("Invalid form data", "INVALID_INPUT"),
+        new BadRequestError("Invalid form data", "INVALID_INPUT", [
+          { path: "body", code: "INVALID_FORM_DATA" },
+        ]),
       );
     }
   }

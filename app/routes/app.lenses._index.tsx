@@ -111,13 +111,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   let rawData: Record<string, unknown> = {};
   const contentType = request.headers.get("content-type") || "";
   if (contentType.includes("application/json")) {
+    let parsed: unknown;
     try {
-      rawData = (await request.json()) as Record<string, unknown>;
+      parsed = await request.json();
     } catch {
       return errorResponse(
-        new BadRequestError("Invalid JSON payload", "INVALID_INPUT"),
+        new BadRequestError("Invalid JSON payload", "INVALID_INPUT", [
+          { path: "body", code: "INVALID_JSON" },
+        ]),
       );
     }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return errorResponse(
+        new BadRequestError("Payload must be a JSON object", "INVALID_INPUT", [
+          { path: "body", code: "OBJECT_REQUIRED" },
+        ]),
+      );
+    }
+    rawData = parsed as Record<string, unknown>;
   } else {
     try {
       const formData = await request.formData();
@@ -126,7 +137,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     } catch {
       return errorResponse(
-        new BadRequestError("Invalid form data", "INVALID_INPUT"),
+        new BadRequestError("Invalid form data", "INVALID_INPUT", [
+          { path: "body", code: "INVALID_FORM_DATA" },
+        ]),
       );
     }
   }
@@ -182,6 +195,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     if (intent === "reorder-lenses") {
       const groupId = String(rawData.groupId ?? "").trim();
+      if (!groupId) {
+        return errorResponse(
+          new BadRequestError("Group ID is required", "REQUIRED", [
+            { path: "groupId", code: "REQUIRED" },
+          ]),
+        );
+      }
       const idsRaw = rawData.ids;
       let ids: string[] = [];
       if (Array.isArray(idsRaw)) {
@@ -189,7 +209,29 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       } else if (typeof idsRaw === "string") {
         ids = idsRaw.split(",").map((s) => s.trim()).filter(Boolean);
       }
-      await reorderLenses(shop.id, ids, groupId || undefined);
+
+      // Query active lenses in the group for this shop
+      const existingLenses = await prisma.lens.findMany({
+        where: { shopId: shop.id, groupId, archivedAt: null },
+        select: { id: true },
+      });
+      const existingIds = new Set(existingLenses.map((l) => l.id));
+
+      const hasDuplicates = new Set(ids).size !== ids.length;
+      const exactCountMatch = ids.length === existingLenses.length;
+      const allBelongToGroup = ids.every((id) => existingIds.has(id));
+
+      if (hasDuplicates || !exactCountMatch || !allBelongToGroup) {
+        return errorResponse(
+          new BadRequestError(
+            "Reorder batch must contain exactly the shop's active lenses in the group without duplicates or foreign IDs",
+            "INVALID_REORDER_BATCH",
+            [{ path: "ids", code: "INVALID_BATCH" }],
+          ),
+        );
+      }
+
+      await reorderLenses(shop.id, ids, groupId);
       return data({ ok: true });
     }
 
@@ -201,6 +243,28 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       } else if (typeof idsRaw === "string") {
         ids = idsRaw.split(",").map((s) => s.trim()).filter(Boolean);
       }
+
+      // Query active lens groups for this shop
+      const existingGroups = await prisma.lensGroup.findMany({
+        where: { shopId: shop.id, archivedAt: null },
+        select: { id: true },
+      });
+      const existingIds = new Set(existingGroups.map((g) => g.id));
+
+      const hasDuplicates = new Set(ids).size !== ids.length;
+      const exactCountMatch = ids.length === existingGroups.length;
+      const allBelongToShop = ids.every((id) => existingIds.has(id));
+
+      if (hasDuplicates || !exactCountMatch || !allBelongToShop) {
+        return errorResponse(
+          new BadRequestError(
+            "Reorder batch must contain exactly the shop's active lens groups without duplicates or foreign IDs",
+            "INVALID_REORDER_BATCH",
+            [{ path: "ids", code: "INVALID_BATCH" }],
+          ),
+        );
+      }
+
       await reorderLensGroups(shop.id, ids);
       return data({ ok: true });
     }
@@ -223,10 +287,14 @@ export function LensesList({
   groups: initialGroups,
   syncFailedId: initialSyncFailedId,
   isLoading = false,
+  error = null,
+  onRetry,
 }: {
   groups: CatalogLensGroupDto[];
   syncFailedId?: string | null;
   isLoading?: boolean;
+  error?: string | Error | null;
+  onRetry?: () => void;
 }) {
   const fetcher = useFetcher<typeof action>();
   const [syncFailedIds, setSyncFailedIds] = useState<Set<string>>(() => {
@@ -285,6 +353,37 @@ export function LensesList({
     fetcher.submit({ intent: "retry-sync", lensId }, { method: "POST" });
   };
 
+  const handleMoveGroup = (index: number, direction: -1 | 1) => {
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= groups.length) return;
+    const reordered = [...groups];
+    const [moved] = reordered.splice(index, 1);
+    reordered.splice(targetIndex, 0, moved);
+    const ids = reordered.map((g) => g.id);
+    fetcher.submit(
+      { intent: "reorder-groups", ids: ids.join(",") },
+      { method: "POST" },
+    );
+  };
+
+  const handleMoveLens = (
+    group: CatalogLensGroupDto,
+    index: number,
+    direction: -1 | 1,
+  ) => {
+    const lenses = group.lenses ?? [];
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= lenses.length) return;
+    const reordered = [...lenses];
+    const [moved] = reordered.splice(index, 1);
+    reordered.splice(targetIndex, 0, moved);
+    const ids = reordered.map((l) => l.id);
+    fetcher.submit(
+      { intent: "reorder-lenses", groupId: group.id, ids: ids.join(",") },
+      { method: "POST" },
+    );
+  };
+
   // Process fetcher data updates
   useEffect(() => {
     if (fetcher.data) {
@@ -325,6 +424,30 @@ export function LensesList({
       lenses: (g.lenses ?? []).filter((l) => l.id !== archivedLensId),
     }));
 
+  if (error) {
+    const errorMessage =
+      typeof error === "string"
+        ? error
+        : error?.message || "Failed to load lenses from server";
+    return (
+      <s-page heading="Lenses">
+        <s-banner tone="critical" heading="Failed to load lenses">
+          {errorMessage}
+        </s-banner>
+        <s-stack direction="block" gap="base">
+          <s-paragraph>
+            There was a problem loading your lenses. Please try again.
+          </s-paragraph>
+          {onRetry ? (
+            <s-button onClick={onRetry}>Retry</s-button>
+          ) : (
+            <s-button href="/app/lenses">Retry</s-button>
+          )}
+        </s-stack>
+      </s-page>
+    );
+  }
+
   if (isLoading) {
     return (
       <s-page heading="Lenses">
@@ -356,7 +479,7 @@ export function LensesList({
         </s-empty-state>
       ) : (
         <s-stack direction="block" gap="base">
-          {groups.map((group) => (
+          {groups.map((group, groupIdx) => (
             <s-section key={group.id} heading={group.name}>
               <s-stack direction="block" gap="base">
                 {group.description && (
@@ -371,6 +494,18 @@ export function LensesList({
                     Add lens to group
                   </s-link>
                   <s-button
+                    disabled={groupIdx === 0}
+                    onClick={() => handleMoveGroup(groupIdx, -1)}
+                  >
+                    Move group up
+                  </s-button>
+                  <s-button
+                    disabled={groupIdx === groups.length - 1}
+                    onClick={() => handleMoveGroup(groupIdx, 1)}
+                  >
+                    Move group down
+                  </s-button>
+                  <s-button
                     tone="critical"
                     onClick={() =>
                       openArchiveModal("group", group.id, group.name)
@@ -384,7 +519,7 @@ export function LensesList({
                   <s-paragraph>No lenses in this group.</s-paragraph>
                 ) : (
                   <s-stack direction="block" gap="base">
-                    {group.lenses.map((lens: CatalogLensDto) => {
+                    {group.lenses.map((lens: CatalogLensDto, lensIdx: number) => {
                       const isFailed = syncFailedIds.has(lens.id);
                       const isSynced = Boolean(lens.shopifyVariantId);
                       const isRetrying =
@@ -419,6 +554,7 @@ export function LensesList({
 
                               {(isFailed || !isSynced) && (
                                 <s-button
+                                  {...({ role: "button" } as Record<string, unknown>)}
                                   onClick={() => handleRetrySync(lens.id)}
                                   {...(isRetrying ? { loading: true } : {})}
                                 >
@@ -443,6 +579,22 @@ export function LensesList({
                               <s-link href={`/app/lenses/${lens.id}`}>
                                 Edit lens
                               </s-link>
+                              <s-button
+                                disabled={lensIdx === 0}
+                                onClick={() =>
+                                  handleMoveLens(group, lensIdx, -1)
+                                }
+                              >
+                                Move lens up
+                              </s-button>
+                              <s-button
+                                disabled={lensIdx === group.lenses.length - 1}
+                                onClick={() =>
+                                  handleMoveLens(group, lensIdx, 1)
+                                }
+                              >
+                                Move lens down
+                              </s-button>
                               <s-button
                                 tone="critical"
                                 onClick={() =>
@@ -521,7 +673,27 @@ export default function LensesIndexRoute() {
 }
 
 export function ErrorBoundary() {
-  return boundary.error(useRouteError());
+  const error = useRouteError();
+  const errorMessage =
+    error instanceof Error
+      ? error.message
+      : typeof error === "object" && error !== null && "data" in error
+        ? String((error as { data?: unknown }).data)
+        : "Failed to load lenses from server";
+
+  return (
+    <s-page heading="Lenses">
+      <s-banner tone="critical" heading="Failed to load lenses">
+        {errorMessage}
+      </s-banner>
+      <s-stack direction="block" gap="base">
+        <s-paragraph>
+          There was a problem loading your lenses. Please try again.
+        </s-paragraph>
+        <s-button href="/app/lenses">Retry</s-button>
+      </s-stack>
+    </s-page>
+  );
 }
 
 export const headers: HeadersFunction = (headersArgs) => {

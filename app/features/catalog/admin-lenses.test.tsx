@@ -9,7 +9,7 @@ import {
   vi,
 } from "vitest";
 import React from "react";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import * as ReactRouter from "react-router";
 import { testConfig } from "@shopify/shopify-app-react-router/test-helpers";
 
@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => ({
   currentShop: "test-shop.myshopify.com",
   adminGraphql: vi.fn(),
   failProductCreate: false,
+  fetcherSubmit: vi.fn(),
 }));
 
 vi.mock("../../shopify.server", () => ({
@@ -84,6 +85,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   testConfig();
   mocks.failProductCreate = false;
+  mocks.fetcherSubmit = vi.fn();
 
   // Mock ReactRouter useFetcher by default for standalone component rendering
   vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
@@ -95,7 +97,7 @@ beforeEach(() => {
     }: React.PropsWithChildren<Record<string, unknown>>) => (
       <form {...props}>{children}</form>
     ),
-    submit: vi.fn(),
+    submit: mocks.fetcherSubmit,
     load: vi.fn(),
   } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
 
@@ -598,14 +600,25 @@ describe("Spec 18 — Admin: lens groups and lenses", () => {
       );
 
       expect(screen.getByText("Sync failed")).not.toBeNull();
-      expect(screen.getByText("Retry")).not.toBeNull();
+      const retryBtn = screen.getByRole("button", { name: "Retry" });
+      expect(retryBtn).not.toBeNull();
 
-      // Retry sync: simulate clicking Retry
+      // Retry sync: click Retry by role (R1-F8)
       mocks.failProductCreate = false; // Now Shopify API recovers
 
+      fireEvent.click(retryBtn);
+
+      expect(mocks.fetcherSubmit).toHaveBeenCalledWith(
+        { intent: "retry-sync", lensId: savedLens.id },
+        { method: "POST" },
+      );
+
+      // Execute listAction with the payload from the Retry click
+      const retrySubmission = mocks.fetcherSubmit.mock.calls[0][0];
       const retryFormData = new FormData();
-      retryFormData.append("intent", "retry-sync");
-      retryFormData.append("lensId", savedLens.id);
+      for (const [k, v] of Object.entries(retrySubmission)) {
+        retryFormData.append(k, String(v));
+      }
 
       const retryRequest = new Request("https://app.test/app/lenses", {
         method: "POST",
@@ -619,7 +632,7 @@ describe("Spec 18 — Admin: lens groups and lenses", () => {
       expect(retryResult.data.ok).toBe(true);
       expect(retryResult.data.synced).toBe(true);
 
-      // Verify the lens is now synced in DB
+      // Verify the lens is now synced in DB (syncItem was called again)
       const updatedLens = await repo.getLens(shopId, savedLens.id);
       expect(updatedLens?.shopifyVariantId).toBe("gid://shopify/ProductVariant/200");
 
@@ -655,10 +668,40 @@ describe("Spec 18 — Admin: lens groups and lenses", () => {
         shopifyVariantId: "gid://shopify/ProductVariant/200",
       });
 
-      // Submit archive action
+      const service = createCatalogService({ prisma: getTestPrisma() });
+      const initialGroups = await service.listLensGroups(shopId, { includeArchived: false });
+
+      // 1. Render active list with the lens
+      render(<LensesList groups={initialGroups} />);
+      expect(screen.getByText("To Be Archived Lens")).not.toBeNull();
+
+      // 2. Click "Archive lens" to open confirmation modal (R1-F5)
+      const archiveButtons = screen.getAllByText("Archive lens");
+      fireEvent.click(archiveButtons[0]);
+
+      // 3. Verify confirmation modal is shown and contains the lens name
+      const modal = document.getElementById("archive-confirm-modal");
+      expect(modal).not.toBeNull();
+      expect(
+        screen.getByText(/Are you sure you want to archive To Be Archived Lens/),
+      ).not.toBeNull();
+
+      // 4. Click "Confirm archive" inside the modal
+      const confirmBtn = screen.getByText("Confirm archive");
+      fireEvent.click(confirmBtn);
+
+      // Verify clicking confirm archive submitted archive-lens intent
+      expect(mocks.fetcherSubmit).toHaveBeenCalledWith(
+        { intent: "archive-lens", lensId: lens.id },
+        { method: "POST" },
+      );
+
+      // 5. Submit archive action with the modal submission
+      const archiveSubmission = mocks.fetcherSubmit.mock.calls[0][0];
       const formData = new FormData();
-      formData.append("intent", "archive-lens");
-      formData.append("lensId", lens.id);
+      for (const [k, v] of Object.entries(archiveSubmission)) {
+        formData.append(k, String(v));
+      }
 
       const request = new Request("https://app.test/app/lenses", {
         method: "POST",
@@ -672,26 +715,30 @@ describe("Spec 18 — Admin: lens groups and lenses", () => {
       expect(unwrapped.data.ok).toBe(true);
       expect(unwrapped.data.archivedLensId).toBe(lens.id);
 
-      // Verify Shopify productUpdate was called to draft the product
+      // 6. Verify Shopify productUpdate GraphQL was called with status: DRAFT and product id
       const calls = mocks.adminGraphql.mock.calls;
       const productUpdateCall = calls.find((call) =>
-        String(call[0]).includes("productUpdate"),
+        String(call[0]).includes("productUpdate") || String(call[0]).includes("ProductUpdate"),
       );
       expect(productUpdateCall).toBeDefined();
+      expect(productUpdateCall![1]?.variables?.product).toEqual({
+        id: lens.shopifyProductId,
+        status: "DRAFT",
+      });
 
-      // Verify DB row has archivedAt set (soft-deleted)
+      // 7. Verify DB row has archivedAt set (soft-deleted)
       const rawLens = await getTestPrisma().lens.findUnique({
         where: { shopId_id: { shopId, id: lens.id } },
       });
       expect(rawLens?.archivedAt).not.toBeNull();
 
-      // Verify lens is gone from active catalog
-      const service = createCatalogService({ prisma: getTestPrisma() });
+      // 8. Verify lens is gone from active catalog
       const activeGroups = await service.listLensGroups(shopId, { includeArchived: false });
       const groupLenses = activeGroups[0]?.lenses ?? [];
       expect(groupLenses.some((l) => l.id === lens.id)).toBe(false);
 
-      // Render active list: lens is not present
+      // 9. Render active list: lens is not present
+      cleanup();
       render(<LensesList groups={activeGroups} />);
       expect(screen.queryByText("To Be Archived Lens")).toBeNull();
     }, DB_TIMEOUT_MS);
@@ -829,6 +876,141 @@ describe("Spec 18 — Admin: lens groups and lenses", () => {
       expect(Number.isInteger(l.addMin)).toBe(true);
       expect(Number.isInteger(l.addMax)).toBe(true);
     }, DB_TIMEOUT_MS);
+
+    it("rejects null, non-object, and malformed JSON payloads with 400 INVALID_INPUT (R1-F6)", async () => {
+      const shopDomain = "json-schema-test.myshopify.com";
+      await createShop(shopDomain);
+      mocks.currentShop = shopDomain;
+
+      const actions = [
+        { name: "listAction", fn: (req: Request) => listAction(createActionArgs(req)) },
+        { name: "groupAction", fn: (req: Request) => groupAction(createActionArgs(req, { id: "new" })) },
+        { name: "lensAction", fn: (req: Request) => lensAction(createActionArgs(req, { id: "new" })) },
+      ];
+
+      for (const actionEntry of actions) {
+        // null JSON
+        const nullReq = new Request("https://app.test/action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "null",
+        });
+        const nullRes = await actionEntry.fn(nullReq);
+        const nullUnwrapped = await unwrapResponse(nullRes);
+        expect(nullUnwrapped.status).toBe(400);
+        expect((nullUnwrapped.data as { error: { code: string } }).error.code).toBe("INVALID_INPUT");
+
+        // number JSON
+        const numReq = new Request("https://app.test/action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "123",
+        });
+        const numRes = await actionEntry.fn(numReq);
+        const numUnwrapped = await unwrapResponse(numRes);
+        expect(numUnwrapped.status).toBe(400);
+        expect((numUnwrapped.data as { error: { code: string } }).error.code).toBe("INVALID_INPUT");
+
+        // array JSON
+        const arrReq = new Request("https://app.test/action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(["foo", "bar"]),
+        });
+        const arrRes = await actionEntry.fn(arrReq);
+        const arrUnwrapped = await unwrapResponse(arrRes);
+        expect(arrUnwrapped.status).toBe(400);
+        expect((arrUnwrapped.data as { error: { code: string } }).error.code).toBe("INVALID_INPUT");
+      }
+    }, DB_TIMEOUT_MS);
+
+    it("derives shop currency server-side for new lenses and rejects form data currency override (R1-F2)", async () => {
+      const shopDomain = "currency-test.myshopify.com";
+      const shopId = await createShop(shopDomain);
+      mocks.currentShop = shopDomain;
+
+      // Mock shop GraphQL to return EUR
+      const originalAdminGraphql = mocks.adminGraphql.getMockImplementation();
+      mocks.adminGraphql.mockImplementation(async (query: string, vars?: Record<string, unknown>) => {
+        if (query.includes("ShopCurrency")) {
+          return new Response(
+            JSON.stringify({ data: { shop: { currencyCode: "EUR" } } }),
+            { status: 200 },
+          );
+        }
+        return originalAdminGraphql?.(query, vars);
+      });
+
+      const repo = createCatalogRepository(getTestPrisma());
+      const group = await repo.createLensGroup(shopId, { name: "Euro Group" });
+
+      // 1. Loader returns shopCurrency: "EUR"
+      const loaderReq = new Request("https://app.test/app/lenses/new");
+      const loaderRes = await lensLoader(createLoaderArgs(loaderReq, { id: "new" }));
+      const loaderData = await unwrapResponse<{ shopCurrency: string }>(loaderRes);
+      expect(loaderData.status).toBe(200);
+      expect(loaderData.data.shopCurrency).toBe("EUR");
+
+      // 2. Action creates lens with EUR even if client attempts to pass USD
+      const formData = new FormData();
+      formData.append("intent", "save");
+      formData.append("groupId", group.id);
+      formData.append("name", "Euro Lens");
+      formData.append("price", "75.00");
+      formData.append("currency", "USD"); // Client attempts to override with USD
+      formData.append("sphMin", "-4.00");
+      formData.append("sphMax", "+4.00");
+      formData.append("cylMin", "-2.00");
+      formData.append("cylMax", "0.00");
+      formData.append("rxTypes", "SINGLE_VISION");
+      formData.append("labCodeTemplate", "PO-EUR");
+
+      const createReq = new Request("https://app.test/app/lenses/new", {
+        method: "POST",
+        body: formData,
+      });
+      const createRes = await lensAction(createActionArgs(createReq, { id: "new" }));
+      const createData = await unwrapResponse(createRes);
+      expect(createData.status).toBe(302);
+
+      const lenses = await repo.listLenses(shopId, { groupId: group.id });
+      expect(lenses.length).toBe(1);
+      expect(lenses[0].currency).toBe("EUR"); // Server-side shop currency was used
+      expect(lenses[0].shopifyVariantId).toBe("gid://shopify/ProductVariant/200"); // Sync succeeded with EUR
+    }, DB_TIMEOUT_MS);
+
+    it("submits NON_PRESCRIPTION rxType to action and saves lens (R1-F4)", async () => {
+      const shopDomain = "non-prescription-test.myshopify.com";
+      const shopId = await createShop(shopDomain);
+      mocks.currentShop = shopDomain;
+
+      const repo = createCatalogRepository(getTestPrisma());
+      const group = await repo.createLensGroup(shopId, { name: "Non-Rx Group" });
+
+      const formData = new FormData();
+      formData.append("intent", "save");
+      formData.append("groupId", group.id);
+      formData.append("name", "Plano Blue Light Lens");
+      formData.append("price", "45.00");
+      formData.append("sphMin", "0.00");
+      formData.append("sphMax", "0.00");
+      formData.append("cylMin", "0.00");
+      formData.append("cylMax", "0.00");
+      formData.append("rxTypes", "NON_PRESCRIPTION");
+      formData.append("labCodeTemplate", "PO-PLANO");
+
+      const req = new Request("https://app.test/app/lenses/new", {
+        method: "POST",
+        body: formData,
+      });
+
+      const res = await lensAction(createActionArgs(req, { id: "new" }));
+      expect((await unwrapResponse(res)).status).toBe(302);
+
+      const lenses = await repo.listLenses(shopId, { groupId: group.id });
+      expect(lenses.length).toBe(1);
+      expect(lenses[0].rxTypes).toEqual(["NON_PRESCRIPTION"]);
+    }, DB_TIMEOUT_MS);
   });
 
   describe("UI Checklist & List States", () => {
@@ -922,6 +1104,75 @@ describe("Spec 18 — Admin: lens groups and lenses", () => {
       render(<LensesList groups={[]} isLoading={true} />);
       const spinner = document.querySelector("s-spinner");
       expect(spinner).not.toBeNull();
+    });
+
+    it("renders list error state with Retry button when loader fails (R1-F7)", () => {
+      const onRetry = vi.fn();
+      const { container } = render(
+        <LensesList
+          groups={[]}
+          error="Failed to load lenses from server"
+          onRetry={onRetry}
+        />,
+      );
+
+      const banner = container.querySelector(
+        's-banner[heading="Failed to load lenses"]',
+      );
+      expect(banner).not.toBeNull();
+      expect(screen.getByText("Failed to load lenses from server")).not.toBeNull();
+      const retryBtn = screen.getByText("Retry");
+      expect(retryBtn).not.toBeNull();
+
+      fireEvent.click(retryBtn);
+      expect(onRetry).toHaveBeenCalledTimes(1);
+    });
+
+    it("renders all four RxType choices including NON_PRESCRIPTION with correct label (R1-F4)", () => {
+      const { container } = render(
+        <LensForm
+          groups={[{ id: "g1", name: "G1", position: 0, lenses: [], archivedAt: null }]}
+          defaultGroupId="g1"
+        />,
+      );
+
+      expect(
+        container.querySelector('s-checkbox[name="rxTypeSingleVision"][label="Single vision"]'),
+      ).not.toBeNull();
+      expect(
+        container.querySelector('s-checkbox[name="rxTypeProgressive"][label="Progressive"]'),
+      ).not.toBeNull();
+      expect(
+        container.querySelector('s-checkbox[name="rxTypeReading"][label="Reading"]'),
+      ).not.toBeNull();
+      expect(
+        container.querySelector('s-checkbox[name="rxTypeNonPrescription"][label="Non-prescription"]'),
+      ).not.toBeNull();
+    });
+
+    it("flips checkbox state exactly once per click and does not double-toggle (R1-F3)", () => {
+      const { container } = render(
+        <LensForm
+          groups={[{ id: "g1", name: "G1", position: 0, lenses: [], archivedAt: null }]}
+          defaultGroupId="g1"
+        />,
+      );
+
+      const progressiveCheckbox = container.querySelector(
+        's-checkbox[name="rxTypeProgressive"]',
+      ) as (HTMLElement & { checked: boolean }) | null;
+      expect(progressiveCheckbox).not.toBeNull();
+      expect(progressiveCheckbox?.checked).toBe(false);
+
+      // Simulate change event to checked
+      fireEvent.change(progressiveCheckbox!, { target: { checked: true } });
+      expect(progressiveCheckbox?.checked).toBe(true);
+
+      // Simulate both input and change events with checked: false (React 18 scenario)
+      fireEvent.input(progressiveCheckbox!, { target: { checked: false } });
+      fireEvent.change(progressiveCheckbox!, { target: { checked: false } });
+      // Flips to unchecked and does not double-toggle back to checked
+      expect(progressiveCheckbox?.checked).toBe(false);
     });
 
     it("renders live preview of lab code template with default tokens", () => {
@@ -1033,6 +1284,29 @@ describe("Spec 18 — Admin: lens groups and lenses", () => {
         position: 1,
       });
 
+      // 1. Test reorder UI controls (R1-F1)
+      const service = createCatalogService({ prisma: getTestPrisma() });
+      const groupsForRender = await service.listLensGroups(shopId, { includeArchived: false });
+      render(<LensesList groups={groupsForRender} />);
+
+      // Click "Move group down" on Group 1
+      const moveGroupDownButtons = screen.getAllByText("Move group down");
+      fireEvent.click(moveGroupDownButtons[0]);
+
+      expect(mocks.fetcherSubmit).toHaveBeenCalledWith(
+        { intent: "reorder-groups", ids: `${g2.id},${g1.id}` },
+        { method: "POST" },
+      );
+
+      // Click "Move lens down" on Lens 1
+      const moveLensDownButtons = screen.getAllByText("Move lens down");
+      fireEvent.click(moveLensDownButtons[0]);
+
+      expect(mocks.fetcherSubmit).toHaveBeenCalledWith(
+        { intent: "reorder-lenses", groupId: g1.id, ids: `${l2.id},${l1.id}` },
+        { method: "POST" },
+      );
+
       // Reorder groups: g2 before g1
       const groupReorderForm = new FormData();
       groupReorderForm.append("intent", "reorder-groups");
@@ -1067,6 +1341,131 @@ describe("Spec 18 — Admin: lens groups and lenses", () => {
       const reorderedLenses = await repo.listLenses(shopId, { groupId: g1.id });
       expect(reorderedLenses[0].id).toBe(l2.id);
       expect(reorderedLenses[1].id).toBe(l1.id);
+    }, DB_TIMEOUT_MS);
+
+    it("rejects reorder batches whose ids are not exactly the shop's items in that group with 400 and leaves order unchanged (R1-F9)", async () => {
+      const shopDomain = "reorder-boundary.myshopify.com";
+      const shopId = await createShop(shopDomain);
+      mocks.currentShop = shopDomain;
+
+      const repo = createCatalogRepository(getTestPrisma());
+      const g = await repo.createLensGroup(shopId, { name: "Boundary Group", position: 0 });
+      const l1 = await repo.createLens(shopId, {
+        groupId: g.id,
+        name: "Lens A",
+        priceMinor: 1000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -100,
+        sphMax: 100,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "PO-A",
+        position: 0,
+      });
+      const l2 = await repo.createLens(shopId, {
+        groupId: g.id,
+        name: "Lens B",
+        priceMinor: 2000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -100,
+        sphMax: 100,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "PO-B",
+        position: 1,
+      });
+
+      // 1. Duplicate IDs: [l1, l1] -> 400
+      const dupReq = new Request("https://app.test/app/lenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent: "reorder-lenses",
+          groupId: g.id,
+          ids: [l1.id, l1.id],
+        }),
+      });
+      const dupRes = await listAction(createActionArgs(dupReq));
+      expect((await unwrapResponse(dupRes)).status).toBe(400);
+
+      // Verify no change
+      let lenses = await repo.listLenses(shopId, { groupId: g.id });
+      expect(lenses[0].id).toBe(l1.id);
+      expect(lenses[1].id).toBe(l2.id);
+
+      // 2. Foreign ID: [l1, 'fake-id'] -> 400
+      const foreignReq = new Request("https://app.test/app/lenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent: "reorder-lenses",
+          groupId: g.id,
+          ids: [l1.id, "nonexistent-id"],
+        }),
+      });
+      const foreignRes = await listAction(createActionArgs(foreignReq));
+      expect((await unwrapResponse(foreignRes)).status).toBe(400);
+
+      // Verify no change
+      lenses = await repo.listLenses(shopId, { groupId: g.id });
+      expect(lenses[0].id).toBe(l1.id);
+      expect(lenses[1].id).toBe(l2.id);
+
+      // 3. More than group holds: [l1, l2, extra] -> 400
+      const moreReq = new Request("https://app.test/app/lenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent: "reorder-lenses",
+          groupId: g.id,
+          ids: [l1.id, l2.id, "extra-id"],
+        }),
+      });
+      const moreRes = await listAction(createActionArgs(moreReq));
+      expect((await unwrapResponse(moreRes)).status).toBe(400);
+
+      // Verify no change
+      lenses = await repo.listLenses(shopId, { groupId: g.id });
+      expect(lenses[0].id).toBe(l1.id);
+      expect(lenses[1].id).toBe(l2.id);
+
+      // 4. Fewer than group holds: [l1] -> 400
+      const fewerReq = new Request("https://app.test/app/lenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent: "reorder-lenses",
+          groupId: g.id,
+          ids: [l1.id],
+        }),
+      });
+      const fewerRes = await listAction(createActionArgs(fewerReq));
+      expect((await unwrapResponse(fewerRes)).status).toBe(400);
+
+      // Verify no change
+      lenses = await repo.listLenses(shopId, { groupId: g.id });
+      expect(lenses[0].id).toBe(l1.id);
+      expect(lenses[1].id).toBe(l2.id);
+
+      // 5. Exactly matching batch succeeds: [l2, l1] -> 200
+      const validReq = new Request("https://app.test/app/lenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent: "reorder-lenses",
+          groupId: g.id,
+          ids: [l2.id, l1.id],
+        }),
+      });
+      const validRes = await listAction(createActionArgs(validReq));
+      expect((await unwrapResponse(validRes)).status).toBe(200);
+
+      // Verify order updated
+      lenses = await repo.listLenses(shopId, { groupId: g.id });
+      expect(lenses[0].id).toBe(l2.id);
+      expect(lenses[1].id).toBe(l1.id);
     }, DB_TIMEOUT_MS);
   });
 

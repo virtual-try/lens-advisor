@@ -91,4 +91,4 @@ Stubbed: none.
     - `pnpm build` → pass (client & ssr builds clean)
     - `git diff --check` → 0 whitespace errors
     - INV-7 grep check (`rg 'style=|className=|<style' ...`) → 0 matches
-- **2026-11-08** — Evidence (orchestro spec verify, tree e66df6dd): install pass · typecheck pass · lint pass · build pass · test pass 680/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 94aaedee): install pass · typecheck pass · lint pass · build pass · test pass 687/0/0

@@ -20,6 +20,7 @@ import type {
   CatalogLensDto,
   CatalogLensGroupDto,
 } from "../catalog.service.server";
+import { RX_TYPE_LABELS } from "../strings";
 
 const useIsomorphicLayoutEffect =
   typeof window !== "undefined" ? useLayoutEffect : useEffect;
@@ -42,6 +43,49 @@ function usePolarisProperty<T extends HTMLElement>(
       (el as Record<string, unknown>)[propName] = val;
     }
   };
+
+  return [ref, refCallback] as const;
+}
+
+function usePolarisCheckbox(
+  checked: boolean,
+  onCheckedChange: (checked: boolean) => void,
+) {
+  const ref = useRef<HTMLElementTagNameMap["s-checkbox"] | null>(null);
+  const onCheckedChangeRef = useRef(onCheckedChange);
+  onCheckedChangeRef.current = onCheckedChange;
+
+  useIsomorphicLayoutEffect(() => {
+    if (ref.current) {
+      ref.current.checked = checked;
+    }
+  });
+
+  const refCallback = useCallback((el: HTMLElementTagNameMap["s-checkbox"] | null) => {
+    if (ref.current) {
+      ref.current.removeEventListener("change", handleChange);
+    }
+    ref.current = el;
+    if (el) {
+      el.checked = checked;
+      el.addEventListener("change", handleChange);
+    }
+  }, [checked]);
+
+  function handleChange(e: Event) {
+    const target = e.currentTarget as HTMLElementTagNameMap["s-checkbox"] | HTMLInputElement;
+    const isNowChecked = Boolean(target?.checked);
+    onCheckedChangeRef.current(isNowChecked);
+  }
+
+  useEffect(() => {
+    const current = ref.current;
+    return () => {
+      if (current) {
+        current.removeEventListener("change", handleChange);
+      }
+    };
+  }, []);
 
   return [ref, refCallback] as const;
 }
@@ -282,15 +326,34 @@ export function LensForm({
     rxTypes.length === 0 ||
     isSubmitting;
 
-  const handleToggleRxType = (type: RxType) => {
+  const handleSetRxType = (type: RxType, isChecked: boolean) => {
     setRxTypes((prev) => {
-      if (prev.includes(type)) {
+      if (isChecked) {
+        if (prev.includes(type)) return prev;
+        return [...prev, type];
+      } else {
         if (prev.length <= 1) return prev; // keep at least one
         return prev.filter((t) => t !== type);
       }
-      return [...prev, type];
     });
   };
+
+  const [, setSingleVisionRef] = usePolarisCheckbox(
+    rxTypes.includes("SINGLE_VISION"),
+    (checked) => handleSetRxType("SINGLE_VISION", checked),
+  );
+  const [, setProgressiveRef] = usePolarisCheckbox(
+    rxTypes.includes("PROGRESSIVE"),
+    (checked) => handleSetRxType("PROGRESSIVE", checked),
+  );
+  const [, setReadingRef] = usePolarisCheckbox(
+    rxTypes.includes("READING"),
+    (checked) => handleSetRxType("READING", checked),
+  );
+  const [, setNonPrescriptionRef] = usePolarisCheckbox(
+    rxTypes.includes("NON_PRESCRIPTION"),
+    (checked) => handleSetRxType("NON_PRESCRIPTION", checked),
+  );
 
   const handleModalHide = useCallback(() => {
     modalRef.current?.hideOverlay?.();
@@ -442,25 +505,56 @@ export function LensForm({
           <s-section heading="Allowed prescription types">
             <s-stack direction="block" gap="base">
               <s-checkbox
-                label="Single vision"
+                ref={setSingleVisionRef}
+                label={RX_TYPE_LABELS.SINGLE_VISION}
                 name="rxTypeSingleVision"
                 checked={rxTypes.includes("SINGLE_VISION")}
-                onChange={() => handleToggleRxType("SINGLE_VISION")}
-                onInput={() => handleToggleRxType("SINGLE_VISION")}
+                onChange={(e) => {
+                  const isChecked = Boolean(
+                    e.currentTarget.checked ??
+                      (e.target as HTMLInputElement).checked,
+                  );
+                  handleSetRxType("SINGLE_VISION", isChecked);
+                }}
               />
               <s-checkbox
-                label="Progressive"
+                ref={setProgressiveRef}
+                label={RX_TYPE_LABELS.PROGRESSIVE}
                 name="rxTypeProgressive"
                 checked={rxTypes.includes("PROGRESSIVE")}
-                onChange={() => handleToggleRxType("PROGRESSIVE")}
-                onInput={() => handleToggleRxType("PROGRESSIVE")}
+                onChange={(e) => {
+                  const isChecked = Boolean(
+                    e.currentTarget.checked ??
+                      (e.target as HTMLInputElement).checked,
+                  );
+                  handleSetRxType("PROGRESSIVE", isChecked);
+                }}
               />
               <s-checkbox
-                label="Reading"
+                ref={setReadingRef}
+                label={RX_TYPE_LABELS.READING}
                 name="rxTypeReading"
                 checked={rxTypes.includes("READING")}
-                onChange={() => handleToggleRxType("READING")}
-                onInput={() => handleToggleRxType("READING")}
+                onChange={(e) => {
+                  const isChecked = Boolean(
+                    e.currentTarget.checked ??
+                      (e.target as HTMLInputElement).checked,
+                  );
+                  handleSetRxType("READING", isChecked);
+                }}
+              />
+              <s-checkbox
+                ref={setNonPrescriptionRef}
+                label={RX_TYPE_LABELS.NON_PRESCRIPTION}
+                name="rxTypeNonPrescription"
+                checked={rxTypes.includes("NON_PRESCRIPTION")}
+                onChange={(e) => {
+                  const isChecked = Boolean(
+                    e.currentTarget.checked ??
+                      (e.target as HTMLInputElement).checked,
+                  );
+                  handleSetRxType("NON_PRESCRIPTION", isChecked);
+                }}
               />
             </s-stack>
           </s-section>
