@@ -73,12 +73,47 @@ step folders the shell shows the empty-catalog message, never a blank sheet.
 
 ## Done when
 
-- [ ] `pnpm vitest run packages/configurator/src/shell` passes: every Examples row is a case, asserted by role and text. [unit]
-- [ ] Reducer test: every action on every state is covered by a table, and Continue is impossible while `isComplete` is false. [unit]
-- [ ] API client test: a response failing the spec 03 schema becomes `{ code: "BAD_RESPONSE" }`, never a thrown TypeError in the UI. [unit]
-- [ ] INV-7: the raw-value `rg` from INVARIANTS.md finds nothing in `src/shell` and `src/shared`. [static]
-- [ ] INV-9: no JSX text literal in `src/shell` (`rg` for `>[A-Za-z]` in `.tsx` finds only strings-file references). [static]
-- [ ] `pnpm test` passes with 0 failures. [unit]
-- [ ] `specs/inventory/16-configurator-shell.md` lists the step module contract, reducer actions, API client. [static]
-- [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
-- [ ] `pnpm build` passes. [static]
+- [x] `pnpm vitest run packages/configurator/src/shell` passes: every Examples row is a case, asserted by role and text. [unit]
+- [x] Reducer test: every action on every state is covered by a table, and Continue is impossible while `isComplete` is false. [unit]
+- [x] API client test: a response failing the spec 03 schema becomes `{ code: "BAD_RESPONSE" }`, never a thrown TypeError in the UI. [unit]
+- [x] INV-7: the raw-value `rg` from INVARIANTS.md finds nothing in `src/shell` and `src/shared`. [static]
+- [x] INV-9: no JSX text literal in `src/shell` (`rg` for `>[A-Za-z]` in `.tsx` finds only strings-file references). [static]
+- [x] `pnpm test` passes with 0 failures. [unit]
+- [x] `specs/inventory/16-configurator-shell.md` lists the step module contract, reducer actions, API client. [static]
+- [x] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
+- [x] `pnpm build` passes. [static]
+
+## Log
+
+- **2026-11-08** — Spec 16 implemented by agy-3 in worktree `spec-16` (branch `spec/16-configurator-shell`). No git writes (lead commits).
+- **2026-11-08** — Landed `packages/configurator/src/shared/`:
+  - `types.ts`: Product and variant DTO interfaces.
+  - `strings.ts`: Centralized user-visible strings for shell header, progress, footer, loading, error, and empty catalog views (INV-9).
+  - `format.ts`: `formatMoney(amountMinor, currency, locale)` using `Intl.NumberFormat` without floating point math (INV-4).
+  - `api.ts`: Typed API client for app proxy endpoints (`getCatalog`, `submitPrescription`, `getUploadUrl`, `uploadFile`), parsing responses with spec 03 zod schemas and mapping errors to `ApiError` with `{ code }` (e.g. `BAD_RESPONSE`, `NOT_AVAILABLE`, `RATE_LIMITED`, `NETWORK_ERROR`). `ApiContext` and `useApi` hook for DI.
+- **2026-11-08** — Landed `packages/configurator/src/shell/`:
+  - `types.ts`: `ConfiguratorState`, closed union `ConfiguratorAction`, `StepModule`, `StepDefinition`, `StepProps`.
+  - `discovery.ts`: Eager step discovery via `import.meta.glob('../steps/*/index.tsx')` sorted by folder prefix, with contract validation.
+  - `reducer.ts`: Pure state machine reducer `configuratorReducer` enforcing gating (`CONTINUE` blocked while `isComplete` is false) and applicability step-skipping.
+  - `trap.ts`: Focus trap and body scroll lock; releases on close and when container disconnects while open.
+  - `shell.css`: Shadow DOM styles transcribed from DESIGN-SYSTEM.md using only CSS variables; desktop modal (> 40rem) / mobile bottom sheet (<= 40rem) with still alternative for reduced motion (INV-7).
+  - Preact components: `ProgressBar.tsx`, `Header.tsx`, `Footer.tsx`, `LoadingView.tsx`, `ErrorView.tsx`, `EmptyView.tsx`, `ConfiguratorApp.tsx`.
+- **2026-11-08** — Updated `packages/configurator/src/entries/configurator.ts`: registers `<lens-configurator>` custom element in Shadow DOM, binds to loader's `la:open` event, reads mount attributes `data-product-json` and `data-proxy`, locks body scroll, manages lifecycle, and restores trigger button focus on close/disconnect.
+- **2026-11-08** — Inventory fragment written to `specs/inventory/16-configurator-shell.md`.
+- **2026-11-08** — Self-checks verified:
+  1. Focus trap releases on close and on disconnect (element removed while open).
+  2. The reducer is pure: no fetch inside it; effects live in the shell.
+  3. Reduced motion: sheet open/close has the still alternative from DESIGN-SYSTEM.
+  4. UI + logic checklists checked.
+- **2026-11-08** — Gates verified:
+  - `pnpm vitest run packages/configurator/src/shell`: 4 test files, 110 tests passed (every Examples row verified by role and text).
+  - `pnpm vitest run packages/configurator/src/shell/reducer.test.ts`: 96 tests passed (table covering every action on every status).
+  - `pnpm vitest run packages/configurator/src/shared/api.test.ts`: 11 tests passed (`BAD_RESPONSE` on schema failure, HTTP errors, uploads).
+  - INV-7: `rg -n '#[0-9a-fA-F]{3,8}\b|rgb\(|[0-9]+px|[0-9]+ms' packages/configurator/src/shell packages/configurator/src/shared --glob '!tokens.css'` found 0 matches.
+  - INV-9: `rg '>[A-Za-z]' packages/configurator/src/shell --glob '*.tsx'` found 0 matches.
+  - `pnpm test`: 36 test files passed, 554 tests passed, 0 failures.
+  - `pnpm typecheck`: exit 0.
+  - `pnpm lint`: exit 0 (`--max-warnings 0`).
+  - `pnpm build`: exit 0 (`loader.js` 1314 B <= 10 KB limit; `configurator.js` 91102 B).
+  - `git diff --check`: clean (exit 0).
+- **2026-11-08** — Evidence (orchestro spec verify, tree 7b9fce5a): install pass · typecheck pass · lint pass · build pass · test pass 554/0/0
