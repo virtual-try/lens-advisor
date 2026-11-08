@@ -10,7 +10,7 @@ export interface LabOrderRecord {
   orderName: string;
   bundleId: string;
   prescriptionId: string | null;
-  lensId: string;
+  lensId: string | null;
   optionValueIds: string[];
   addOnIds: string[];
   frameTitle: string;
@@ -30,7 +30,7 @@ export interface UpsertLabOrderInput {
   orderName: string;
   bundleId: string;
   prescriptionId?: string | null;
-  lensId: string;
+  lensId?: string | null;
   optionValueIds?: string[];
   addOnIds?: string[];
   frameTitle: string;
@@ -47,7 +47,7 @@ function toLabOrderRecord(row: {
   orderName: string;
   bundleId: string;
   prescriptionId: string | null;
-  lensId: string;
+  lensId: string | null;
   optionValueIds: string[];
   addOnIds: string[];
   frameTitle: string;
@@ -108,7 +108,7 @@ export async function upsertLabOrder(
       orderName: input.orderName,
       bundleId: input.bundleId,
       prescriptionId: input.prescriptionId ?? null,
-      lensId: input.lensId,
+      lensId: input.lensId ?? null,
       optionValueIds: input.optionValueIds ? [...input.optionValueIds] : [],
       addOnIds: input.addOnIds ? [...input.addOnIds] : [],
       frameTitle: input.frameTitle,

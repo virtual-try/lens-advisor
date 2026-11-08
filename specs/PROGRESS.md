@@ -31,13 +31,13 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | 22 | [App proxy: prescription submit and upload endpoints](./22-proxy-prescription-endpoints.md) | Done | 02, 05, 06, 10 | Heavy | — | PR #40 |
 | 23 | [orders/create webhook → lab orders](./23-orders-webhook.md) | Not started | 02, 08, 11, 22 | Heavy | — |  |
 | 24 | [Lab job ticket renderer (PDF and CSV)](./24-lab-ticket-renderer.md) | Done | 03, 12 | Standard | — | PR #41 |
-| 25 | [Compliance and uninstall webhooks](./25-compliance-webhooks.md) | Not started | 02, 06, 07, 08 | Heavy | — |  |
+| 25 | [Compliance and uninstall webhooks](./25-compliance-webhooks.md) | Done | 02, 06, 07, 08 | Heavy | — | PR #50 |
 | 26 | [Configurator steps 1–2: Rx type and prescription](./26-step-rx-type-and-prescription.md) | Not started | 10, 16 | Standard | — |  |
 | 27 | [Configurator steps 3–4: lens group and lens, with Rx limits](./27-step-lens-selection.md) | Not started | 11, 13, 16 | Standard | — |  |
 | 28 | [Configurator steps 5–6: options, add-ons and price summary](./28-step-options-addons.md) | Not started | 13, 16 | Standard | — |  |
 | 29 | [Configurator step 7: review and add to cart (nested lines)](./29-step-review-add-to-cart.md) | Not started | 13, 16, 28 | Heavy | — |  |
 | 30 | [Lab order dispatch job (ticket → S3 → email)](./30-lab-order-dispatch.md) | Not started | 05, 06, 07, 14, 15, 23, 24 | Heavy | — |  |
-| 31 | [Admin home and setup checklist](./31-admin-home-setup.md) | Not started | 09, 14, 15 | Light | — |  |
+| 31 | [Admin home and setup checklist](./31-admin-home-setup.md) | Done | 09, 14, 15 | Light | — | PR #52 |
 | 32 | [Admin: lab orders list, resend and ticket download](./32-admin-lab-orders.md) | Not started | 06, 09, 30 | Standard | — |  |
 | 33 | [End-to-end suite](./33-e2e-suite.md) | Not started | 18, 19, 20, 21, 22, 25, 26, 27, 29, 31, 32 | Heavy | — | Only spec with e2e |
 | 34 | [Verification pass](./34-verification-pass.md) | Not started | 33 | Heavy | — | Final gate |
@@ -82,3 +82,5 @@ Not started · In progress · Blocked · Done
 - **2026-11-08** — Spec 24 merged (PR #41).
 - **2026-11-08** — Spec 17 merged (PR #46).
 - **2026-11-08** — Spec 22 merged (PR #40).
+- **2026-11-08** — Spec 25 merged (PR #50).
+- **2026-11-08** — Spec 31 merged (PR #52).

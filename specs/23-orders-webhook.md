@@ -111,14 +111,13 @@ Stubbed until spec 30 — test code only: the `lab-orders.dispatch` handler; tes
   - Sabotage 1: Bypassed cross-shop prescription check in `intake.service.server.ts` (`this.db.prescription.findFirst({ where: { id: rxRef } })`) → Row 5 test went red with `DecryptError: Ciphertext could not be authenticated`. Restored → green.
   - Sabotage 2: Injected DB call in `webhooks.orders.create.ts` (`getPrisma()`) → route test went red with `AssertionError: expected "getPrisma" to not be called at all, but actually been called 1 times`. Restored → green.
   - Sabotage 3: Inverted limits check `rxOutOfLimits = checkResult.available` in `intake.service.server.ts` → Row 1 and Row 4 tests went red with `AssertionError: expected true to be false` and `AssertionError: expected false to be true`. Restored → green.
-- **2026-11-08** — Gates after final source changes:
-  - `pnpm vitest run app/features/lab-orders/intake.test.ts`: Test Files 1 passed (1), Tests 15 passed (15).
-  - `pnpm typecheck`: exit 0.
+- **2026-11-08** — Gates after final source changes (Fix round R2):
+  - `pnpm vitest run app/features/lab-orders/intake.test.ts`: Test Files 1 passed (1), Tests 30 passed (30).
+  - `pnpm typecheck`: exit 0 (0 errors).
   - `pnpm lint`: exit 0 (0 errors, 0 warnings).
   - `pnpm build`: exit 0.
-  - `pnpm test`: Test Files 48 passed (48), Tests 767 passed (767), 0 failures.
+  - `pnpm test`: Test Files 48 passed (48), Tests 787 passed (787), 0 failures.
   - `git diff --check`: clean.
-- **2026-11-08** — Evidence (orchestro spec verify, tree bcd06bdd): install pass · typecheck pass · lint pass · build pass · test pass 773/0/0
 - **2026-11-08** — Fix round R1 (coder agy-3):
   - Fixed R1-F1: Dropped `parentLineItem` from `ORDER_INTAKE_QUERY`, `RawLineItem`, and frame resolution logic; frame line identified via spec 03's `readBundleProperties` (`role === "frame"`). Added 2026-10 LineItem schema-contract test.
   - Fixed R1-F2: Registered `dispatchJob` as a producer schema without a production worker handler (`dispatchJob.handler === undefined`), avoiding premature job completion before spec 30.
@@ -128,3 +127,16 @@ Stubbed until spec 30 — test code only: the `lab-orders.dispatch` handler; tes
   - Fixed R1-F6: Updated INV-6 test to assert that invalid HMAC returns 401 with standard JSON error body and that nothing is enqueued (`getQueue` and `fakeQueue.enqueue` not called).
   - Fixed R1-F7: Updated INV-1 test to seed identical order ID and bundle ID for shop A and shop B, updated shop A, and asserted that shop B's complete row remains byte-for-byte unchanged.
   - Fixed R1-F8: Made the no-Rx check structural on Prisma DMMF `LabOrder`: verified `'rx'` is absent, verified no field matches `/rx|sph|cyl|axis|add|pd|prism/i` except allowed names (`prescriptionId`, `prescription`, `rxOutOfLimits`, `addOnIds`), and verified exact allowed model field set.
+- **2026-11-08** — Fix round R2 (coder agy-3):
+  - Fixed R2-F1: Resolved lens, options, and add-ons within `shop.id` (INV-1). If missing or cross-shop, write the `LabOrder` as FAILED with `LENS_NOT_FOUND` (and `lensId = null`) or `OPTION_NOT_FOUND`, and do not enqueue a dispatch job. Made `lensId` nullable in `prisma/schema.prisma` and migration. Tested with a shop B `_item_id`, deleted lens, and cross-shop options/add-ons.
+  - Fixed R2-F2: `intakeJob` handler throws when `processOrderIntake` returns `ok: false` (`SHOP_NOT_FOUND`, `ORDER_NOT_FOUND`) so pg-boss retries. Bundles with no lens line or missing `_item_id` write a FAILED row (`NO_LENS_IN_BUNDLE`, `LENS_NOT_FOUND`) with `lensId = null` instead of silently skipping. Tested both handler throwing and bundle failure rows.
+  - Fixed R2-F3: Moved `DISPATCH_JOB_NAME` and `dispatchJobPayloadSchema` to leaf module `app/features/lab-orders/constants.ts` satisfying R201 without circular dependencies. Retained the producer definition for `DISPATCH_JOB_NAME` in `jobs.server.ts` because spec 08's `Queue.enqueue` strictly requires a registered `JobDefinition` (`getJobDefinition(name)` check on line 185) with no public API to enqueue without a definition. Added comprehensive unit tests for all three paths in spec 08 test files: registry replacement of handler-less definitions by handler-bearing definitions (`define-job.test.ts`), `Queue.work` throwing on handler-less definitions (`queue.test.ts`), and worker skipping handler-less definitions without error (`worker.test.ts`).
+  - Fixed R2-F4: Replaced the tautological schema check with AST parsing of `ORDER_INTAKE_QUERY` via `graphql`'s `parse()`. Asserted `parentLineItem` is absent and asserted the exact LineItem selection set (`id`, `sku`, `title`, `customAttributes`) and `customAttributes` subfields (`key`, `value`).
+  - Fixed R2-F5: Replaced fake queue dedupe test for Row 3 / INV-8 with real test queue using spec 08's `withTestQueue`. Delivered the webhook twice through the route (`ordersCreateAction`) and ran intake twice; asserted exactly 1 LabOrder per bundle in DB and exactly 1 dispatch job in pg-boss per `labOrderId`.
+  - Fixed R2-F6: Re-ran every Done-when gate on the final head and replaced stale evidence with real output.
+  - Fixed R2-F7: Webhook route catch block specifically catches 401 Responses from `authenticate.webhook` and maps to 401 UnauthorizedError; rethrows non-Response errors (such as unexpected DB or internal errors). Tested with forged HMAC signature and rethrow on non-Response errors.
+  - Fixed R2-F8: Added regex validation requiring numeric order IDs (`/^\d+$/` for `id`, gid suffix digits for `admin_graphql_api_id`) in `orderWebhookPayloadSchema` and `intakeJobPayloadSchema`. Added tests rejecting empty-suffix gid and non-numeric string IDs with 400 MALFORMED_PAYLOAD without enqueueing.
+  - Fixed R2-F9: Renamed intake job payload field `shopId` to `shopDomain` (`allowStringFields: ["shopDomain"]`), and resolved the shop strictly by domain (`where: { domain: shopDomain }`) instead of `OR [{id}, {domain}]`. Tested domain-only resolution.
+  - Fixed R2-F10: Throws an error when `order` is null on page two or later during pagination so pg-boss retries and never builds bundles from a partial order. Tested throw and verified zero partial rows written.
+  - Fixed R2-F11: Extracted `INTAKE_JOB_NAME`, `DISPATCH_JOB_NAME`, `dispatchJobPayloadSchema`, `toOrderGid`, and `fromOrderGid` into leaf module `app/features/lab-orders/constants.ts`, eliminating circular imports between `jobs.server.ts` and `intake.service.server.ts` and preventing the webhook route from loading Prisma and cipher modules.
+- **2026-11-08** — Evidence (orchestro spec verify, tree 80bb866a): install pass · typecheck pass · lint pass · build pass · test pass 787/0/0

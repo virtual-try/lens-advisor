@@ -14,11 +14,17 @@ import {
   getPrescriptionById,
   type PrescriptionRecord,
 } from "../prescriptions/prescriptions.repository.server";
-import { DISPATCH_JOB_NAME } from "./jobs.server";
+import {
+  DISPATCH_JOB_NAME,
+  fromOrderGid,
+  toOrderGid,
+} from "./constants";
 import {
   type LabOrderRecord,
   upsertLabOrder,
 } from "./lab-orders.repository.server";
+
+export { fromOrderGid, toOrderGid };
 
 export const ORDER_INTAKE_QUERY = `#graphql
 query getOrderForIntake($id: ID!, $cursor: String) {
@@ -43,20 +49,6 @@ query getOrderForIntake($id: ID!, $cursor: String) {
   }
 }
 `;
-
-export function toOrderGid(id: string): string {
-  if (id.startsWith("gid://shopify/Order/")) {
-    return id;
-  }
-  return `gid://shopify/Order/${id}`;
-}
-
-export function fromOrderGid(gidOrId: string): string {
-  if (gidOrId.startsWith("gid://shopify/Order/")) {
-    return gidOrId.replace("gid://shopify/Order/", "");
-  }
-  return gidOrId;
-}
 
 export interface RawCustomAttribute {
   key?: string;
@@ -174,23 +166,18 @@ export class IntakeService {
   }
 
   /**
-   * Processes an order intake for a shop and Shopify order ID.
-   * Resolves shop tenancy, fetches line items via Admin GraphQL,
-   * groups by _bundle_id, verifies prescription tenancy, checks Rx limits,
-   * upserts LabOrder rows, and enqueues dispatch jobs.
+   * Processes an order intake for a shop domain and Shopify order ID.
+   * Resolves shop tenancy by domain only (INV-1, R2-F9), fetches line items via Admin GraphQL,
+   * groups by _bundle_id, verifies prescription and lens/options tenancy (INV-1, R2-F1),
+   * checks Rx limits, upserts LabOrder rows, and enqueues dispatch jobs.
    */
   async processOrderIntake(
-    shopIdOrDomain: string,
+    shopDomain: string,
     shopifyOrderId: string,
   ): Promise<ProcessOrderIntakeResult> {
-    // 1. Resolve Shop by id or domain (INV-1)
-    const shop = await this.db.shop.findFirst({
-      where: {
-        OR: [
-          { id: shopIdOrDomain },
-          { domain: shopIdOrDomain },
-        ],
-      },
+    // 1. Resolve Shop by domain only (INV-1, R2-F9)
+    const shop = await this.db.shop.findUnique({
+      where: { domain: shopDomain },
     });
 
     if (!shop) {
@@ -237,7 +224,8 @@ export class IntakeService {
         if (rawLineItems.length === 0) {
           return { ok: false, reason: "ORDER_NOT_FOUND", labOrders: [] };
         }
-        break;
+        // Null order on page two or later must throw so pg-boss retries (R2-F10)
+        throw new Error("Order returned null during pagination");
       }
 
       if (!orderName && order.name) {
@@ -279,7 +267,7 @@ export class IntakeService {
       }
     }
 
-    // If no bundle lines found, no rows written, job completes
+    // If no bundle lines found, no rows written, job completes (Row 6)
     if (bundleMap.size === 0) {
       return { ok: true, labOrders: [] };
     }
@@ -306,14 +294,47 @@ export class IntakeService {
         return parsed.role === "lens";
       });
 
+      // Bundle with no lens line -> write FAILED row with error code (R2-F2)
       if (!lensLine) {
+        const labOrder = await upsertLabOrder(this.db, shop.id, {
+          shopifyOrderId,
+          orderName,
+          bundleId,
+          prescriptionId: null,
+          lensId: null,
+          optionValueIds: [],
+          addOnIds: [],
+          frameTitle,
+          frameSku,
+          rxOutOfLimits: false,
+          status: "FAILED",
+          lastErrorCode: "NO_LENS_IN_BUNDLE",
+        });
+        labOrders.push(labOrder);
         continue;
       }
 
       const lensAttrs = extractAttributesRecord(lensLine);
       const lensProps = readBundleProperties(lensAttrs);
       const lensId = lensProps.itemId;
+
+      // Bundle with lens line but no _item_id -> write FAILED row with error code (R2-F2)
       if (!lensId) {
+        const labOrder = await upsertLabOrder(this.db, shop.id, {
+          shopifyOrderId,
+          orderName,
+          bundleId,
+          prescriptionId: null,
+          lensId: null,
+          optionValueIds: [],
+          addOnIds: [],
+          frameTitle,
+          frameSku,
+          rxOutOfLimits: false,
+          status: "FAILED",
+          lastErrorCode: "LENS_NOT_FOUND",
+        });
+        labOrders.push(labOrder);
         continue;
       }
 
@@ -335,6 +356,93 @@ export class IntakeService {
       const optionValueIds = Array.from(optionIdsSet);
       const addOnIds = Array.from(addonIdsSet);
 
+      // Verify Lens belongs to this shop (INV-1, R2-F1)
+      const lens = await this.db.lens.findUnique({
+        where: {
+          shopId_id: {
+            shopId: shop.id,
+            id: lensId,
+          },
+        },
+      });
+
+      if (!lens) {
+        const labOrder = await upsertLabOrder(this.db, shop.id, {
+          shopifyOrderId,
+          orderName,
+          bundleId,
+          prescriptionId: null,
+          lensId: null,
+          optionValueIds,
+          addOnIds,
+          frameTitle,
+          frameSku,
+          rxOutOfLimits: false,
+          status: "FAILED",
+          lastErrorCode: "LENS_NOT_FOUND",
+        });
+        labOrders.push(labOrder);
+        continue;
+      }
+
+      // Verify Option Values belong to this shop (INV-1, R2-F1)
+      if (optionValueIds.length > 0) {
+        const validOptions = await this.db.optionValue.findMany({
+          where: {
+            shopId: shop.id,
+            id: { in: optionValueIds },
+          },
+          select: { id: true },
+        });
+        if (validOptions.length !== optionValueIds.length) {
+          const labOrder = await upsertLabOrder(this.db, shop.id, {
+            shopifyOrderId,
+            orderName,
+            bundleId,
+            prescriptionId: null,
+            lensId: lens.id,
+            optionValueIds,
+            addOnIds,
+            frameTitle,
+            frameSku,
+            rxOutOfLimits: false,
+            status: "FAILED",
+            lastErrorCode: "OPTION_NOT_FOUND",
+          });
+          labOrders.push(labOrder);
+          continue;
+        }
+      }
+
+      // Verify Add-Ons belong to this shop (INV-1, R2-F1)
+      if (addOnIds.length > 0) {
+        const validAddons = await this.db.addOn.findMany({
+          where: {
+            shopId: shop.id,
+            id: { in: addOnIds },
+          },
+          select: { id: true },
+        });
+        if (validAddons.length !== addOnIds.length) {
+          const labOrder = await upsertLabOrder(this.db, shop.id, {
+            shopifyOrderId,
+            orderName,
+            bundleId,
+            prescriptionId: null,
+            lensId: lens.id,
+            optionValueIds,
+            addOnIds,
+            frameTitle,
+            frameSku,
+            rxOutOfLimits: false,
+            status: "FAILED",
+            lastErrorCode: "OPTION_NOT_FOUND",
+          });
+          labOrders.push(labOrder);
+          continue;
+        }
+      }
+
       const rxRef = lensProps.rxRef;
 
       // Check rxRef existence and tenancy (INV-1)
@@ -350,7 +458,7 @@ export class IntakeService {
           orderName,
           bundleId,
           prescriptionId: null,
-          lensId,
+          lensId: lens.id,
           optionValueIds,
           addOnIds,
           frameTitle,
@@ -372,33 +480,23 @@ export class IntakeService {
       if (prescription.source === "MANUAL") {
         const aad = `${shop.id}:${prescription.id}`;
         const decryptedRx = this.cipher.decrypt(prescription.cipher, aad);
-        const lens = await this.db.lens.findUnique({
-          where: {
-            shopId_id: {
-              shopId: shop.id,
-              id: lensId,
+
+        const checkResult = checkLens(
+          decryptedRx as Prescription,
+          prescription.rxType as RxType,
+          {
+            limits: {
+              sphMin: lens.sphMin,
+              sphMax: lens.sphMax,
+              cylMin: lens.cylMin,
+              cylMax: lens.cylMax,
+              addMin: lens.addMin ?? undefined,
+              addMax: lens.addMax ?? undefined,
+              rxTypes: lens.rxTypes as RxType[],
             },
           },
-        });
-
-        if (lens) {
-          const checkResult = checkLens(
-            decryptedRx as Prescription,
-            prescription.rxType as RxType,
-            {
-              limits: {
-                sphMin: lens.sphMin,
-                sphMax: lens.sphMax,
-                cylMin: lens.cylMin,
-                cylMax: lens.cylMax,
-                addMin: lens.addMin ?? undefined,
-                addMax: lens.addMax ?? undefined,
-                rxTypes: lens.rxTypes as RxType[],
-              },
-            },
-          );
-          rxOutOfLimits = !checkResult.available;
-        }
+        );
+        rxOutOfLimits = !checkResult.available;
       }
 
       // Upsert LabOrder (atomic unique statement on unique key)
@@ -407,7 +505,7 @@ export class IntakeService {
         orderName,
         bundleId,
         prescriptionId: prescription.id,
-        lensId,
+        lensId: lens.id,
         optionValueIds,
         addOnIds,
         frameTitle,

@@ -146,7 +146,7 @@ CREATE TABLE "LabOrder" (
     "orderName" TEXT NOT NULL,
     "bundleId" TEXT NOT NULL,
     "prescriptionId" TEXT,
-    "lensId" TEXT NOT NULL,
+    "lensId" TEXT,
     "optionValueIds" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "addOnIds" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "frameTitle" TEXT NOT NULL,
@@ -254,7 +254,7 @@ ALTER TABLE "LabOrder" ADD CONSTRAINT "LabOrder_shopId_fkey" FOREIGN KEY ("shopI
 ALTER TABLE "LabOrder" ADD CONSTRAINT "LabOrder_prescriptionId_fkey" FOREIGN KEY ("prescriptionId") REFERENCES "Prescription"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "LabOrder" ADD CONSTRAINT "LabOrder_lensId_fkey" FOREIGN KEY ("lensId") REFERENCES "Lens"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "LabOrder" ADD CONSTRAINT "LabOrder_lensId_fkey" FOREIGN KEY ("lensId") REFERENCES "Lens"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ComplianceRequest" ADD CONSTRAINT "ComplianceRequest_shopId_fkey" FOREIGN KEY ("shopId") REFERENCES "Shop"("id") ON DELETE CASCADE ON UPDATE CASCADE;

@@ -4,6 +4,7 @@ import {
   JobDefinitionError,
   JobPayloadValidationError,
   defineJob,
+  getJobDefinition,
   validateJobPayload,
 } from "./define-job";
 
@@ -738,5 +739,61 @@ describe("defineJob payload guard (INV-2)", () => {
       handler: () => undefined,
     });
     expect(zeroDef.retry).toEqual({ retryLimit: 0, retryDelay: 0, retryBackoff: false });
+  });
+
+  describe("handler-less job definitions and registry replacement (R2-F3)", () => {
+    it("allows registering a handler-less definition and replaces it with a handler-bearing definition", () => {
+      const name = "test.producer-consumer-replace";
+      const producerDef = defineJob({
+        name,
+        schema: z.object({ orderId: z.string() }),
+      });
+      expect(producerDef.handler).toBeUndefined();
+      expect(getJobDefinition(name)).toBe(producerDef);
+
+      let handled = false;
+      const consumerDef = defineJob({
+        name,
+        schema: z.object({ orderId: z.string() }),
+        handler: () => {
+          handled = true;
+        },
+      });
+      expect(handled).toBe(false);
+      expect(consumerDef.handler).toBeDefined();
+      expect(getJobDefinition(name)).toBe(consumerDef);
+    });
+
+    it("throws Duplicate job definition when registering two handler-bearing definitions", () => {
+      const name = "test.duplicate-handlers";
+      defineJob({
+        name,
+        schema: z.object({ orderId: z.string() }),
+        handler: () => undefined,
+      });
+
+      expect(() =>
+        defineJob({
+          name,
+          schema: z.object({ orderId: z.string() }),
+          handler: () => undefined,
+        })
+      ).toThrowError(/Duplicate job definition for "test.duplicate-handlers"/);
+    });
+
+    it("throws Duplicate job definition when registering two handler-less definitions", () => {
+      const name = "test.duplicate-no-handlers";
+      defineJob({
+        name,
+        schema: z.object({ orderId: z.string() }),
+      });
+
+      expect(() =>
+        defineJob({
+          name,
+          schema: z.object({ orderId: z.string() }),
+        })
+      ).toThrowError(/Duplicate job definition for "test.duplicate-no-handlers"/);
+    });
   });
 });

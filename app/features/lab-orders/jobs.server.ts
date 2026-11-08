@@ -1,32 +1,35 @@
 import { z } from "zod";
 import { defineJob } from "../../shared/queue/define-job";
+import {
+  DISPATCH_JOB_NAME,
+  dispatchJobPayloadSchema,
+  type DispatchJobPayload,
+  INTAKE_JOB_NAME,
+} from "./constants";
 import { createIntakeService } from "./intake.service.server";
 
-export const INTAKE_JOB_NAME = "lab-orders.intake";
-export const DISPATCH_JOB_NAME = "lab-orders.dispatch";
+export {
+  DISPATCH_JOB_NAME,
+  dispatchJobPayloadSchema,
+  type DispatchJobPayload,
+  INTAKE_JOB_NAME,
+};
 
 /**
  * Payload schema for lab-orders.intake.
- * INV-2: Payloads carry only ids/enums. All string fields end in *Id.
+ * INV-2: Payloads carry only ids/enums. Numeric order id required (R2-F8).
+ * shopDomain carries the verified shop domain (R2-F9).
  */
 export const intakeJobPayloadSchema = z.object({
-  shopId: z.string(),
-  shopifyOrderId: z.string(),
+  shopDomain: z.string().min(1),
+  shopifyOrderId: z.string().regex(/^\d+$/),
 });
 export type IntakeJobPayload = z.infer<typeof intakeJobPayloadSchema>;
-
-/**
- * Payload schema for lab-orders.dispatch.
- * INV-2: Payloads carry only ids/enums. All string fields end in *Id.
- */
-export const dispatchJobPayloadSchema = z.object({
-  labOrderId: z.string(),
-});
-export type DispatchJobPayload = z.infer<typeof dispatchJobPayloadSchema>;
 
 export const intakeJob = defineJob({
   name: INTAKE_JOB_NAME,
   schema: intakeJobPayloadSchema,
+  allowStringFields: ["shopDomain"],
   retry: {
     retryLimit: 3,
     retryDelay: 2,
@@ -34,7 +37,13 @@ export const intakeJob = defineJob({
   },
   handler: async (payload) => {
     const service = createIntakeService();
-    await service.processOrderIntake(payload.shopId, payload.shopifyOrderId);
+    const result = await service.processOrderIntake(
+      payload.shopDomain,
+      payload.shopifyOrderId,
+    );
+    if (!result.ok) {
+      throw new Error(`Order intake failed: ${result.reason}`);
+    }
   },
 });
 
