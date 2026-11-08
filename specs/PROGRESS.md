@@ -13,12 +13,12 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | 04 | [Configurator package, tokens and theme app block](./04-configurator-package-and-tokens.md) | Not started | 01 | Heavy | — |  |
 | 05 | [Field encryption for prescription data](./05-field-encryption.md) | Done | 01 | Heavy | — | PR #24 |
 | 06 | [S3 storage adapter](./06-s3-storage.md) | Done | 01 | Standard | — | PR #9 |
-| 07 | [Mailer adapter (Resend)](./07-mailer.md) | Not started | 01 | Light | — |  |
+| 07 | [Mailer adapter (Resend)](./07-mailer.md) | Done | 01 | Light | — | PR #35 |
 | 08 | [Job queue and worker process (pg-boss)](./08-job-queue.md) | Not started | 01 | Standard | — |  |
 | 09 | [Plan gate (Shopify managed pricing)](./09-plan-gate.md) | Done | 01 | Standard | — | PR #15 |
 | 10 | [Rx parser and validation](./10-rx-parser-validation.md) | Done | 03 | Standard | — | PR #19 |
 | 11 | [Rx limits engine](./11-rx-limits-engine.md) | Done | 03 | Standard | — | PR #23 |
-| 12 | [Lab code compiler](./12-lab-code-compiler.md) | Not started | 03 | Standard | — |  |
+| 12 | [Lab code compiler](./12-lab-code-compiler.md) | Done | 03 | Standard | — | PR #28 |
 | 13 | [Price calculation](./13-pricing.md) | Done | 03 | Standard | — | PR #30 |
 | 14 | [Catalog repository and service](./14-catalog-service.md) | Not started | 02, 03 | Standard | — |  |
 | 15 | [Shop settings repository and service](./15-shop-settings-service.md) | Done | 02, 03 | Standard | — | PR #32 |
@@ -72,3 +72,5 @@ Not started · In progress · Blocked · Done
 - **2026-11-07** — Spec 13 merged (PR #30).
 - **2026-11-07** — Spec 15 merged (PR #32).
 - **2026-11-07** — Spec 05 merged (PR #24).
+- **2026-11-07** — Spec 07 merged (PR #35).
+- **2026-11-08** — Spec 12 merged (PR #28).
