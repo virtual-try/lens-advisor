@@ -46,6 +46,12 @@ interface ResolvedQueueConfig {
 const DEFAULT_SCHEMA = "pgboss";
 const DEFAULT_POLLING_SECONDS = 2;
 
+export interface QueueStopOptions {
+  close?: boolean;
+  graceful?: boolean;
+  timeout?: number;
+}
+
 export class Queue {
   readonly schema: string;
   private readonly boss: PgBoss;
@@ -169,8 +175,12 @@ export class Queue {
     return this.boss.send(name, parsed as object, this.sendOptions(singletonKey, options));
   }
 
-  async stop(options: { close?: boolean; graceful?: boolean } = {}): Promise<void> {
-    await this.boss.stop({ close: options.close ?? true, graceful: options.graceful ?? true });
+  async stop(options: QueueStopOptions = {}): Promise<void> {
+    await this.boss.stop({
+      close: options.close ?? true,
+      graceful: options.graceful ?? true,
+      ...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
+    });
     if (options.close ?? true) this.started = false;
   }
 
@@ -191,16 +201,24 @@ export class Queue {
    * Stops polling, waits for in-flight jobs, then optionally drops the pg-boss
    * schema. Tests use this so each file owns a throwaway schema.
    */
-  async destroy(options: { dropSchema?: boolean } = {}): Promise<void> {
+  async destroy(options: { dropSchema?: boolean; timeout?: number } = {}): Promise<void> {
     if (!this.started) return;
-    await this.boss.stop({ graceful: true, close: false });
     if (options.dropSchema) {
+      await this.boss.stop({
+        graceful: true,
+        close: false,
+        ...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
+      });
       if (!/^[a-zA-Z0-9_]+$/.test(this.schema)) {
         throw new Error(`Refusing to drop unexpected schema name "${this.schema}"`);
       }
       await this.boss.getDb().executeSql(`DROP SCHEMA IF EXISTS "${this.schema}" CASCADE`);
+      await this.boss.stop({
+        ...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
+      });
+    } else {
+      await this.stop({ graceful: true, close: true, timeout: options.timeout });
     }
-    await this.boss.stop();
     this.started = false;
   }
 

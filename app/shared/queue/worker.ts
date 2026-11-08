@@ -1,7 +1,7 @@
 import { getConfig } from "../config.server";
 import { createPgBoss } from "../container/queue.server";
 import { discoverJobs } from "./discovery.server";
-import { createQueue } from "./queue";
+import { type Queue, createQueue } from "./queue";
 
 export interface WorkerCliOptions {
   featuresDir?: string;
@@ -71,14 +71,29 @@ export async function runWorker(argv: readonly string[] = []): Promise<WorkerHan
     connectionString,
     schema,
   });
-  const queue = await createQueue(boss, {
-    schema,
-    pollingIntervalSeconds: options.pollingIntervalSeconds,
-  });
-
-  await queue.registerAll(definitions);
-  for (const definition of definitions) {
-    await queue.work(definition);
+  let queue: Queue | undefined;
+  try {
+    queue = await createQueue(boss, {
+      schema,
+      pollingIntervalSeconds: options.pollingIntervalSeconds,
+    });
+    await queue.registerAll(definitions);
+    for (const definition of definitions) {
+      await queue.work(definition);
+    }
+  } catch (error) {
+    try {
+      if (queue) {
+        await queue.stop({ graceful: true, timeout: 10_000 });
+      } else {
+        await boss.stop({ graceful: true, timeout: 10_000 });
+      }
+    } catch (stopError: unknown) {
+      console.error(
+        `[worker] failed to stop queue after startup error: ${stopError instanceof Error ? stopError.message : String(stopError)}`
+      );
+    }
+    throw error;
   }
 
   console.log(

@@ -445,4 +445,30 @@ describe("defineJob payload guard (INV-2)", () => {
       })
     ).toThrowError(/rxText.*not declared/);
   });
+
+  it("rejects job names ending in .dead (reserved for dead-letter queues) at registration (R4-F1)", () => {
+    expect(() =>
+      defineJob({
+        name: "orders.sync.dead",
+        schema: z.object({ orderId: z.string() }),
+        handler: () => undefined,
+      })
+    ).toThrowError(/cannot end with reserved dead-letter suffix "\.dead"/);
+
+    expect(() =>
+      defineJob({
+        name: "foo.dead",
+        schema: z.object({ orderId: z.string() }),
+        handler: () => undefined,
+      })
+    ).toThrowError(JobDefinitionError);
+
+    expect(() =>
+      defineJob({
+        name: "orders.deadline",
+        schema: z.object({ orderId: z.string() }),
+        handler: () => undefined,
+      })
+    ).not.toThrow();
+  });
 });

@@ -298,6 +298,11 @@ export function isJobDefinition(value: unknown): value is AnyJobDefinition {
 }
 
 export function registerJob(definition: AnyJobDefinition): void {
+  if (definition.name.endsWith(".dead")) {
+    throw new JobDefinitionError(
+      `Job name "${definition.name}" cannot end with reserved dead-letter suffix ".dead"`
+    );
+  }
   const existing = registry.get(definition.name);
   if (existing && existing !== definition) {
     throw new JobDefinitionError(`Duplicate job definition for "${definition.name}"`);
@@ -311,6 +316,11 @@ export function defineJob<TSchema extends z.ZodTypeAny>(
   if (!JOB_NAME_PATTERN.test(options.name)) {
     throw new JobDefinitionError(
       `Job name "${options.name}" must be lowercase letters, digits, dots, hyphens or underscores`
+    );
+  }
+  if (options.name.endsWith(".dead")) {
+    throw new JobDefinitionError(
+      `Job name "${options.name}" cannot end with reserved dead-letter suffix ".dead"`
     );
   }
 

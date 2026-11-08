@@ -40,20 +40,37 @@ let queuePromise: Promise<Queue> | undefined;
  */
 export async function getQueue(): Promise<Queue> {
   if (!queuePromise) {
-    queuePromise = (async () => {
+    let queue: Queue | undefined;
+    let bossInstance: PgBoss | undefined;
+    const initPromise = (async () => {
       registerWebFeatureJobs();
       const boss = createPgBoss({
         connectionString: getConfig().database.databaseUrl,
         schema: "pgboss",
       });
-      const queue = await createQueue(boss, {
+      bossInstance = boss;
+      queue = await createQueue(boss, {
         schema: "pgboss",
       });
       await queue.registerAll(getJobDefinitions());
       return queue;
     })();
-    queuePromise.catch(() => {
-      queuePromise = undefined;
+
+    queuePromise = initPromise.catch(async (error: unknown) => {
+      try {
+        if (queue) {
+          await queue.stop({ graceful: true, timeout: 10_000 });
+        } else if (bossInstance) {
+          await bossInstance.stop({ graceful: true, timeout: 10_000 });
+        }
+      } catch (stopError: unknown) {
+        console.error(
+          `[queue] failed to stop after initialization error: ${stopError instanceof Error ? stopError.message : String(stopError)}`
+        );
+      } finally {
+        queuePromise = undefined;
+      }
+      throw error;
     });
   }
   return queuePromise;
