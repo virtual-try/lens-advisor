@@ -5,9 +5,10 @@ import {
   normalizePrescription,
   validatePrescription,
 } from "../../../packages/rx-core/src/rx/validate.js";
-import type {
-  PrescriptionSubmitBody,
-  UploadUrlRequest,
+import {
+  MAX_UPLOAD_KEYS,
+  type PrescriptionSubmitBody,
+  type UploadUrlRequest,
 } from "../../../packages/rx-core/src/schemas/catalog.js";
 import { getCipher } from "../../shared/container/cipher.server";
 import { getObjectStore } from "../../shared/container/object-store.server";
@@ -16,6 +17,7 @@ import type { FieldCipher } from "../../shared/crypto/field-cipher.server";
 import {
   BadRequestError,
   type FieldError,
+  NotFoundError,
 } from "../../shared/http/errors.server";
 import {
   ALLOWED_UPLOAD_CONTENT_TYPES,
@@ -29,6 +31,8 @@ import {
   updatePrescriptionUpload,
   type PrescriptionRecord,
 } from "./prescriptions.repository.server";
+
+export { MAX_UPLOAD_KEYS };
 
 export interface PrescriptionsServiceDeps {
   db?: PrismaClient;
@@ -78,15 +82,21 @@ export class PrescriptionsService {
     // 1. Content-type check
     if (!ALLOWED_UPLOAD_CONTENT_TYPES.includes(input.contentType as (typeof ALLOWED_UPLOAD_CONTENT_TYPES)[number])) {
       throw new BadRequestError(
-        `Unsupported content type: ${input.contentType}`,
+        "Unsupported content type",
         "UNSUPPORTED_TYPE",
       );
     }
 
-    // 2. Size check
+    // 2. Size check before any DB write (R1-F4)
+    if (typeof input.size !== "number" || isNaN(input.size) || input.size <= 0) {
+      throw new BadRequestError(
+        "File size must be greater than 0 bytes",
+        "INVALID_SIZE",
+      );
+    }
     if (input.size > MAX_UPLOAD_BYTES) {
       throw new BadRequestError(
-        `File size ${input.size} exceeds maximum allowed size of ${MAX_UPLOAD_BYTES} bytes`,
+        "File size exceeds maximum allowed size",
         "TOO_LARGE",
       );
     }
@@ -170,6 +180,11 @@ export class PrescriptionsService {
       throw new BadRequestError("At least one uploadedKey is required", "UPLOAD_REQUIRED");
     }
 
+    // Boundary cap on uploadedKeys (R1-F9)
+    if (input.uploadedKeys.length > MAX_UPLOAD_KEYS) {
+      throw new BadRequestError("Too many uploaded keys", "TOO_MANY_UPLOADS");
+    }
+
     // Verify draft prescription exists for this shop (INV-1)
     const draft = await getPrescriptionById(this.db, shopId, input.draftId);
     if (!draft || draft.source !== "UPLOAD") {
@@ -179,32 +194,73 @@ export class PrescriptionsService {
     const expectedPrefix = `shops/${shopId}/rx/${input.draftId}/`;
 
     for (const key of input.uploadedKeys) {
-      // Cross-shop / draft key integrity check (INV-1)
+      // Cross-shop / draft key integrity check (INV-1, R1-F1: no interpolated key or shopId)
       if (!key.startsWith(expectedPrefix)) {
         throw new BadRequestError(
-          `Uploaded key '${key}' does not belong to shop '${shopId}' and draft '${input.draftId}'`,
+          "Uploaded key does not belong to this shop or draft",
           "INVALID_UPLOAD_KEY",
         );
       }
 
-      // Check object exists in S3 storage (integrity check)
+      // Check object exists and metadata in S3 storage (integrity & KMS check, R1-F5)
       const head = await this.objectStore.headObject(key);
       if (!head || !head.exists) {
         throw new BadRequestError(
-          `Uploaded file '${key}' not found in storage`,
+          "Uploaded file not found in storage",
           "UPLOAD_MISSING",
+        );
+      }
+
+      if (
+        typeof head.contentLength !== "number" ||
+        head.contentLength <= 0 ||
+        head.contentLength > MAX_UPLOAD_BYTES
+      ) {
+        throw new BadRequestError(
+          "Uploaded file has invalid size",
+          "INVALID_UPLOAD",
+        );
+      }
+
+      if (
+        !head.contentType ||
+        !ALLOWED_UPLOAD_CONTENT_TYPES.includes(
+          head.contentType as (typeof ALLOWED_UPLOAD_CONTENT_TYPES)[number],
+        )
+      ) {
+        throw new BadRequestError(
+          "Uploaded file has unsupported content type",
+          "INVALID_UPLOAD",
+        );
+      }
+
+      if (head.serverSideEncryption !== "aws:kms") {
+        throw new BadRequestError(
+          "Uploaded file is not KMS encrypted",
+          "INVALID_UPLOAD",
+        );
+      }
+
+      if (head.sseKmsKeyId !== this.objectStore.kmsKeyId) {
+        throw new BadRequestError(
+          "Uploaded file has incorrect KMS key",
+          "INVALID_UPLOAD",
         );
       }
     }
 
-    // Update draft prescription with final rxType and uploadKeys
-    await updatePrescriptionUpload(this.db, shopId, input.draftId, {
+    // Update draft prescription with final rxType and uploadKeys atomically (R1-F6)
+    const updated = await updatePrescriptionUpload(this.db, shopId, input.draftId, {
       rxType: input.rxType as RxType,
       uploadKeys: input.uploadedKeys,
     });
 
+    if (!updated) {
+      throw new NotFoundError("Draft prescription not found", "DRAFT_NOT_FOUND");
+    }
+
     return {
-      rxRef: draft.id,
+      rxRef: updated.id,
     };
   }
 

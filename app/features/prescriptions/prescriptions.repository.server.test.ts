@@ -28,6 +28,13 @@ describe("Prescriptions Repository (INV-1 shop scoping)", () => {
     await db?.drop();
   }, DB_TIMEOUT);
 
+  async function snapshotShopRows(shopId: string) {
+    return db.prisma.prescription.findMany({
+      where: { shopId },
+      orderBy: { id: "asc" },
+    });
+  }
+
   it("findShopByDomain finds existing shop and returns null for unknown", async () => {
     const foundA = await findShopByDomain(db.prisma, shopA.domain);
     expect(foundA).not.toBeNull();
@@ -37,7 +44,10 @@ describe("Prescriptions Repository (INV-1 shop scoping)", () => {
     expect(notFound).toBeNull();
   });
 
-  it("createPrescription stores row scoped to shopId", async () => {
+  it("createPrescription stores row scoped to shopId and leaves Shop B untouched (INV-1)", async () => {
+    const shopBBefore = await snapshotShopRows(shopB.shopId);
+    expect(shopBBefore.length).toBeGreaterThan(0);
+
     const id = randomUUID();
     const created = await createPrescription(db.prisma, shopA.shopId, {
       id,
@@ -60,6 +70,10 @@ describe("Prescriptions Repository (INV-1 shop scoping)", () => {
       where: { id },
     });
     expect(raw?.shopId).toBe(shopA.shopId);
+
+    // INV-1: Assert Shop B's rows are completely unchanged
+    const shopBAfter = await snapshotShopRows(shopB.shopId);
+    expect(shopBAfter).toEqual(shopBBefore);
   });
 
   it("getPrescriptionById returns row for owner shop and null for another shop (INV-1)", async () => {
@@ -83,6 +97,8 @@ describe("Prescriptions Repository (INV-1 shop scoping)", () => {
   });
 
   it("attachOrder updates orderId for owner shop and fails for another shop (INV-1)", async () => {
+    const shopBBefore = await snapshotShopRows(shopB.shopId);
+
     const idA = randomUUID();
     await createPrescription(db.prisma, shopA.shopId, {
       id: idA,
@@ -106,9 +122,15 @@ describe("Prescriptions Repository (INV-1 shop scoping)", () => {
 
     const verified = await getPrescriptionById(db.prisma, shopA.shopId, idA);
     expect(verified?.orderId).toBe("ORDER-A-101");
+
+    // INV-1: Assert Shop B's rows are completely unchanged
+    const shopBAfter = await snapshotShopRows(shopB.shopId);
+    expect(shopBAfter).toEqual(shopBBefore);
   });
 
   it("updatePrescriptionUpload updates upload prescription for owner shop and fails for another shop (INV-1)", async () => {
+    const shopBBefore = await snapshotShopRows(shopB.shopId);
+
     const draftId = randomUUID();
     await createPrescription(db.prisma, shopA.shopId, {
       id: draftId,
@@ -140,5 +162,9 @@ describe("Prescriptions Repository (INV-1 shop scoping)", () => {
     expect(updateA).not.toBeNull();
     expect(updateA?.rxType).toBe("PROGRESSIVE");
     expect(updateA?.uploadKeys).toEqual(newKeys);
+
+    // INV-1: Assert Shop B's rows are completely unchanged
+    const shopBAfter = await snapshotShopRows(shopB.shopId);
+    expect(shopBAfter).toEqual(shopBBefore);
   });
 });

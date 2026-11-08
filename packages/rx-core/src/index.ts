@@ -29,6 +29,7 @@ export {
   iso4217CurrencySchema,
   lensGroupSchema,
   lensSchema,
+  MAX_UPLOAD_KEYS,
   moneySchema,
   optionGroupKindSchema,
   optionGroupSchema,

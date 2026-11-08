@@ -3,6 +3,7 @@ import { RateLimitedError } from "../../shared/http/errors.server";
 export interface RateLimiterOptions {
   windowMs?: number;
   maxRequests?: number;
+  maxKeys?: number;
   now?: () => number;
 }
 
@@ -15,17 +16,40 @@ export interface RateLimitResult {
 export class MemoryRateLimiter {
   private readonly windowMs: number;
   private readonly maxRequests: number;
+  private readonly maxKeys: number;
   private readonly now: () => number;
+  private lastMonotonicTime: number = 0;
   private hits: Map<string, number[]> = new Map();
 
   constructor(options: RateLimiterOptions = {}) {
     this.windowMs = options.windowMs ?? 60_000;
     this.maxRequests = options.maxRequests ?? 20;
-    this.now = options.now ?? (() => Date.now());
+    this.maxKeys = options.maxKeys ?? 10_000;
+    this.now = options.now ?? (() => performance.now());
+  }
+
+  /**
+   * Sweeps and evicts completely expired entries from the map (R1-F11).
+   */
+  private sweepExpired(currentTime: number): void {
+    const windowStart = currentTime - this.windowMs;
+    for (const [key, timestamps] of this.hits.entries()) {
+      const lastHit = timestamps[timestamps.length - 1];
+      if (!lastHit || lastHit <= windowStart) {
+        this.hits.delete(key);
+      }
+    }
   }
 
   check(key: string): RateLimitResult {
-    const currentTime = this.now();
+    const rawTime = this.now();
+    // Clamp to monotonic time: never allow time to step backwards (R1-F10)
+    const currentTime = Math.max(rawTime, this.lastMonotonicTime);
+    this.lastMonotonicTime = currentTime;
+
+    // Evict expired entries during sweep (R1-F11)
+    this.sweepExpired(currentTime);
+
     const windowStart = currentTime - this.windowMs;
 
     let timestamps = this.hits.get(key) ?? [];
@@ -35,6 +59,8 @@ export class MemoryRateLimiter {
     if (timestamps.length >= this.maxRequests) {
       const oldest = timestamps[0];
       const resetMs = Math.max(0, oldest + this.windowMs - currentTime);
+      // Re-insert to refresh LRU access order
+      this.hits.delete(key);
       this.hits.set(key, timestamps);
       return {
         allowed: false,
@@ -44,7 +70,19 @@ export class MemoryRateLimiter {
     }
 
     timestamps.push(currentTime);
+    // Re-insert to refresh LRU access order
+    this.hits.delete(key);
     this.hits.set(key, timestamps);
+
+    // Evict oldest entries if map exceeds bounded maxKeys (LRU eviction)
+    while (this.hits.size > this.maxKeys) {
+      const oldestKey = this.hits.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.hits.delete(oldestKey);
+      } else {
+        break;
+      }
+    }
 
     return {
       allowed: true,
@@ -62,6 +100,15 @@ export class MemoryRateLimiter {
 
   reset(): void {
     this.hits.clear();
+    this.lastMonotonicTime = 0;
+  }
+
+  size(): number {
+    return this.hits.size;
+  }
+
+  has(key: string): boolean {
+    return this.hits.has(key);
   }
 }
 

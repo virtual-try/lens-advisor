@@ -23,6 +23,7 @@ class FakeObjectStore implements ObjectStore {
   readonly kmsKeyId = "arn:aws:kms:test-key";
   public existingObjects = new Set<string>();
   public presignedCalls: PresignUploadParams[] = [];
+  public customHeadResults = new Map<string, Partial<HeadObjectResult>>();
 
   async presignUpload(params: PresignUploadParams): Promise<string> {
     this.presignedCalls.push(params);
@@ -38,11 +39,23 @@ class FakeObjectStore implements ObjectStore {
   }
 
   async headObject(key: string): Promise<HeadObjectResult | null> {
+    if (this.customHeadResults.has(key)) {
+      return {
+        exists: true,
+        contentLength: 1024,
+        contentType: "image/png",
+        serverSideEncryption: "aws:kms",
+        sseKmsKeyId: this.kmsKeyId,
+        ...this.customHeadResults.get(key)!,
+      };
+    }
     if (this.existingObjects.has(key)) {
       return {
         exists: true,
         contentLength: 1024,
         contentType: "image/png",
+        serverSideEncryption: "aws:kms",
+        sseKmsKeyId: this.kmsKeyId,
       };
     }
     return { exists: false };
@@ -143,6 +156,25 @@ describe("Prescriptions Service", () => {
       );
     });
 
+    it("R1-F4: rejects zero-byte request before any DB write and leaves row count unchanged", async () => {
+      const countBefore = await db.prisma.prescription.count();
+
+      await expect(
+        service.requestUploadUrl(shopA.shopId, {
+          contentType: "image/png",
+          size: 0,
+        }),
+      ).rejects.toThrowError(
+        expect.objectContaining({
+          status: 400,
+          code: "INVALID_SIZE",
+        }),
+      );
+
+      const countAfter = await db.prisma.prescription.count();
+      expect(countAfter).toBe(countBefore);
+    });
+
     it("throws DRAFT_NOT_FOUND if draftId belongs to another shop (INV-1)", async () => {
       const shopADraft = await service.requestUploadUrl(shopA.shopId, {
         contentType: "image/png",
@@ -193,7 +225,7 @@ describe("Prescriptions Service", () => {
       expect(row?.cipher).not.toContain("-775");
       expect(row?.cipher).not.toContain("-7.75");
       expect(row?.cipher).not.toContain("SECRET_PATIENT_NOTES_12345");
-      expect(row?.cipher).not.toContain("od");
+      expect(row?.cipher).not.toContain('"od"');
 
       // Verify AAD: shopId:prescriptionId decrypts
       const cipher = getCipher();
@@ -252,6 +284,48 @@ describe("Prescriptions Service", () => {
       );
     });
 
+    it("R1-F1: never interpolates upload keys, shop ids, or draft ids into error messages", async () => {
+      const draft = await service.requestUploadUrl(shopA.shopId, {
+        contentType: "image/png",
+        size: 1024,
+      });
+
+      const phiKey = `shops/${shopA.shopId}/rx/${draft.draftId}/SPH_-7.75_PATIENT.pdf`;
+      try {
+        await service.submitPrescription(shopA.shopId, {
+          rxType: "SINGLE_VISION",
+          draftId: draft.draftId,
+          uploadedKeys: [phiKey],
+        });
+        expect.unreachable("should have thrown BadRequestError");
+      } catch (err: unknown) {
+        const error = err as BadRequestError;
+        expect(error.status).toBe(400);
+        expect(error.code).toBe("UPLOAD_MISSING");
+        expect(error.message).toBe("Uploaded file not found in storage");
+        expect(error.message).not.toContain("SPH_-7.75_PATIENT.pdf");
+        expect(error.message).not.toContain(shopA.shopId);
+        expect(error.message).not.toContain(draft.draftId);
+      }
+
+      const foreignPhiKey = `shops/${shopB.shopId}/rx/${draft.draftId}/SPH_-7.75_PATIENT.pdf`;
+      try {
+        await service.submitPrescription(shopA.shopId, {
+          rxType: "SINGLE_VISION",
+          draftId: draft.draftId,
+          uploadedKeys: [foreignPhiKey],
+        });
+        expect.unreachable("should have thrown BadRequestError");
+      } catch (err: unknown) {
+        const error = err as BadRequestError;
+        expect(error.status).toBe(400);
+        expect(error.code).toBe("INVALID_UPLOAD_KEY");
+        expect(error.message).toBe("Uploaded key does not belong to this shop or draft");
+        expect(error.message).not.toContain("SPH_-7.75_PATIENT.pdf");
+        expect(error.message).not.toContain(shopB.shopId);
+      }
+    });
+
     it("refuses UPLOAD with key never uploaded (UPLOAD_MISSING integrity)", async () => {
       const draft = await service.requestUploadUrl(shopA.shopId, {
         contentType: "image/png",
@@ -275,7 +349,185 @@ describe("Prescriptions Service", () => {
       );
     });
 
-    it("finalizes UPLOAD when keys exist in storage", async () => {
+    describe("R1-F5: denied-path tests for S3 metadata validation", () => {
+      it("rejects zero-byte object in storage", async () => {
+        const draft = await service.requestUploadUrl(shopA.shopId, {
+          contentType: "image/png",
+          size: 1024,
+        });
+        fakeStore.customHeadResults.set(draft.key, { contentLength: 0 });
+
+        await expect(
+          service.submitPrescription(shopA.shopId, {
+            rxType: "SINGLE_VISION",
+            draftId: draft.draftId,
+            uploadedKeys: [draft.key],
+          }),
+        ).rejects.toThrowError(
+          expect.objectContaining({
+            status: 400,
+            code: "INVALID_UPLOAD",
+          }),
+        );
+      });
+
+      it("rejects oversized object in storage", async () => {
+        const draft = await service.requestUploadUrl(shopA.shopId, {
+          contentType: "image/png",
+          size: 1024,
+        });
+        fakeStore.customHeadResults.set(draft.key, { contentLength: 11 * 1024 * 1024 });
+
+        await expect(
+          service.submitPrescription(shopA.shopId, {
+            rxType: "SINGLE_VISION",
+            draftId: draft.draftId,
+            uploadedKeys: [draft.key],
+          }),
+        ).rejects.toThrowError(
+          expect.objectContaining({
+            status: 400,
+            code: "INVALID_UPLOAD",
+          }),
+        );
+      });
+
+      it("rejects unsupported contentType in storage", async () => {
+        const draft = await service.requestUploadUrl(shopA.shopId, {
+          contentType: "image/png",
+          size: 1024,
+        });
+        fakeStore.customHeadResults.set(draft.key, { contentType: "text/plain" });
+
+        await expect(
+          service.submitPrescription(shopA.shopId, {
+            rxType: "SINGLE_VISION",
+            draftId: draft.draftId,
+            uploadedKeys: [draft.key],
+          }),
+        ).rejects.toThrowError(
+          expect.objectContaining({
+            status: 400,
+            code: "INVALID_UPLOAD",
+          }),
+        );
+      });
+
+      it("rejects unencrypted or non-KMS object in storage", async () => {
+        const draft = await service.requestUploadUrl(shopA.shopId, {
+          contentType: "image/png",
+          size: 1024,
+        });
+        fakeStore.customHeadResults.set(draft.key, { serverSideEncryption: "AES256" });
+
+        await expect(
+          service.submitPrescription(shopA.shopId, {
+            rxType: "SINGLE_VISION",
+            draftId: draft.draftId,
+            uploadedKeys: [draft.key],
+          }),
+        ).rejects.toThrowError(
+          expect.objectContaining({
+            status: 400,
+            code: "INVALID_UPLOAD",
+          }),
+        );
+      });
+
+      it("rejects object encrypted with wrong KMS key", async () => {
+        const draft = await service.requestUploadUrl(shopA.shopId, {
+          contentType: "image/png",
+          size: 1024,
+        });
+        fakeStore.customHeadResults.set(draft.key, { sseKmsKeyId: "arn:aws:kms:wrong-key" });
+
+        await expect(
+          service.submitPrescription(shopA.shopId, {
+            rxType: "SINGLE_VISION",
+            draftId: draft.draftId,
+            uploadedKeys: [draft.key],
+          }),
+        ).rejects.toThrowError(
+          expect.objectContaining({
+            status: 400,
+            code: "INVALID_UPLOAD",
+          }),
+        );
+      });
+    });
+
+    it("R1-F6: fails with NotFoundError when draft disappears before upload update", async () => {
+      const draft = await service.requestUploadUrl(shopA.shopId, {
+        contentType: "image/png",
+        size: 1024,
+      });
+      fakeStore.existingObjects.add(draft.key);
+
+      // Simulate draft disappearing between initial lookup and updatePrescriptionUpload
+      // by deleting the draft inside headObject hook
+      const origHead = fakeStore.headObject.bind(fakeStore);
+      fakeStore.headObject = async (key: string) => {
+        // Disappear the draft from the DB right before upload update
+        await db.prisma.prescription.delete({ where: { id: draft.draftId } });
+        return origHead(key);
+      };
+
+      try {
+        await expect(
+          service.submitPrescription(shopA.shopId, {
+            rxType: "SINGLE_VISION",
+            draftId: draft.draftId,
+            uploadedKeys: [draft.key],
+          }),
+        ).rejects.toThrowError(
+          expect.objectContaining({
+            status: 404,
+            code: "DRAFT_NOT_FOUND",
+          }),
+        );
+      } finally {
+        fakeStore.headObject = origHead;
+      }
+    });
+
+    it("R1-F9: enforces uploadedKeys cap: accepts exactly 5, rejects 6", async () => {
+      const draft = await service.requestUploadUrl(shopA.shopId, {
+        contentType: "image/png",
+        size: 1024,
+      });
+
+      const keys5: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        const k = `shops/${shopA.shopId}/rx/${draft.draftId}/file-${i}.png`;
+        fakeStore.existingObjects.add(k);
+        keys5.push(k);
+      }
+
+      // Exactly 5 at cap -> succeeds
+      const res5 = await service.submitPrescription(shopA.shopId, {
+        rxType: "SINGLE_VISION",
+        draftId: draft.draftId,
+        uploadedKeys: keys5,
+      });
+      expect(res5.rxRef).toBe(draft.draftId);
+
+      // 6 keys (one above cap) -> rejects with 400 TOO_MANY_UPLOADS
+      const keys6 = [...keys5, `shops/${shopA.shopId}/rx/${draft.draftId}/file-5.png`];
+      await expect(
+        service.submitPrescription(shopA.shopId, {
+          rxType: "SINGLE_VISION",
+          draftId: draft.draftId,
+          uploadedKeys: keys6,
+        }),
+      ).rejects.toThrowError(
+        expect.objectContaining({
+          status: 400,
+          code: "TOO_MANY_UPLOADS",
+        }),
+      );
+    });
+
+    it("finalizes UPLOAD when keys exist in storage with valid KMS metadata", async () => {
       const draft = await service.requestUploadUrl(shopA.shopId, {
         contentType: "image/png",
         size: 1024,

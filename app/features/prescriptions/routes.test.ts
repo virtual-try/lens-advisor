@@ -13,6 +13,7 @@ import type {
   PresignUploadParams,
   PutObjectParams,
 } from "../../shared/storage/object-store.server";
+import * as repo from "./prescriptions.repository.server";
 import { prescriptionRateLimiter } from "./rate-limiter.server";
 
 const DB_TIMEOUT = 120_000;
@@ -51,6 +52,8 @@ class FakeObjectStore implements ObjectStore {
         exists: true,
         contentLength: 2048,
         contentType: "image/png",
+        serverSideEncryption: "aws:kms",
+        sseKmsKeyId: this.kmsKeyId,
       };
     }
     return { exists: false };
@@ -75,6 +78,17 @@ describe("Spec 22: App Proxy Prescription Endpoints (routes.test.ts)", () => {
     db = await createTestDb();
     shopA = await seedShop(db.prisma, "shop-a-proxy.myshopify.com");
     shopB = await seedShop(db.prisma, "shop-b-proxy.myshopify.com");
+
+    // Seed offline session for shopA so app proxy verified context resolves it
+    await db.prisma.session.create({
+      data: {
+        id: `offline_${shopA.domain}`,
+        shop: shopA.domain,
+        state: "active",
+        accessToken: "fake-offline-token",
+      },
+    });
+
     fakeStore = new FakeObjectStore();
 
     // Hook globals so container singletons resolve to test instances
@@ -370,12 +384,59 @@ describe("Spec 22: App Proxy Prescription Endpoints (routes.test.ts)", () => {
 
   // --- Invariant & Security Verification Tests ---
 
-  it("INV-6: forged HMAC signature returns 401 and writes nothing", async () => {
-    const prescriptionsBefore = await db.prisma.prescription.count();
-
-    const forgedReq = makeSignedProxyRequest(
+  it("R1-F2: unsigned non-POST request returns 401 on both endpoints; signed non-POST returns 400", async () => {
+    // 1. Unsigned GET to prescriptions -> 401
+    const unsignedRxGet = makeSignedProxyRequest(
       "/apps/lens-advisor/prescriptions",
       shopA.domain,
+      undefined,
+      { unsigned: true, method: "GET" },
+    );
+    const resUnsignedRx = await prescriptionsAction(createActionArgs(unsignedRxGet));
+    expect(resUnsignedRx.status).toBe(401);
+
+    // 2. Unsigned GET to upload-url -> 401
+    const unsignedUpGet = makeSignedProxyRequest(
+      "/apps/lens-advisor/upload-url",
+      shopA.domain,
+      undefined,
+      { unsigned: true, method: "GET" },
+    );
+    const resUnsignedUp = await uploadUrlAction(createActionArgs(unsignedUpGet));
+    expect(resUnsignedUp.status).toBe(401);
+
+    // 3. Signed GET to prescriptions -> 400 METHOD_NOT_ALLOWED
+    const signedRxGet = makeSignedProxyRequest(
+      "/apps/lens-advisor/prescriptions",
+      shopA.domain,
+      undefined,
+      { method: "GET" },
+    );
+    const resSignedRx = await prescriptionsAction(createActionArgs(signedRxGet));
+    expect(resSignedRx.status).toBe(400);
+    const rxData = await resSignedRx.json();
+    expect(rxData.error.code).toBe("METHOD_NOT_ALLOWED");
+
+    // 4. Signed GET to upload-url -> 400 METHOD_NOT_ALLOWED
+    const signedUpGet = makeSignedProxyRequest(
+      "/apps/lens-advisor/upload-url",
+      shopA.domain,
+      undefined,
+      { method: "GET" },
+    );
+    const resSignedUp = await uploadUrlAction(createActionArgs(signedUpGet));
+    expect(resSignedUp.status).toBe(400);
+    const upData = await resSignedUp.json();
+    expect(upData.error.code).toBe("METHOD_NOT_ALLOWED");
+  });
+
+  it("R1-F3: request without verified offline session returns 401 and writes nothing", async () => {
+    const prescriptionsBefore = await db.prisma.prescription.count();
+
+    // shopB has no offline session in db.prisma.session
+    const rxNoSession = makeSignedProxyRequest(
+      "/apps/lens-advisor/prescriptions",
+      shopB.domain,
       {
         rxType: "SINGLE_VISION",
         prescription: {
@@ -384,34 +445,182 @@ describe("Spec 22: App Proxy Prescription Endpoints (routes.test.ts)", () => {
           pd: { single: 600 },
         },
       },
-      { forged: true },
     );
+    const resRx = await prescriptionsAction(createActionArgs(rxNoSession));
+    expect(resRx.status).toBe(401);
+    const dataRx = await resRx.json();
+    expect(dataRx.error.code).toBe("UNAUTHORIZED");
 
-    const res = await prescriptionsAction(createActionArgs(forgedReq));
-
-    expect(res.status).toBe(401);
-    const data = await res.json();
-    expect(data.error.code).toBe("UNAUTHORIZED");
+    const upNoSession = makeSignedProxyRequest(
+      "/apps/lens-advisor/upload-url",
+      shopB.domain,
+      { contentType: "image/png", size: 1024 },
+    );
+    const resUp = await uploadUrlAction(createActionArgs(upNoSession));
+    expect(resUp.status).toBe(401);
+    const dataUp = await resUp.json();
+    expect(dataUp.error.code).toBe("UNAUTHORIZED");
 
     expect(await db.prisma.prescription.count()).toBe(prescriptionsBefore);
   });
 
-  it("INV-6: malformed JSON returns 400 and writes nothing", async () => {
-    const prescriptionsBefore = await db.prisma.prescription.count();
+  describe("R1-F7: table-test both endpoints for unsigned, forged-signature, and malformed-body requests", () => {
+    const testCases = [
+      {
+        endpoint: "/apps/lens-advisor/prescriptions",
+        action: prescriptionsAction,
+        type: "unsigned",
+        body: {
+          rxType: "SINGLE_VISION",
+          prescription: { od: { sph: -100 }, os: { sph: -100 }, pd: { single: 600 } },
+        },
+        options: { unsigned: true },
+        expectedStatus: 401,
+        expectedCode: "UNAUTHORIZED",
+      },
+      {
+        endpoint: "/apps/lens-advisor/upload-url",
+        action: uploadUrlAction,
+        type: "unsigned",
+        body: { contentType: "image/png", size: 1024 },
+        options: { unsigned: true },
+        expectedStatus: 401,
+        expectedCode: "UNAUTHORIZED",
+      },
+      {
+        endpoint: "/apps/lens-advisor/prescriptions",
+        action: prescriptionsAction,
+        type: "forged-signature",
+        body: {
+          rxType: "SINGLE_VISION",
+          prescription: { od: { sph: -100 }, os: { sph: -100 }, pd: { single: 600 } },
+        },
+        options: { forged: true },
+        expectedStatus: 401,
+        expectedCode: "UNAUTHORIZED",
+      },
+      {
+        endpoint: "/apps/lens-advisor/upload-url",
+        action: uploadUrlAction,
+        type: "forged-signature",
+        body: { contentType: "image/png", size: 1024 },
+        options: { forged: true },
+        expectedStatus: 401,
+        expectedCode: "UNAUTHORIZED",
+      },
+      {
+        endpoint: "/apps/lens-advisor/prescriptions",
+        action: prescriptionsAction,
+        type: "malformed-body",
+        body: "{ not valid json !!",
+        options: {},
+        expectedStatus: 400,
+        expectedCode: "BAD_REQUEST",
+      },
+      {
+        endpoint: "/apps/lens-advisor/upload-url",
+        action: uploadUrlAction,
+        type: "malformed-body",
+        body: "{ not valid json !!",
+        options: {},
+        expectedStatus: 400,
+        expectedCode: "BAD_REQUEST",
+      },
+    ] as const;
 
-    const malformedReq = makeSignedProxyRequest(
-      "/apps/lens-advisor/prescriptions",
+    for (const tc of testCases) {
+      it(`${tc.endpoint} [${tc.type}] -> ${tc.expectedStatus} and calls NO repository functions`, async () => {
+        const createSpy = vi.spyOn(repo, "createPrescription");
+        const updateSpy = vi.spyOn(repo, "updatePrescriptionUpload");
+        const getSpy = vi.spyOn(repo, "getPrescriptionById");
+        const findShopSpy = vi.spyOn(repo, "findShopByDomain");
+        const attachSpy = vi.spyOn(repo, "attachOrder");
+
+        try {
+          const req = makeSignedProxyRequest(
+            tc.endpoint,
+            shopA.domain,
+            tc.body,
+            tc.options,
+          );
+
+          const res = await tc.action(createActionArgs(req));
+          expect(res.status).toBe(tc.expectedStatus);
+          const data = await res.json();
+          expect(data.error.code).toBe(tc.expectedCode);
+
+          // Assert NO repository function was called
+          expect(createSpy).not.toHaveBeenCalled();
+          expect(updateSpy).not.toHaveBeenCalled();
+          expect(getSpy).not.toHaveBeenCalled();
+          expect(findShopSpy).not.toHaveBeenCalled();
+          expect(attachSpy).not.toHaveBeenCalled();
+        } finally {
+          createSpy.mockRestore();
+          updateSpy.mockRestore();
+          getSpy.mockRestore();
+          findShopSpy.mockRestore();
+          attachSpy.mockRestore();
+        }
+      });
+    }
+  });
+
+  it("R1-F1: rejected upload key with PHI is echoed in neither response body nor logs (INV-2)", async () => {
+    // Create draft
+    const uploadReq = makeSignedProxyRequest(
+      "/apps/lens-advisor/upload-url",
       shopA.domain,
-      "{ malformed json string !!",
+      { contentType: "application/pdf", size: 1024 },
     );
+    const uploadRes = await uploadUrlAction(createActionArgs(uploadReq));
+    expect(uploadRes.status).toBe(200);
+    const { draftId } = await uploadRes.json();
 
-    const res = await prescriptionsAction(createActionArgs(malformedReq));
+    const phiFilename = "SPH_-7.75_PATIENT.pdf";
+    const phiKey = `shops/${shopA.shopId}/rx/${draftId}/${phiFilename}`;
 
-    expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data.error.code).toBe("BAD_REQUEST");
+    const logSpy = vi.spyOn(console, "log");
+    const infoSpy = vi.spyOn(console, "info");
+    const warnSpy = vi.spyOn(console, "warn");
+    const errorSpy = vi.spyOn(console, "error");
 
-    expect(await db.prisma.prescription.count()).toBe(prescriptionsBefore);
+    try {
+      const submitReq = makeSignedProxyRequest(
+        "/apps/lens-advisor/prescriptions",
+        shopA.domain,
+        {
+          rxType: "SINGLE_VISION",
+          draftId,
+          uploadedKeys: [phiKey],
+        },
+      );
+
+      const submitRes = await prescriptionsAction(createActionArgs(submitReq));
+      expect(submitRes.status).toBe(400);
+
+      const rawBody = await submitRes.text();
+      expect(rawBody).not.toContain(phiFilename);
+      expect(rawBody).not.toContain("-7.75");
+
+      const allLogged = [
+        ...logSpy.mock.calls,
+        ...infoSpy.mock.calls,
+        ...warnSpy.mock.calls,
+        ...errorSpy.mock.calls,
+      ]
+        .flat()
+        .map((item) => (typeof item === "object" ? JSON.stringify(item) : String(item)))
+        .join(" ");
+
+      expect(allLogged).not.toContain(phiFilename);
+      expect(allLogged).not.toContain("-7.75");
+    } finally {
+      logSpy.mockRestore();
+      infoSpy.mockRestore();
+      warnSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
   });
 
   it("INV-2: captured console/logs contain no Rx values during submission", async () => {

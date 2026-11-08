@@ -14,14 +14,8 @@ import {
 import { authenticate } from "../shopify.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  if (request.method !== "POST") {
-    return errorResponse(
-      new BadRequestError("Method not allowed", "METHOD_NOT_ALLOWED"),
-    );
-  }
-
   try {
-    // 1. Authenticate app proxy request (INV-6)
+    // 1. Authenticate app proxy request (INV-6: authentication-first)
     let context;
     try {
       context = await authenticate.public.appProxy(request);
@@ -32,30 +26,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
 
-    const url = new URL(request.url);
-    const shopDomain = context.session?.shop ?? url.searchParams.get("shop");
+    // 2. Request method validation runs AFTER authentication (R1-F2)
+    if (request.method !== "POST") {
+      throw new BadRequestError("Method not allowed", "METHOD_NOT_ALLOWED");
+    }
+
+    // 3. Tenancy strictly from verified offline session context (INV-1, R1-F3)
+    const shopDomain = context.session?.shop;
     if (!shopDomain) {
       throw new UnauthorizedError(
-        "Missing shop parameter in app proxy request",
+        "No verified session found for shop",
         "UNAUTHORIZED",
       );
     }
 
-    // 2. Resolve shop from verified domain (INV-1)
-    const db = getPrisma();
-    const shop = await findShopByDomain(db, shopDomain);
-    if (!shop) {
-      throw new UnauthorizedError("Shop not found", "UNAUTHORIZED");
-    }
-
-    // 3. Rate limit: 20 req/min/shop+IP
-    const ip =
-      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-      request.headers.get("cf-connecting-ip") ||
-      "127.0.0.1";
-    prescriptionRateLimiter.assertAllowed(`${shop.id}:${ip}`);
-
-    // 4. Parse request body with zod schema from packages/rx-core (INV-6)
+    // 4. Parse request body before any repository calls (R1-F7)
     let body: unknown;
     try {
       body = await request.json();
@@ -79,7 +64,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
 
-    // 5. Call service
+    // 5. Resolve shop from verified domain (INV-1)
+    const db = getPrisma();
+    const shop = await findShopByDomain(db, shopDomain);
+    if (!shop) {
+      throw new UnauthorizedError("Shop not found", "UNAUTHORIZED");
+    }
+
+    // 6. Rate limit: 20 req/min/shop+IP
+    const ip =
+      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      request.headers.get("cf-connecting-ip") ||
+      "127.0.0.1";
+    prescriptionRateLimiter.assertAllowed(`${shop.id}:${ip}`);
+
+    // 7. Call service
     const service = createPrescriptionsService({ db });
     const result = await service.requestUploadUrl(shop.id, parsed.data);
 
@@ -93,3 +92,5 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return errorResponse(error);
   }
 };
+
+export const loader = action;

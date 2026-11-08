@@ -113,7 +113,7 @@ export async function getPrescriptionById(
 
 /**
  * Attaches a Shopify order id to a prescription, strictly scoped to shopId (INV-1).
- * Returns null if the prescription does not belong to the shop.
+ * Uses an atomic conditional update and returns null if the prescription does not belong to the shop.
  */
 export async function attachOrder(
   db: PrescriptionDb,
@@ -121,29 +121,27 @@ export async function attachOrder(
   prescriptionId: string,
   orderId: string,
 ): Promise<PrescriptionRecord | null> {
-  const existing = await getPrescriptionById(db, shopId, prescriptionId);
-  if (!existing) {
-    return null;
-  }
-
-  const row = await db.prescription.update({
+  const result = await db.prescription.updateMany({
     where: {
-      shopId_id: {
-        shopId,
-        id: prescriptionId,
-      },
+      shopId,
+      id: prescriptionId,
     },
     data: {
       orderId,
     },
   });
 
-  return toPrescriptionRecord(row);
+  if (result.count === 0) {
+    return null;
+  }
+
+  return getPrescriptionById(db, shopId, prescriptionId);
 }
 
 /**
- * Updates a draft prescription for UPLOAD, strictly scoped to shopId (INV-1).
- * Returns null if the prescription does not belong to the shop.
+ * Updates a draft prescription for UPLOAD, strictly scoped to shopId and draft state (INV-1, R1-F6).
+ * Uses an atomic conditional update and returns null if the prescription does not belong to the shop
+ * or is not in UPLOAD draft state.
  */
 export async function updatePrescriptionUpload(
   db: PrescriptionDb,
@@ -151,17 +149,11 @@ export async function updatePrescriptionUpload(
   id: string,
   data: UpdatePrescriptionUploadInput,
 ): Promise<PrescriptionRecord | null> {
-  const existing = await getPrescriptionById(db, shopId, id);
-  if (!existing) {
-    return null;
-  }
-
-  const row = await db.prescription.update({
+  const result = await db.prescription.updateMany({
     where: {
-      shopId_id: {
-        shopId,
-        id,
-      },
+      shopId,
+      id,
+      source: "UPLOAD",
     },
     data: {
       ...(data.rxType ? { rxType: data.rxType } : {}),
@@ -170,5 +162,9 @@ export async function updatePrescriptionUpload(
     },
   });
 
-  return toPrescriptionRecord(row);
+  if (result.count === 0) {
+    return null;
+  }
+
+  return getPrescriptionById(db, shopId, id);
 }

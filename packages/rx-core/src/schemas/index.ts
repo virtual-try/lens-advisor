@@ -29,6 +29,7 @@ export {
   idSchema,
   lensGroupSchema,
   lensSchema,
+  MAX_UPLOAD_KEYS,
   OPTION_GROUP_KINDS,
   optionGroupKindSchema,
   optionGroupSchema,
