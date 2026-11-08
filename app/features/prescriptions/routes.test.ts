@@ -1040,6 +1040,44 @@ describe("Spec 22: App Proxy Prescription Endpoints (routes.test.ts)", () => {
       const bodyOver = await resOver.json();
       expect(bodyOver.error.code).toBe("TOO_LARGE");
     });
+
+    it("prescriptions endpoint enforces MAX_UPLOAD_KEYS: accepts 5 keys, rejects 6 keys", async () => {
+      // 1. Create a draft via upload-url
+      const uploadReq = makeSignedProxyRequest(
+        "/apps/lens-advisor/upload-url",
+        shopA.domain,
+        { contentType: "image/png", size: 1024 },
+      );
+      const uploadRes = await uploadUrlAction(createActionArgs(uploadReq));
+      expect(uploadRes.status).toBe(200);
+      const { draftId } = await uploadRes.json();
+
+      const keys5: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        const k = `shops/${shopA.shopId}/rx/${draftId}/file-${i}.png`;
+        fakeStore.existingObjects.add(k);
+        keys5.push(k);
+      }
+
+      // 2. 6 keys (exceeding MAX_UPLOAD_KEYS = 5) -> rejected with 400
+      const keys6 = [...keys5, `shops/${shopA.shopId}/rx/${draftId}/file-5.png`];
+      const req6 = makeSignedProxyRequest(
+        "/apps/lens-advisor/prescriptions",
+        shopA.domain,
+        { rxType: "SINGLE_VISION", draftId, uploadedKeys: keys6 },
+      );
+      const res6 = await prescriptionsAction(createActionArgs(req6));
+      expect(res6.status).toBe(400);
+
+      // 3. 5 keys -> accepted with 201
+      const req5 = makeSignedProxyRequest(
+        "/apps/lens-advisor/prescriptions",
+        shopA.domain,
+        { rxType: "SINGLE_VISION", draftId, uploadedKeys: keys5 },
+      );
+      const res5 = await prescriptionsAction(createActionArgs(req5));
+      expect(res5.status).toBe(201);
+    });
   });
 
   describe("R4-F1: ambiguous prescription submission and mutual exclusion", () => {

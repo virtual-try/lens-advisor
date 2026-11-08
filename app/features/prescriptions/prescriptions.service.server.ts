@@ -6,10 +6,10 @@ import {
   validatePrescription,
 } from "../../../packages/rx-core/src/rx/validate.js";
 import {
-  MAX_UPLOAD_KEYS,
   type PrescriptionSubmitBody,
   type UploadUrlRequest,
 } from "../../../packages/rx-core/src/schemas/catalog.js";
+import { MAX_UPLOAD_KEYS } from "./schema.js";
 import { getCipher } from "../../shared/container/cipher.server";
 import { getObjectStore } from "../../shared/container/object-store.server";
 import { getPrisma } from "../../shared/container/prisma.server";

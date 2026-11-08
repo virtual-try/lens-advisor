@@ -2,10 +2,8 @@ import { z } from "zod";
 
 import {
   idSchema,
-  MAX_UPLOAD_KEYS,
   prescriptionSchema,
   prescriptionSubmitBodySchema,
-  rxTypeSchema,
   type PrescriptionSubmitBody,
 } from "../../../packages/rx-core/src/schemas/index.js";
 import {
@@ -13,12 +11,27 @@ import {
   type FieldError,
 } from "../../shared/http/errors.server";
 
+export const MAX_UPLOAD_KEYS = 5;
+
+/**
+ * Local schema extending rx-core's prescriptionSubmitBodySchema with a 5-key cap
+ * on uploadedKeys for spec 22's endpoints (R5-F1).
+ */
+export const localPrescriptionSubmitBodySchema = prescriptionSubmitBodySchema.extend({
+  uploadedKeys: z
+    .array(idSchema)
+    .max(MAX_UPLOAD_KEYS, `At most ${MAX_UPLOAD_KEYS} uploaded keys allowed`)
+    .optional(),
+});
+export type LocalPrescriptionSubmitBody = z.infer<
+  typeof localPrescriptionSubmitBodySchema
+>;
+
 /**
  * MANUAL prescription submission schema (R4-F1):
  * Requires prescription, forbids draftId and uploadedKeys.
  */
-export const manualPrescriptionSubmitSchema = z.object({
-  rxType: rxTypeSchema,
+export const manualPrescriptionSubmitSchema = prescriptionSubmitBodySchema.extend({
   prescription: prescriptionSchema,
   draftId: z
     .never({
@@ -33,16 +46,15 @@ export const manualPrescriptionSubmitSchema = z.object({
 });
 
 /**
- * UPLOAD prescription submission schema (R4-F1):
+ * UPLOAD prescription submission schema (R4-F1, R5-F1):
  * Requires draftId + uploadedKeys (1..MAX_UPLOAD_KEYS), forbids prescription.
  */
-export const uploadPrescriptionSubmitSchema = z.object({
-  rxType: rxTypeSchema,
+export const uploadPrescriptionSubmitSchema = prescriptionSubmitBodySchema.extend({
   draftId: idSchema,
   uploadedKeys: z
     .array(idSchema)
     .min(1, "At least one uploadedKey is required")
-    .max(MAX_UPLOAD_KEYS),
+    .max(MAX_UPLOAD_KEYS, `At most ${MAX_UPLOAD_KEYS} uploaded keys allowed`),
   prescription: z
     .never({
       invalid_type_error: "prescription is forbidden for upload prescription submissions",
@@ -61,6 +73,70 @@ export type PrescriptionSubmitPayload =
   | UploadPrescriptionSubmit;
 
 /**
+ * Local prescription submission schema that wraps/extends rx-core's prescriptionSubmitBodySchema,
+ * enforcing the 5-key cap and the MANUAL/UPLOAD exclusivity (R4-F1, R5-F1).
+ */
+export const prescriptionSubmitSchema = localPrescriptionSubmitBodySchema.superRefine(
+  (data, ctx) => {
+    if (data.rxType === "NON_PRESCRIPTION") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Prescriptions endpoint does not accept NON_PRESCRIPTION",
+        params: { code: "UNSUPPORTED_RX_TYPE" },
+        path: ["rxType"],
+      });
+      return;
+    }
+
+    const hasManual = data.prescription !== undefined;
+    const hasUpload =
+      data.draftId !== undefined ||
+      (data.uploadedKeys !== undefined && data.uploadedKeys.length > 0);
+
+    if (hasManual && hasUpload) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Ambiguous prescription submission: cannot mix manual prescription and upload fields",
+        params: { code: "AMBIGUOUS_RX_SOURCE" },
+        path: ["prescription"],
+      });
+      return;
+    }
+
+    if (!hasManual && !hasUpload) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Invalid prescription submission: must provide either prescription or draftId with uploadedKeys",
+        params: { code: "REQUIRED" },
+        path: ["prescription"],
+      });
+      return;
+    }
+
+    if (hasUpload) {
+      if (!data.draftId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "draftId is required for upload prescriptions",
+          params: { code: "DRAFT_REQUIRED" },
+          path: ["draftId"],
+        });
+      }
+      if (!data.uploadedKeys || data.uploadedKeys.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "At least one uploadedKey is required",
+          params: { code: "UPLOAD_REQUIRED" },
+          path: ["uploadedKeys"],
+        });
+      }
+    }
+  },
+);
+
+/**
  * Validates prescription submission body at spec 22's boundary (R4-F1).
  * Enforces mutual exclusion:
  * - MANUAL requires prescription and forbids draftId/uploadedKeys.
@@ -70,7 +146,7 @@ export type PrescriptionSubmitPayload =
 export function parsePrescriptionSubmitBody(
   body: unknown,
 ): PrescriptionSubmitBody {
-  const parsed = prescriptionSubmitBodySchema.safeParse(body);
+  const parsed = localPrescriptionSubmitBodySchema.safeParse(body);
   if (!parsed.success) {
     const fields: FieldError[] = parsed.error.issues.map((i) => ({
       path: i.path.join(".") || "body",

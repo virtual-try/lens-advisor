@@ -241,25 +241,6 @@ describe("prescriptionSubmitBodySchema", () => {
     });
     expect(parsed.prescription).toBeUndefined();
   });
-
-  it("enforces MAX_UPLOAD_KEYS (accepts 5, rejects 6)", () => {
-    const fiveKeys = Array.from({ length: 5 }, (_, i) => `key-${i}`);
-    const sixKeys = Array.from({ length: 6 }, (_, i) => `key-${i}`);
-
-    const ok = prescriptionSubmitBodySchema.safeParse({
-      rxType: "SINGLE_VISION",
-      draftId: "draft-1",
-      uploadedKeys: fiveKeys,
-    });
-    expect(ok.success).toBe(true);
-
-    const fail = prescriptionSubmitBodySchema.safeParse({
-      rxType: "SINGLE_VISION",
-      draftId: "draft-1",
-      uploadedKeys: sixKeys,
-    });
-    expect(fail.success).toBe(false);
-  });
 });
 
 describe("selectionSchema", () => {

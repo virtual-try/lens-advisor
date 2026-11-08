@@ -102,13 +102,11 @@ export const selectionSchema = z.object({
 });
 export type Selection = z.infer<typeof selectionSchema>;
 
-export const MAX_UPLOAD_KEYS = 5;
-
 export const prescriptionSubmitBodySchema = z.object({
   rxType: rxTypeSchema,
   prescription: prescriptionSchema.optional(),
   draftId: idSchema.optional(),
-  uploadedKeys: z.array(idSchema).max(MAX_UPLOAD_KEYS).optional(),
+  uploadedKeys: z.array(idSchema).optional(),
 });
 export type PrescriptionSubmitBody = z.infer<typeof prescriptionSubmitBodySchema>;
 

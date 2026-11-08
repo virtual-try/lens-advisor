@@ -19,6 +19,22 @@ export {
 } from "./format/index.js";
 
 export {
+  LAB_CODE_WARNING_CODES,
+  TEMPLATE_ERROR_CODES,
+  compileLabCode,
+  validateTemplate,
+  type CompileLabCodeResult,
+  type LabCodeSelectionItem,
+  type LabCodeSelectionsInput,
+  type LabCodeWarningCode,
+  type LensOrTemplate,
+  type ParsedTemplateToken,
+  type TemplateValidationError,
+  type TemplateValidationErrorCode,
+  type TemplateValidationResult,
+} from "./lab-code/index.js";
+
+export {
   addOnSchema,
   axisSchema,
   catalogResponseSchema,
@@ -29,7 +45,6 @@ export {
   iso4217CurrencySchema,
   lensGroupSchema,
   lensSchema,
-  MAX_UPLOAD_KEYS,
   moneySchema,
   optionGroupKindSchema,
   optionGroupSchema,
