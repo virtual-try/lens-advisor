@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { h } from "preact";
+import { renderInShadow } from "../test/render-in-shadow";
 import { createFocusTrap } from "./trap";
 
 describe("createFocusTrap", () => {
@@ -96,5 +98,93 @@ describe("createFocusTrap", () => {
 
     expect(document.body.style.overflow).toBe("");
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it("cycles Tab and Shift+Tab correctly inside Shadow DOM via renderInShadow", () => {
+    let shadowContainer!: HTMLDivElement;
+    let sBtn1!: HTMLButtonElement;
+    let sBtn2!: HTMLButtonElement;
+
+    const TestComp = () =>
+      h(
+        "div",
+        {
+          ref: (el: HTMLDivElement | null) => {
+            if (el) shadowContainer = el;
+          },
+        },
+        h(
+          "button",
+          {
+            ref: (el: HTMLButtonElement | null) => {
+              if (el) sBtn1 = el;
+            },
+            type: "button",
+          },
+          "First",
+        ),
+        h(
+          "button",
+          {
+            ref: (el: HTMLButtonElement | null) => {
+              if (el) sBtn2 = el;
+            },
+            type: "button",
+          },
+          "Second",
+        ),
+      );
+
+    const view = renderInShadow(h(TestComp, null));
+    const triggerBtn = document.createElement("button");
+    document.body.appendChild(triggerBtn);
+
+    const trap = createFocusTrap({
+      container: shadowContainer,
+      trigger: triggerBtn,
+    });
+    trap.activate();
+
+    // Initial focus on first element in shadow root
+    expect(view.shadowRoot.activeElement).toBe(sBtn1);
+    expect(document.activeElement).toBe(view.host);
+
+    // Tab from first element: default Tab is not prevented, allowing normal navigation to second
+    const tabEvent1 = new KeyboardEvent("keydown", {
+      key: "Tab",
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(tabEvent1);
+    expect(tabEvent1.defaultPrevented).toBe(false);
+
+    // Move focus to last element
+    sBtn2.focus();
+    expect(view.shadowRoot.activeElement).toBe(sBtn2);
+
+    // Tab from last element wraps to first element
+    const tabEvent2 = new KeyboardEvent("keydown", {
+      key: "Tab",
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(tabEvent2);
+    expect(tabEvent2.defaultPrevented).toBe(true);
+    expect(view.shadowRoot.activeElement).toBe(sBtn1);
+
+    // Shift+Tab from first element wraps to last element
+    const shiftTabEvent = new KeyboardEvent("keydown", {
+      key: "Tab",
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(shiftTabEvent);
+    expect(shiftTabEvent.defaultPrevented).toBe(true);
+    expect(view.shadowRoot.activeElement).toBe(sBtn2);
+
+    trap.deactivate();
+    view.unmount();
+    triggerBtn.remove();
   });
 });

@@ -147,15 +147,17 @@ describe("configuratorReducer", () => {
             ...createInitialState("frame-0"),
             status,
             isOpen: status !== "idle",
+            stepIndex: action.type === "BACK" ? 1 : 0,
             catalog: status === "ready" ? populatedCatalog : null,
           };
 
-          const steps = createMockSteps();
+          const steps = createMockSteps([
+            { id: "step-1", isComplete: () => true, isApplicable: () => true },
+            { id: "step-2", isComplete: () => true, isApplicable: () => true },
+          ]);
           const nextState = configuratorReducer(initialState, action, steps);
 
           expect(nextState).toBeDefined();
-          expect(typeof nextState.stepIndex).toBe("number");
-          expect(nextState.selection).toBeDefined();
 
           if (action.type === "OPEN") {
             expect(nextState.isOpen).toBe(true);
@@ -169,12 +171,34 @@ describe("configuratorReducer", () => {
           } else if (action.type === "CATALOG_LOADED") {
             const isEmpty = action.catalog.lensGroups.length === 0;
             expect(nextState.status).toBe(isEmpty ? "empty" : "ready");
+            expect(nextState.catalog).toEqual(action.catalog);
           } else if (action.type === "CATALOG_ERROR") {
             expect(nextState.status).toBe("error");
             expect(nextState.error?.code).toBe("SERVER_ERROR");
           } else if (action.type === "SET_RX_TYPE") {
             expect(nextState.rxType).toBe("SINGLE_VISION");
             expect(nextState.selection.rxType).toBe("SINGLE_VISION");
+          } else if (action.type === "SET_PRESCRIPTION") {
+            expect(nextState.prescription).toEqual(action.prescription);
+          } else if (action.type === "SET_PRESCRIPTION_REF") {
+            expect(nextState.prescriptionRef).toBe("rx-ref-1");
+            expect(nextState.selection.prescriptionRef).toBe("rx-ref-1");
+          } else if (action.type === "SET_LENS") {
+            expect(nextState.selection.lensId).toBe("lens-1");
+          } else if (action.type === "SET_OPTIONS") {
+            expect(nextState.selection.optionValueIds).toEqual(["opt-1"]);
+          } else if (action.type === "TOGGLE_OPTION") {
+            expect(nextState.selection.optionValueIds).toContain("opt-2");
+          } else if (action.type === "SET_ADDONS") {
+            expect(nextState.selection.addOnIds).toEqual(["add-1"]);
+          } else if (action.type === "TOGGLE_ADDON") {
+            expect(nextState.selection.addOnIds).toContain("add-2");
+          } else if (action.type === "CONTINUE") {
+            expect(nextState.stepIndex).toBe(1);
+          } else if (action.type === "BACK") {
+            expect(nextState.stepIndex).toBe(0);
+          } else if (action.type === "GO_TO_STEP") {
+            expect(nextState.stepIndex).toBe(1);
           } else if (action.type === "RESET") {
             expect(nextState.status).toBe("idle");
             expect(nextState.isOpen).toBe(false);
@@ -183,6 +207,39 @@ describe("configuratorReducer", () => {
         });
       }
     }
+  });
+
+  describe("applicability and catalog load", () => {
+    it("selects the first applicable step on catalog load when step 0 is not applicable", () => {
+      const steps = createMockSteps([
+        {
+          id: "step-0",
+          isApplicable: () => false,
+          isComplete: () => true,
+        },
+        {
+          id: "step-1",
+          isApplicable: () => true,
+          isComplete: () => true,
+        },
+      ]);
+
+      const state: ConfiguratorState = {
+        ...createInitialState(),
+        status: "loading",
+        isOpen: true,
+      };
+
+      const next = configuratorReducer(
+        state,
+        { type: "CATALOG_LOADED", catalog: populatedCatalog },
+        steps,
+      );
+
+      expect(next.status).toBe("ready");
+      expect(next.stepIndex).toBe(1);
+      expect(steps[next.stepIndex].id).toBe("step-1");
+    });
   });
 
   describe("Continue gating", () => {

@@ -1,5 +1,6 @@
 export const strings = {
   header: {
+    defaultTitle: "Choose your lenses",
     titlePrefix: "Lenses for ",
     defaultFrameSubtitle: "Customize your lenses",
     closeLabel: "Close lens selection",

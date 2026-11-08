@@ -79,8 +79,18 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       });
     }
 
+    let text = "";
+    try {
+      text = await response.text();
+    } catch (err) {
+      throw new ApiError({
+        code: "NETWORK_ERROR",
+        message: err instanceof Error ? err.message : "Failed to read response body",
+        status: response.status,
+      });
+    }
+
     let json: unknown = null;
-    const text = await response.text();
     if (text && text.trim().length > 0) {
       try {
         json = JSON.parse(text);

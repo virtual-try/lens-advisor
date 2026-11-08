@@ -56,6 +56,36 @@ describe("configurator entry", () => {
     configurator.remove();
   });
 
+  it("preserves pre-existing body overflow ('clip') on close and on disconnect", () => {
+    document.body.style.overflow = "clip";
+
+    const mount = document.createElement("div");
+    mount.setAttribute("data-la-mount", "");
+    mount.setAttribute("data-product-json", JSON.stringify({ id: "prod-clip" }));
+    const button = document.createElement("button");
+    button.setAttribute("data-la-open", "");
+    mount.appendChild(button);
+    document.body.appendChild(mount);
+
+    // Test 1: open -> close restores exact prior "clip"
+    const configurator = ensureConfigurator(document);
+    configurator.open(mount);
+    expect(document.body.style.overflow).toBe("hidden");
+
+    configurator.close();
+    expect(document.body.style.overflow).toBe("clip");
+
+    // Test 2: open -> disconnect restores exact prior "clip"
+    configurator.open(mount);
+    expect(document.body.style.overflow).toBe("hidden");
+
+    configurator.remove();
+    expect(document.body.style.overflow).toBe("clip");
+
+    mount.remove();
+    document.body.style.overflow = "";
+  });
+
   it("releases focus trap and scroll lock on disconnect when open", () => {
     const mount = document.createElement("div");
     mount.setAttribute("data-la-mount", "");

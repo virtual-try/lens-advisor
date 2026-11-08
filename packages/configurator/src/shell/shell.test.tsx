@@ -1,4 +1,4 @@
-import { fireEvent, render } from "@testing-library/preact";
+import { act, fireEvent, render, waitFor } from "@testing-library/preact";
 import type { JSX } from "preact";
 import { describe, expect, it, vi } from "vitest";
 import type { CatalogResponse } from "../../../rx-core/src/index.js";
@@ -312,11 +312,13 @@ describe("Configurator Shell - Examples Table Rows", () => {
     expect(emptyHeading).not.toBeNull();
     expect(view.getByText(strings.empty.message)).not.toBeNull();
 
-    // Close button is present and triggers onClose
+    // Close button is present and triggers onClose after exit animation
     const closeBtn = view.getByRole("button", { name: strings.empty.close });
     expect(closeBtn).not.toBeNull();
     fireEvent.click(closeBtn);
-    expect(onClose).toHaveBeenCalledOnce();
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce();
+    });
   });
 
   it("Row 6: Escape while open -> closes, focus back on the trigger (a11y)", async () => {
@@ -345,7 +347,9 @@ describe("Configurator Shell - Examples Table Rows", () => {
     // Press Escape
     fireEvent.keyDown(document, { key: "Escape" });
 
-    expect(onClose).toHaveBeenCalledOnce();
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce();
+    });
     expect(document.activeElement).toBe(trigger);
 
     trigger.remove();
@@ -379,5 +383,249 @@ describe("Configurator Shell - Examples Table Rows", () => {
     // Verify body container exists and scroll parameters
     const body = dialog.querySelector(".la-body");
     expect(body).not.toBeNull();
+
+    // Discriminating check: assert the exact media-query rules applied for mobile (<= 40rem)
+    const doc = dialog.ownerDocument;
+    const sheets = Array.from(doc.styleSheets);
+    const mobileMediaRules = sheets
+      .flatMap((s) => {
+        try {
+          return Array.from(s.cssRules);
+        } catch {
+          return [];
+        }
+      })
+      .filter(
+        (r): r is CSSMediaRule =>
+          "media" in r &&
+          typeof (r as CSSMediaRule).media?.mediaText === "string" &&
+          (r as CSSMediaRule).media.mediaText.includes("max-width: 40rem"),
+      );
+
+    expect(mobileMediaRules.length).toBeGreaterThan(0);
+    const innerRules = mobileMediaRules.flatMap(
+      (m) => Array.from(m.cssRules) as CSSStyleRule[],
+    );
+
+    // 1. Bottom-sheet placement: .la-overlay has align-items: flex-end and padding: 0
+    const overlayRule = innerRules.find((r) => r.selectorText === ".la-overlay");
+    expect(overlayRule).toBeDefined();
+    expect(overlayRule?.style.getPropertyValue("align-items")).toBe("flex-end");
+    expect(overlayRule?.style.getPropertyValue("padding")).toBe("0");
+
+    // 2. Bottom-sheet sizing: .la-sheet has max-width: 100% and squared bottom corners
+    const sheetRule = innerRules.find((r) => r.selectorText === ".la-sheet");
+    expect(sheetRule).toBeDefined();
+    expect(sheetRule?.style.getPropertyValue("max-width")).toBe("100%");
+    expect(sheetRule?.style.getPropertyValue("border-bottom-left-radius")).toBe("0");
+
+    // 3. Sticky footer: .la-footer has position: sticky and bottom: 0
+    const footerRule = innerRules.find((r) => r.selectorText === ".la-footer");
+    expect(footerRule).toBeDefined();
+    expect(footerRule?.style.getPropertyValue("position")).toBe("sticky");
+    expect(footerRule?.style.getPropertyValue("bottom")).toBe("0");
+
+    // 4. No horizontal overflow: .la-body has overflow-x: hidden
+    const baseRules = sheets.flatMap((s) => Array.from(s.cssRules) as CSSStyleRule[]);
+    const bodyRule = baseRules.find((r) => r.selectorText === ".la-body");
+    expect(bodyRule).toBeDefined();
+    expect(bodyRule?.style.getPropertyValue("overflow-x")).toBe("hidden");
+  });
+
+  it("holds getCatalog pending to assert loading status role and localized title/subtitle, then resolves (R1-F10)", async () => {
+    let resolveCatalog!: (val: CatalogResponse) => void;
+    const catalogPromise = new Promise<CatalogResponse>((resolve) => {
+      resolveCatalog = resolve;
+    });
+
+    const steps = createFixtureSteps();
+    const apiClient = createMockApiClient({
+      getCatalog: vi.fn(() => catalogPromise),
+    });
+
+    const view = render(
+      <ConfiguratorApp
+        product={{ title: "Harlow", id: "prod-1" }}
+        steps={steps}
+        apiClient={apiClient}
+      />,
+    );
+
+    // Dialog opens in loading state
+    const dialog = await view.findByRole("dialog");
+    expect(dialog).not.toBeNull();
+
+    // Loading status role is present with aria-busy="true"
+    const statusEl = view.getByRole("status");
+    expect(statusEl).not.toBeNull();
+    expect(statusEl.getAttribute("aria-busy")).toBe("true");
+
+    // Localized loading title and subtitle
+    expect(view.getByText(strings.loading.title)).not.toBeNull();
+    expect(view.getByText(strings.loading.subtitle)).not.toBeNull();
+
+    // Now resolve catalog
+    resolveCatalog(mockCatalog);
+
+    // Status role and loading text are gone
+    await waitFor(() => {
+      expect(view.queryByRole("status")).toBeNull();
+    });
+    expect(view.queryByText(strings.loading.title)).toBeNull();
+
+    // Step 1 content is visible
+    expect(
+      await view.findByRole("heading", {
+        name: `${strings.header.titlePrefix}Vision`,
+      }),
+    ).not.toBeNull();
+  });
+
+  it("renders product.title if present, or localized generic title if absent (R1-F6)", async () => {
+    const steps = createFixtureSteps();
+    const apiClient = createMockApiClient();
+
+    // 1. With product title
+    const viewWithTitle = render(
+      <ConfiguratorApp
+        product={{ title: "Harlow", id: "prod-1" }}
+        steps={steps}
+        apiClient={apiClient}
+      />,
+    );
+    await viewWithTitle.findByRole("dialog");
+    expect(
+      viewWithTitle.getByText(`${strings.header.titlePrefix}Harlow`),
+    ).not.toBeNull();
+    viewWithTitle.unmount();
+
+    // 2. Without product title (spec 04 block payload)
+    const viewWithoutTitle = render(
+      <ConfiguratorApp
+        product={{ id: "prod-1" }}
+        steps={steps}
+        apiClient={apiClient}
+      />,
+    );
+    await viewWithoutTitle.findByRole("dialog");
+    expect(
+      viewWithoutTitle.getByText(strings.header.defaultTitle),
+    ).not.toBeNull();
+    viewWithoutTitle.unmount();
+  });
+
+  it("runs exiting phase before unmount on close and supports reduced-motion fallbacks (R1-F8)", async () => {
+    const trigger = document.createElement("button");
+    trigger.textContent = "Open";
+    document.body.appendChild(trigger);
+    trigger.focus();
+
+    const steps = createFixtureSteps();
+    const apiClient = createMockApiClient();
+    const onClose = vi.fn();
+
+    const view = render(
+      <ConfiguratorApp
+        product={{ title: "Harlow" }}
+        steps={steps}
+        apiClient={apiClient}
+        triggerElement={trigger}
+        onClose={onClose}
+      />,
+    );
+
+    const dialog = await view.findByRole("dialog");
+    expect(dialog).not.toBeNull();
+    expect(dialog.classList.contains("la-sheet--exiting")).toBe(false);
+    expect(onClose).not.toHaveBeenCalled();
+
+    // Trigger close via Escape
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    // Exiting phase: sheet is STILL mounted in DOM, but has exiting class
+    expect(dialog.classList.contains("la-sheet--exiting")).toBe(true);
+    const overlay = dialog.closest(".la-overlay");
+    expect(overlay?.classList.contains("la-overlay--exiting")).toBe(true);
+    expect(onClose).not.toHaveBeenCalled();
+
+    // After animation duration, onClose called and sheet is unmounted
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+    expect(view.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+
+    trigger.remove();
+  });
+
+  it("inerts host's body siblings while open and restores their exact prior state on close and disconnect (R1-F9)", async () => {
+    // Background sibling elements in document.body
+    const bg1 = document.createElement("div");
+    bg1.id = "storefront-main";
+    const bg2 = document.createElement("aside");
+    bg2.id = "storefront-sidebar";
+    bg2.setAttribute("aria-hidden", "true"); // pre-existing aria-hidden
+    document.body.appendChild(bg1);
+    document.body.appendChild(bg2);
+
+    expect((bg1 as HTMLElement & { inert?: boolean }).inert).toBeFalsy();
+    expect(bg1.getAttribute("aria-hidden")).toBeNull();
+    expect(bg2.getAttribute("aria-hidden")).toBe("true");
+
+    const steps = createFixtureSteps();
+    const apiClient = createMockApiClient();
+    const onClose = vi.fn();
+
+    const view = render(
+      <ConfiguratorApp
+        product={{ title: "Harlow" }}
+        steps={steps}
+        apiClient={apiClient}
+        onClose={onClose}
+      />,
+    );
+
+    await view.findByRole("dialog");
+
+    // Siblings are now inert and have aria-hidden
+    expect(bg1.hasAttribute("inert")).toBe(true);
+    expect(bg1.getAttribute("aria-hidden")).toBe("true");
+    expect(bg2.hasAttribute("inert")).toBe(true);
+    expect(bg2.getAttribute("aria-hidden")).toBe("true");
+
+    // Test close: restores exact prior state
+    const closeBtn = view.getByRole("button", { name: strings.header.closeLabel });
+    fireEvent.click(closeBtn);
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce();
+      expect(bg1.hasAttribute("inert")).toBe(false);
+      expect(bg1.getAttribute("aria-hidden")).toBeNull();
+      expect(bg2.hasAttribute("inert")).toBe(false);
+      expect(bg2.getAttribute("aria-hidden")).toBe("true"); // restored to pre-existing value!
+    });
+
+    view.unmount();
+
+    // Test disconnect: open again, then unmount (simulating disconnect)
+    const view2 = render(
+      <ConfiguratorApp
+        product={{ title: "Harlow" }}
+        steps={steps}
+        apiClient={apiClient}
+      />,
+    );
+    await view2.findByRole("dialog");
+    expect(bg1.hasAttribute("inert")).toBe(true);
+
+    act(() => {
+      view2.unmount();
+    });
+    expect(bg1.hasAttribute("inert")).toBe(false);
+    expect(bg1.getAttribute("aria-hidden")).toBeNull();
+    expect(bg2.hasAttribute("inert")).toBe(false);
+    expect(bg2.getAttribute("aria-hidden")).toBe("true");
+
+    bg1.remove();
+    bg2.remove();
   });
 });

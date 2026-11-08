@@ -9,6 +9,7 @@ export class LensConfiguratorElement extends HTMLElement {
   private triggerButton: HTMLElement | null = null;
   private handleOpenEvent: ((event: Event) => void) | null = null;
   private isOpenState = false;
+  private prevBodyOverflow: string | null = null;
 
   connectedCallback(): void {
     if (!this.shadowRoot) {
@@ -42,6 +43,9 @@ export class LensConfiguratorElement extends HTMLElement {
 
     if (this.isOpenState) {
       this.close();
+    } else if (typeof document !== "undefined" && this.prevBodyOverflow !== null) {
+      document.body.style.overflow = this.prevBodyOverflow;
+      this.prevBodyOverflow = null;
     }
   }
 
@@ -55,6 +59,7 @@ export class LensConfiguratorElement extends HTMLElement {
     this.isOpenState = true;
 
     if (typeof document !== "undefined") {
+      this.prevBodyOverflow = document.body.style.overflow;
       document.body.style.overflow = "hidden";
     }
 
@@ -93,8 +98,9 @@ export class LensConfiguratorElement extends HTMLElement {
       render(null, this.shadowRoot);
     }
 
-    if (typeof document !== "undefined" && document.body.style.overflow === "hidden") {
-      document.body.style.overflow = "";
+    if (typeof document !== "undefined" && this.prevBodyOverflow !== null) {
+      document.body.style.overflow = this.prevBodyOverflow;
+      this.prevBodyOverflow = null;
     }
 
     if (this.mountPoint) {

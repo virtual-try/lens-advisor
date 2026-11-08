@@ -211,4 +211,24 @@ describe("ApiClient", () => {
       expect((err as ApiError).code).toBe("UPLOAD_FAILED");
     }
   });
+
+  it("maps body-read stream failure to NETWORK_ERROR", async () => {
+    const fakeFetch = async () =>
+      ({
+        ok: true,
+        status: 200,
+        text: async () => {
+          throw new TypeError("Body stream read failure");
+        },
+      }) as unknown as Response;
+
+    const client = createApiClient({ fetchFn: fakeFetch });
+    try {
+      await client.getCatalog();
+      expect.fail("Should have thrown");
+    } catch (err) {
+      expect((err as ApiError).code).toBe("NETWORK_ERROR");
+      expect((err as ApiError).message).toContain("Body stream read failure");
+    }
+  });
 });

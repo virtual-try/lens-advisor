@@ -1,5 +1,5 @@
 import type { JSX } from "preact";
-import { useCallback, useEffect, useMemo, useReducer, useRef } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "preact/hooks";
 import tokensCss from "../styles/tokens.css?inline";
 import shellCss from "./shell.css?inline";
 import { ApiContext, createApiClient, type ApiClient } from "../shared/api";
@@ -55,31 +55,123 @@ export function ConfiguratorApp({
     },
   );
 
+  const [isExiting, setIsExiting] = useState(false);
+  const exitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Sync isOpen prop changes into reducer only when the prop value changes
   const prevIsOpenRef = useRef(isOpen);
   useEffect(() => {
     if (isOpen !== prevIsOpenRef.current) {
       prevIsOpenRef.current = isOpen;
       if (isOpen) {
+        setIsExiting(false);
         dispatch({ type: "OPEN", frameVariantId: initialFrameVariantId });
       } else {
+        if (exitTimeoutRef.current) {
+          clearTimeout(exitTimeoutRef.current);
+          exitTimeoutRef.current = null;
+        }
+        setIsExiting(false);
         dispatch({ type: "CLOSE" });
       }
     }
   }, [isOpen, initialFrameVariantId]);
 
+  const triggerRef = useRef(triggerElement);
+  triggerRef.current = triggerElement;
+
   const handleClose = useCallback(() => {
-    dispatch({ type: "CLOSE" });
-    onClose?.();
-  }, [onClose]);
+    if (isExiting) return;
+    setIsExiting(true);
+
+    exitTimeoutRef.current = setTimeout(() => {
+      dispatch({ type: "CLOSE" });
+      onClose?.();
+      setIsExiting(false);
+      exitTimeoutRef.current = null;
+      if (triggerRef.current && typeof triggerRef.current.focus === "function") {
+        triggerRef.current.focus();
+      }
+    }, 250);
+  }, [isExiting, onClose]);
+
+  useEffect(() => {
+    return () => {
+      if (exitTimeoutRef.current) {
+        clearTimeout(exitTimeoutRef.current);
+        exitTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
+  // Inert background content (host's body siblings) while open, restore exact prior state on close and disconnect
+  useEffect(() => {
+    if (!state.isOpen) return;
+
+    const root = sheetRef.current?.getRootNode();
+    const host = (
+      root instanceof ShadowRoot
+        ? root.host
+        : sheetRef.current?.closest(".la-root") ?? sheetRef.current
+    ) as HTMLElement | null;
+    if (!host) return;
+
+    let bodyChild: HTMLElement | null = host;
+    while (bodyChild && bodyChild.parentElement && bodyChild.parentElement !== document.body) {
+      bodyChild = bodyChild.parentElement;
+    }
+    const parent = bodyChild?.parentElement ?? (typeof document !== "undefined" ? document.body : null);
+    if (!parent) return;
+
+    const siblings = Array.from(parent.children).filter(
+      (el): el is HTMLElement =>
+        el !== bodyChild && !el.contains(bodyChild!) && el instanceof HTMLElement,
+    );
+
+    const saved = siblings.map((el) => ({
+      el,
+      inert: (el as HTMLElement & { inert?: boolean }).inert,
+      hasInertAttr: el.hasAttribute("inert"),
+      inertAttr: el.getAttribute("inert"),
+      hasAriaHidden: el.hasAttribute("aria-hidden"),
+      ariaHiddenAttr: el.getAttribute("aria-hidden"),
+    }));
+
+    for (const item of saved) {
+      item.el.setAttribute("inert", "");
+      if ("inert" in item.el) {
+        (item.el as HTMLElement & { inert: boolean }).inert = true;
+      }
+      item.el.setAttribute("aria-hidden", "true");
+    }
+
+    return () => {
+      for (const item of saved) {
+        if ("inert" in item.el) {
+          (item.el as HTMLElement & { inert?: boolean }).inert = item.inert;
+        }
+        if (item.hasInertAttr) {
+          item.el.setAttribute("inert", item.inertAttr ?? "");
+        } else {
+          item.el.removeAttribute("inert");
+        }
+        if (item.hasAriaHidden && item.ariaHiddenAttr !== null) {
+          item.el.setAttribute("aria-hidden", item.ariaHiddenAttr);
+        } else {
+          item.el.removeAttribute("aria-hidden");
+        }
+      }
+    };
+  }, [state.isOpen]);
 
   // Handle focus trap while open
   useEffect(() => {
-    if (!state.isOpen || !sheetRef.current) return;
+    if (!state.isOpen || isExiting || !sheetRef.current) return;
 
     const trap = createFocusTrap({
       container: sheetRef.current,
       trigger: triggerElement,
+      lockScroll: false,
       onEscape: () => {
         handleClose();
       },
@@ -90,7 +182,7 @@ export function ConfiguratorApp({
     return () => {
       trap.deactivate();
     };
-  }, [state.isOpen, triggerElement, handleClose]);
+  }, [state.isOpen, isExiting, triggerElement, handleClose]);
 
   // Fetch catalog when open and status is loading
   useEffect(() => {
@@ -144,13 +236,17 @@ export function ConfiguratorApp({
     }
   };
 
-  if (!state.isOpen) {
+  if (!state.isOpen && !isExiting) {
     return null;
   }
 
   // Calculate applicable steps
   const applicableSteps = steps.filter((s) => s.isApplicable(state));
-  const activeStep = steps[state.stepIndex];
+  const candidateStep = steps[state.stepIndex];
+  const activeStep =
+    candidateStep && candidateStep.isApplicable(state)
+      ? candidateStep
+      : applicableSteps[0];
 
   const applicableIndex = activeStep
     ? applicableSteps.findIndex((s) => s.id === activeStep.id)
@@ -167,7 +263,8 @@ export function ConfiguratorApp({
     dispatch({ type: "CONTINUE", steps });
   };
 
-  const showStepView = state.status === "ready" && activeStep && applicableSteps.length > 0;
+  const showStepView =
+    state.status === "ready" && activeStep && activeStep.isApplicable(state) && applicableSteps.length > 0;
   const showEmptyView =
     state.status === "empty" || (state.status === "ready" && applicableSteps.length === 0);
 
@@ -176,9 +273,12 @@ export function ConfiguratorApp({
       <div class="la-root">
         <style>{tokensCss}</style>
         <style>{shellCss}</style>
-        <div class="la-overlay" onClick={handleBackdropClick}>
+        <div
+          class={`la-overlay${isExiting ? " la-overlay--exiting" : ""}`}
+          onClick={handleBackdropClick}
+        >
           <section
-            class="la-sheet"
+            class={`la-sheet${isExiting ? " la-sheet--exiting" : ""}`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="la-dialog-title"

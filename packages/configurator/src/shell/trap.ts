@@ -2,6 +2,7 @@ export interface TrapOptions {
   container: HTMLElement;
   trigger?: HTMLElement | null;
   onEscape?: () => void;
+  lockScroll?: boolean;
 }
 
 export interface FocusTrapController {
@@ -14,7 +15,7 @@ const FOCUSABLE_SELECTOR =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export function createFocusTrap(options: TrapOptions): FocusTrapController {
-  const { container, trigger, onEscape } = options;
+  const { container, trigger, onEscape, lockScroll = true } = options;
   let active = false;
   let prevOverflow = "";
 
@@ -35,7 +36,9 @@ export function createFocusTrap(options: TrapOptions): FocusTrapController {
     active = false;
 
     if (typeof document !== "undefined") {
-      document.body.style.overflow = prevOverflow;
+      if (lockScroll) {
+        document.body.style.overflow = prevOverflow;
+      }
       document.removeEventListener("keydown", handleKeyDown);
     }
 
@@ -63,7 +66,11 @@ export function createFocusTrap(options: TrapOptions): FocusTrapController {
 
       const first = focusables[0];
       const last = focusables[focusables.length - 1];
-      const activeEl = (container.shadowRoot?.activeElement || document.activeElement) as HTMLElement | null;
+      const rootNode = (
+        typeof container.getRootNode === "function" ? container.getRootNode() : null
+      ) as Document | ShadowRoot | null;
+      const activeEl = (rootNode?.activeElement ??
+        (typeof document !== "undefined" ? document.activeElement : null)) as HTMLElement | null;
 
       if (event.shiftKey) {
         if (!activeEl || activeEl === first || !container.contains(activeEl)) {
@@ -84,8 +91,10 @@ export function createFocusTrap(options: TrapOptions): FocusTrapController {
     active = true;
 
     if (typeof document !== "undefined") {
-      prevOverflow = document.body.style.overflow;
-      document.body.style.overflow = "hidden";
+      if (lockScroll) {
+        prevOverflow = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+      }
       document.addEventListener("keydown", handleKeyDown);
     }
 

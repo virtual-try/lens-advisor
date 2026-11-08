@@ -28,8 +28,11 @@ export function Header({
       <div class="la-grabber" aria-hidden="true" />
       <div class="la-header__top">
         <p class="la-header__title" id="la-dialog-title">
-          <span>{strings.header.titlePrefix}</span>
-          <span>{productTitle}</span>
+          <span>
+            {productTitle
+              ? `${strings.header.titlePrefix}${productTitle}`
+              : strings.header.defaultTitle}
+          </span>
           <span class="la-header__frame">{frameSubtitle}</span>
         </p>
         <button

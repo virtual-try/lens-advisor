@@ -276,7 +276,7 @@
   margin: 0;
   font-size: var(--la-text-md);
   color: var(--la-muted);
-  max-width: 25rem;
+  max-width: var(--la-drawer-max);
 }
 
 @keyframes la-modal-enter {
@@ -290,6 +290,26 @@
   }
 }
 
+@keyframes la-modal-exit {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+@keyframes la-overlay-exit {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
 @keyframes la-sheet-enter {
   from {
     transform: translateY(100%);
@@ -299,11 +319,50 @@
   }
 }
 
+@keyframes la-sheet-exit {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes la-fade-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes la-fade-exit {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.la-overlay--exiting {
+  animation: la-overlay-exit var(--la-dur-fast) var(--la-ease-out) forwards;
+}
+
+.la-sheet--exiting {
+  animation: la-modal-exit var(--la-dur-fast) var(--la-ease-out) forwards;
+}
+
 /* Mobile bottom sheet breakpoint: <= 40rem */
 @media (max-width: 40rem) {
   .la-overlay {
     align-items: flex-end;
     padding: 0;
+  }
+
+  .la-overlay--exiting {
+    animation: la-overlay-exit var(--la-dur-modal) var(--la-ease-drawer) forwards;
   }
 
   .la-sheet {
@@ -312,6 +371,10 @@
     border-bottom-left-radius: 0;
     border-bottom-right-radius: 0;
     animation: la-sheet-enter var(--la-dur-sheet) var(--la-ease-drawer);
+  }
+
+  .la-sheet--exiting {
+    animation: la-sheet-exit var(--la-dur-modal) var(--la-ease-drawer) forwards;
   }
 
   .la-grabber {
@@ -331,8 +394,6 @@
 
 /* Reduced motion preference */
 @media (prefers-reduced-motion: reduce) {
-  .la-overlay,
-  .la-sheet,
   .la-btn,
   .la-iconbtn,
   .la-steps__fill {
@@ -340,8 +401,21 @@
     animation: none !important;
   }
 
+  .la-overlay {
+    animation: la-fade-enter var(--la-dur-modal) var(--la-ease-out);
+  }
+
+  .la-overlay--exiting {
+    animation: la-fade-exit var(--la-dur-fast) var(--la-ease-out) forwards;
+  }
+
   .la-sheet {
-    opacity: 1;
+    animation: la-fade-enter var(--la-dur-modal) var(--la-ease-out);
+    transform: none !important;
+  }
+
+  .la-sheet--exiting {
+    animation: la-fade-exit var(--la-dur-fast) var(--la-ease-out) forwards;
     transform: none !important;
   }
 }
