@@ -48,11 +48,17 @@ export interface ApiClientOptions {
   fetchFn?: typeof fetch;
 }
 
+export type UploadUrlInput =
+  | File
+  | Blob
+  | UploadUrlRequest
+  | { contentType: string; size: number; draftId?: string };
+
 export interface ApiClient {
   readonly proxyBase: string;
   getCatalog: (productId?: string) => Promise<CatalogResponse>;
   submitPrescription: (body: PrescriptionSubmitBody) => Promise<PrescriptionResponse>;
-  getUploadUrl: (file: UploadUrlRequest | { contentType: string; size: number; draftId?: string }) => Promise<UploadUrlResponse>;
+  getUploadUrl: (file: UploadUrlInput) => Promise<UploadUrlResponse>;
   uploadFile: (url: string, file: Blob | File | ArrayBuffer | ArrayBufferView) => Promise<void>;
 }
 
@@ -170,10 +176,21 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       return parsed.data;
     },
 
-    async getUploadUrl(
-      file: UploadUrlRequest | { contentType: string; size: number; draftId?: string },
-    ): Promise<UploadUrlResponse> {
-      const reqParse = uploadUrlRequestSchema.safeParse(file);
+    async getUploadUrl(file: UploadUrlInput): Promise<UploadUrlResponse> {
+      let requestPayload: unknown = file;
+      if (
+        (typeof Blob !== "undefined" && file instanceof Blob) ||
+        (typeof file === "object" && file !== null && "type" in file && !("contentType" in file))
+      ) {
+        const blob = file as Blob & { draftId?: string };
+        requestPayload = {
+          contentType: blob.type,
+          size: blob.size,
+          ...(blob.draftId ? { draftId: blob.draftId } : {}),
+        };
+      }
+
+      const reqParse = uploadUrlRequestSchema.safeParse(requestPayload);
       if (!reqParse.success) {
         throw new ApiError({
           code: "VALIDATION_FAILED",

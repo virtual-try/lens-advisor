@@ -189,6 +189,71 @@ describe("ApiClient", () => {
     expect(result.uploadUrl).toBe("https://s3.example.com/upload");
   });
 
+  it("accepts a real File and maps type to contentType and size (R3-F3)", async () => {
+    let capturedBody: unknown = null;
+    const fakeFetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method).toBe("POST");
+      if (typeof init?.body === "string") {
+        capturedBody = JSON.parse(init.body);
+      }
+      return mockResponse({
+        draftId: "draft-file-1",
+        uploadUrl: "https://s3.example.com/upload-file",
+        key: "shops/1/rx/draft-file-1/rx.png",
+      });
+    };
+    const client = createApiClient({ fetchFn: fakeFetch });
+    const file = new File(["rx-binary-content"], "prescription.png", {
+      type: "image/png",
+    });
+
+    const result = await client.getUploadUrl(file);
+    expect(capturedBody).toEqual({
+      contentType: "image/png",
+      size: file.size,
+    });
+    expect(result.draftId).toBe("draft-file-1");
+    expect(result.uploadUrl).toBe("https://s3.example.com/upload-file");
+  });
+
+  it("accepts a Blob and maps type to contentType and size (R3-F3)", async () => {
+    let capturedBody: unknown = null;
+    const fakeFetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method).toBe("POST");
+      if (typeof init?.body === "string") {
+        capturedBody = JSON.parse(init.body);
+      }
+      return mockResponse({
+        draftId: "draft-blob-1",
+        uploadUrl: "https://s3.example.com/upload-blob",
+        key: "shops/1/rx/draft-blob-1/doc.pdf",
+      });
+    };
+    const client = createApiClient({ fetchFn: fakeFetch });
+    const blob = new Blob(["sample-pdf-bytes"], { type: "application/pdf" });
+
+    const result = await client.getUploadUrl(blob);
+    expect(capturedBody).toEqual({
+      contentType: "application/pdf",
+      size: blob.size,
+    });
+    expect(result.draftId).toBe("draft-blob-1");
+  });
+
+  it("fails validation when passed a File with empty type (R3-F3)", async () => {
+    const fakeFetch = async () => mockResponse({});
+    const client = createApiClient({ fetchFn: fakeFetch });
+    const fileWithoutType = new File(["bytes"], "unknown-file");
+
+    try {
+      await client.getUploadUrl(fileWithoutType);
+      expect.fail("Should have thrown ApiError");
+    } catch (err: unknown) {
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).code).toBe("VALIDATION_FAILED");
+    }
+  });
+
   it("uploads file to presigned URL", async () => {
     let putCalled = false;
     const fakeFetch = async (_input: RequestInfo | URL, init?: RequestInit) => {

@@ -1,6 +1,6 @@
 # Spec 25 — Compliance and uninstall webhooks
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 02, Spec 06, Spec 07, Spec 08
 **Model:** Heavy — `claude-opus-5-5` · `gpt-6-astra` · `gemini-3.1-pro-preview`
 **Issue:** —

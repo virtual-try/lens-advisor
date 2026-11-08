@@ -1,6 +1,6 @@
 import { h, render } from "preact";
 import { ConfiguratorApp } from "../shell/ConfiguratorApp";
-import type { ProductData } from "../shared/types";
+import { parseProductData } from "../shared/types";
 
 export const LENS_CONFIGURATOR_TAG = "lens-configurator";
 
@@ -52,14 +52,7 @@ export class LensConfiguratorElement extends HTMLElement {
     }
 
     const rawJson = mount.getAttribute("data-product-json");
-    let product: ProductData | undefined;
-    if (rawJson) {
-      try {
-        product = JSON.parse(rawJson);
-      } catch {
-        // invalid JSON
-      }
-    }
+    const product = parseProductData(rawJson);
 
     const proxyBase = mount.getAttribute("data-proxy") || "/apps/lens-advisor";
 

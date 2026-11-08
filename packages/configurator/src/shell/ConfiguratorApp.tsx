@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "p
 import tokensCss from "../styles/tokens.css?inline";
 import shellCss from "./shell.css?inline";
 import { ApiContext, createApiClient, type ApiClient } from "../shared/api";
-import type { ProductData } from "../shared/types";
+import { parseProductData, type ProductData, type ProductDataInput } from "../shared/types";
 import { loadDiscoveredSteps } from "./discovery";
 import { EmptyView } from "./EmptyView";
 import { ErrorView } from "./ErrorView";
@@ -56,7 +56,7 @@ function getExitDuration(el: HTMLElement | null): number {
 }
 
 export interface ConfiguratorAppProps {
-  product?: ProductData;
+  product?: ProductData | ProductDataInput;
   proxyBase?: string;
   steps?: StepDefinition[];
   apiClient?: ApiClient;
@@ -74,6 +74,10 @@ export function ConfiguratorApp({
   onClose,
   triggerElement,
 }: ConfiguratorAppProps): JSX.Element | null {
+  const safeProduct = useMemo(() => {
+    return parseProductData(product);
+  }, [product]);
+
   const steps = useMemo(() => {
     return providedSteps ?? loadDiscoveredSteps();
   }, [providedSteps]);
@@ -85,7 +89,10 @@ export function ConfiguratorApp({
   const sheetRef = useRef<HTMLElement | null>(null);
 
   const initialFrameVariantId =
-    product?.variantId || product?.variants?.[0]?.id || "";
+    safeProduct?.variantId ||
+    safeProduct?.variants?.[0]?.id ||
+    safeProduct?.variantIds?.[0] ||
+    "";
 
   const [state, dispatch] = useReducer<ConfiguratorState, ConfiguratorAction>(
     (s, a) => configuratorReducer(s, a, steps),
@@ -277,7 +284,7 @@ export function ConfiguratorApp({
     if (!state.isOpen || state.status !== "loading") return;
 
     let cancelled = false;
-    const prodId = product?.productId || product?.id;
+    const prodId = safeProduct?.productId || safeProduct?.id;
 
     api
       .getCatalog(prodId)
@@ -312,7 +319,7 @@ export function ConfiguratorApp({
     return () => {
       cancelled = true;
     };
-  }, [state.isOpen, state.status, product, api, steps]);
+  }, [state.isOpen, state.status, safeProduct, api, steps]);
 
   const handleRetry = useCallback(() => {
     dispatch({ type: "CATALOG_LOADING" });
@@ -373,7 +380,7 @@ export function ConfiguratorApp({
             ref={sheetRef}
           >
             <Header
-              productTitle={product?.title}
+              productTitle={safeProduct?.title}
               steps={applicableSteps}
               activeStep={activeStep}
               onClose={handleClose}

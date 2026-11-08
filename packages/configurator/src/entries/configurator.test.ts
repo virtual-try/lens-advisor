@@ -221,4 +221,76 @@ describe("configurator entry", () => {
     configurator.remove();
     document.body.style.overflow = "";
   });
+
+  it("normalises numeric IDs from literal liquid block payload on open (R3-F2)", () => {
+    const mount = document.createElement("div");
+    mount.setAttribute("data-la-mount", "");
+    mount.setAttribute(
+      "data-product-json",
+      JSON.stringify({
+        productId: 7891234567890,
+        variantIds: [45678901234567, 45678901234568],
+        priceMinor: 12900,
+        currency: "USD",
+        variants: [
+          { id: 45678901234567, priceMinor: 12900 },
+          { id: 45678901234568, priceMinor: 14900 },
+        ],
+      }),
+    );
+    const button = document.createElement("button");
+    button.setAttribute("data-la-open", "");
+    mount.appendChild(button);
+    document.body.appendChild(mount);
+
+    const configurator = ensureConfigurator(document);
+    configurator.open(mount);
+
+    expect(configurator.isOpen).toBe(true);
+    expect(configurator.shadowRoot?.querySelector(".la-sheet")).not.toBeNull();
+
+    configurator.close();
+    mount.remove();
+    configurator.remove();
+  });
+
+  it("falls back to no-product state on malformed or schema-invalid data-product-json (R3-F2)", () => {
+    // 1. Malformed JSON string
+    const mountBadJson = document.createElement("div");
+    mountBadJson.setAttribute("data-la-mount", "");
+    mountBadJson.setAttribute("data-product-json", "{corrupt json");
+    const btn1 = document.createElement("button");
+    btn1.setAttribute("data-la-open", "");
+    mountBadJson.appendChild(btn1);
+    document.body.appendChild(mountBadJson);
+
+    const configurator1 = ensureConfigurator(document);
+    expect(() => configurator1.open(mountBadJson)).not.toThrow();
+    expect(configurator1.isOpen).toBe(true);
+    // Generic fallback header rendered without crashing
+    expect(configurator1.shadowRoot?.querySelector(".la-sheet")).not.toBeNull();
+    configurator1.close();
+    mountBadJson.remove();
+    configurator1.remove();
+
+    // 2. Schema validation failure (invalid empty variant id)
+    const mountBadSchema = document.createElement("div");
+    mountBadSchema.setAttribute("data-la-mount", "");
+    mountBadSchema.setAttribute(
+      "data-product-json",
+      JSON.stringify({ variants: [{ id: "" }] }),
+    );
+    const btn2 = document.createElement("button");
+    btn2.setAttribute("data-la-open", "");
+    mountBadSchema.appendChild(btn2);
+    document.body.appendChild(mountBadSchema);
+
+    const configurator2 = ensureConfigurator(document);
+    expect(() => configurator2.open(mountBadSchema)).not.toThrow();
+    expect(configurator2.isOpen).toBe(true);
+    expect(configurator2.shadowRoot?.querySelector(".la-sheet")).not.toBeNull();
+    configurator2.close();
+    mountBadSchema.remove();
+    configurator2.remove();
+  });
 });

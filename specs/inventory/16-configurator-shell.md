@@ -1,7 +1,7 @@
 # Inventory fragment — Spec 16 (Configurator shell, state machine and API client)
 
 ### `configurator-element`
-`packages/configurator/src/entries/configurator.ts` — Registers the `<lens-configurator>` custom element (`LENS_CONFIGURATOR_TAG`). Attaches an open Shadow DOM, binds to the `la:open` storefront event dispatched by the loader, reads mount attributes `data-product-json` and `data-proxy`, and renders `<ConfiguratorApp />` in shadow DOM. Body scroll is locked while open, and focus is returned to the trigger button on close or when removed from DOM (disconnect).
+`packages/configurator/src/entries/configurator.ts` & `packages/configurator/src/shared/types.ts` — Registers the `<lens-configurator>` custom element (`LENS_CONFIGURATOR_TAG`). Attaches an open Shadow DOM, binds to the `la:open` storefront event dispatched by the loader, reads mount attributes `data-product-json` and `data-proxy`, parses and normalises `data-product-json` via `productDataSchema` (normalising numeric Shopify IDs to strings and falling back to no-product state on invalid JSON or schema failure), and renders `<ConfiguratorApp />` in shadow DOM. Body scroll is locked while open, and focus is returned to the trigger button on close or when removed from DOM (disconnect).
 **Use instead of:** Registering a custom element in another module or managing storefront configurator mounting manually.
 **Added by:** spec 16.
 
@@ -21,7 +21,7 @@
 **Added by:** spec 16.
 
 ### `configurator-api-client`
-`packages/configurator/src/shared/api.ts` — Typed HTTP client for the app proxy. Methods: `getCatalog(productId)`, `submitPrescription(body)`, `getUploadUrl(file)`, `uploadFile(url, file)`. Parses responses with spec 03 schemas (`catalogResponseSchema`, etc.). Maps network, HTTP, and schema validation failures to `ApiError` with `{ code }` (e.g. `BAD_RESPONSE`, `NOT_AVAILABLE`, `RATE_LIMITED`, `NETWORK_ERROR`). Injected into steps via `ApiContext` and `useApi` hook (DI only).
+`packages/configurator/src/shared/api.ts` — Typed HTTP client for the app proxy. Methods: `getCatalog(productId)`, `submitPrescription(body)`, `getUploadUrl(file)`, `uploadFile(url, file)`. `getUploadUrl` accepts browser `File`/`Blob` instances (mapping `type` to `contentType` and `size`) and preserves the DTO overload (`UploadUrlRequest`). Parses responses with spec 03 schemas (`catalogResponseSchema`, etc.). Maps network, HTTP, and schema validation failures to `ApiError` with `{ code }` (e.g. `BAD_RESPONSE`, `NOT_AVAILABLE`, `RATE_LIMITED`, `NETWORK_ERROR`). Injected into steps via `ApiContext` and `useApi` hook (DI only).
 **Use instead of:** Raw `fetch` calls or unvalidated response access.
 **Added by:** spec 16.
 

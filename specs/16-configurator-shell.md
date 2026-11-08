@@ -106,17 +106,17 @@ step folders the shell shows the empty-catalog message, never a blank sheet.
   3. Reduced motion: sheet open/close has the still alternative from DESIGN-SYSTEM.
   4. UI + logic checklists checked.
 - **2026-11-08** — Gates verified:
-  - `pnpm vitest run packages/configurator/src/shell`: 4 test files, 110 tests passed (every Examples row verified by role and text).
-  - `pnpm vitest run packages/configurator/src/shell/reducer.test.ts`: 96 tests passed (table covering every action on every status).
-  - `pnpm vitest run packages/configurator/src/shared/api.test.ts`: 11 tests passed (`BAD_RESPONSE` on schema failure, HTTP errors, uploads).
+  - `pnpm vitest run packages/configurator/src/shell`: 4 test files, 121 tests passed (every Examples row verified by role and text).
+  - `pnpm vitest run packages/configurator/src/shell/reducer.test.ts`: 97 tests passed (table covering every action on every status).
+  - `pnpm vitest run packages/configurator/src/shared/api.test.ts`: 15 tests passed (`BAD_RESPONSE` on schema failure, HTTP errors, uploads, File/Blob inputs).
   - INV-7: `rg -n '#[0-9a-fA-F]{3,8}\b|rgb\(|[0-9]+px|[0-9]+ms' packages/configurator/src/shell packages/configurator/src/shared --glob '!tokens.css'` found 0 matches.
   - INV-9: `rg '>[A-Za-z]' packages/configurator/src/shell --glob '*.tsx'` found 0 matches.
-  - `pnpm test`: 36 test files passed, 554 tests passed, 0 failures.
+  - `pnpm test`: 37 test files passed, 584 tests passed, 0 failures.
   - `pnpm typecheck`: exit 0.
   - `pnpm lint`: exit 0 (`--max-warnings 0`).
-  - `pnpm build`: exit 0 (`loader.js` 1314 B <= 10 KB limit; `configurator.js` 91102 B).
+  - `pnpm build`: exit 0 (`loader.js` 1314 B <= 10 KB limit; `configurator.js` 96395 B; `loader.css` 3273 B).
   - `git diff --check`: clean (exit 0).
-- **2026-11-08** — Evidence (orchestro spec verify, tree 7fa18ace): install pass · typecheck pass · lint pass · build pass · test pass 570/0/0
+- **2026-11-08** — Evidence (orchestro spec verify): install pass · typecheck pass · lint pass · build pass · test pass 584/0/0
 - **2026-11-08** — Review R1 fixes implemented by agy-3:
   - **R1-F1** [BLOCKER]: Updated `formatMoney` in `packages/configurator/src/shared/format.ts` to derive divisor from `Intl.NumberFormat(locale, { style: "currency", currency }).resolvedOptions().maximumFractionDigits`. Tested 0-, 2-, and 3-decimal currencies (`JPY 12900 -> 12,900`, `USD 12900 -> 129.00`, `KWD 12900 -> 12.900`).
   - **R1-F2** [BLOCKER]: Fixed focus trap inside Shadow DOM in `packages/configurator/src/shell/trap.ts` to read active element from `(container.getRootNode() as Document | ShadowRoot)?.activeElement ?? document.activeElement`. Added test verifying Tab and Shift+Tab cycling through `renderInShadow`.
@@ -135,3 +135,8 @@ step folders the shell shows the empty-catalog message, never a blank sheet.
   - **R2-F2** [BLOCKER]: Replaced hardcoded `250` millisecond exit delay in `packages/configurator/src/shell/ConfiguratorApp.tsx` by deriving duration from motion tokens (`--la-dur-fast` 150ms desktop, `--la-dur-modal` 250ms mobile) parsed from `tokens.css` (INV-7 compliant) and listening for `animationend`/`animationcancel` on the sheet for immediate unmount upon animation completion.
   - **R2-F3** [BLOCKER]: Updated `packages/configurator/src/shell/shell.test.tsx` to explicitly test `prefers-reduced-motion: reduce` using mocked `matchMedia`, asserting immediate unmount without exit delay and synchronous focus return, and verifying exact still/fade styles in `shell.css`. Renamed existing test to reflect its coverage.
   - **R2-F4** [BLOCKER]: Kept focus trap continuously active through exiting animation phase in `packages/configurator/src/shell/ConfiguratorApp.tsx` and `packages/configurator/src/shell/trap.ts`, ensuring focus does not escape or return to inert trigger while sheet is exiting. Restored focus to trigger only after sheet unmounts. Added tests asserting focus remains trapped inside dialog during exit and returns to trigger upon unmount.
+- **2026-11-08** — Review R3 fixes implemented by agy-3:
+  - **R3-F1** [BLOCKER]: Re-ran all Done-when command gates on the current head and updated the spec Log with real test counts and asset sizes (`packages/configurator/src/shell`: 4 test files, 121 tests; `reducer.test.ts`: 97 tests; `api.test.ts`: 15 tests; `types.test.ts`: 8 tests; `configurator.test.ts`: 10 tests; full suite: 37 test files, 584 tests, 0 failures; typecheck pass; lint pass; build pass: `loader.js` 1314 B, `configurator.js` 96395 B).
+  - **R3-F2** [BLOCKER]: Added `productVariantDataSchema`, `productDataSchema`, and `parseProductData` in `packages/configurator/src/shared/types.ts` using Zod to parse and normalise numeric Shopify IDs to strings at the boundary (`packages/configurator/src/entries/configurator.ts`), falling back to undefined (no-product state) on malformed JSON or schema failure. Updated `ConfiguratorApp.tsx` to safely normalize product inputs. Added comprehensive unit tests in `types.test.ts`, integration tests in `configurator.test.ts`, and a shell test in `shell.test.tsx` asserting `state.selection.frameVariantId` conforms to spec 03 `selectionSchema` when mounted with the literal liquid block payload shape.
+  - **R3-F3** [BLOCKER]: Extended `getUploadUrl` in `packages/configurator/src/shared/api.ts` to accept `File` or `Blob` instances, extracting `{ contentType: file.type, size: file.size }` (and optional `draftId`), while preserving the `UploadUrlRequest` DTO overload. Added regression tests in `api.test.ts` for `File` with mime type mapping, `Blob` upload URL requests, DTO requests, and validation error on empty file type.
+- **2026-11-08** — Evidence (orchestro spec verify, tree fa899142): install pass · typecheck pass · lint pass · build pass · test pass 584/0/0

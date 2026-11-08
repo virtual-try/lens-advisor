@@ -1,12 +1,12 @@
 import { act, fireEvent, render, waitFor } from "@testing-library/preact";
 import type { JSX } from "preact";
 import { describe, expect, it, vi } from "vitest";
-import type { CatalogResponse } from "../../../rx-core/src/index.js";
+import { selectionSchema, type CatalogResponse } from "../../../rx-core/src/index.js";
 import type { ApiClient } from "../shared/api";
 import { strings } from "../shared/strings";
 import shellCss from "./shell.css?inline";
 import { ConfiguratorApp } from "./ConfiguratorApp";
-import type { StepDefinition, StepProps } from "./types";
+import type { ConfiguratorState, StepDefinition, StepProps } from "./types";
 
 const mockCatalog: CatalogResponse = {
   lensGroups: [
@@ -784,5 +784,66 @@ describe("Configurator Shell - Examples Table Rows", () => {
 
     bg1.remove();
     bg2.remove();
+  });
+
+  it("mounts with literal liquid block payload containing numeric IDs, normalises frameVariantId to string and conforms to spec 03 selectionSchema (R3-F2)", async () => {
+    let capturedState: ConfiguratorState | null = null;
+    const inspectorHeading = "Frame Inspector";
+    function FrameInspectorStep({ state }: StepProps): JSX.Element {
+      capturedState = state;
+      return (
+        <div>
+          <h2 role="heading">{inspectorHeading}</h2>
+          <span data-testid="frame-id">{state.selection.frameVariantId}</span>
+        </div>
+      );
+    }
+
+    const steps: StepDefinition[] = [
+      {
+        id: "inspector",
+        titleKey: "Inspector",
+        folder: "01-inspector",
+        isComplete: () => true,
+        isApplicable: () => true,
+        Component: FrameInspectorStep,
+      },
+    ];
+
+    // Literal JSON emitted by select-lenses.liquid:
+    const liquidPayload = {
+      productId: 7891234567890,
+      variantIds: [45678901234567, 45678901234568],
+      priceMinor: 12900,
+      currency: "USD",
+      variants: [
+        { id: 45678901234567, priceMinor: 12900 },
+        { id: 45678901234568, priceMinor: 14900 },
+      ],
+    };
+
+    const mockApi = createMockApiClient();
+    const view = render(
+      <ConfiguratorApp
+        product={liquidPayload}
+        steps={steps}
+        apiClient={mockApi}
+        isOpen={true}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("frame-id")).not.toBeNull();
+    });
+
+    expect(capturedState).not.toBeNull();
+    expect(capturedState!.selection.frameVariantId).toBe("45678901234567");
+    expect(typeof capturedState!.selection.frameVariantId).toBe("string");
+
+    // Spec 03 schema validation on Selection: must succeed with normalized string id
+    const parsed = selectionSchema.safeParse(capturedState!.selection);
+    expect(parsed.success).toBe(true);
+
+    view.unmount();
   });
 });
