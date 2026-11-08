@@ -96,7 +96,7 @@ Real, used now: 15, 09. Tests: `testConfig()` loader/action calls. Stubbed: none
   - `pnpm build` → exit 0
   - `rg 'style=|className=|<style' app/routes/app.settings.tsx` → exit 1 (0 matches, INV-7 clean)
   - `git diff --check` → exit 0 (clean, no trailing whitespace)
-- **2026-11-08** — Evidence (orchestro spec verify, tree 4e333bf3): install pass · typecheck pass · lint pass · build pass · test pass 361/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree e7596bac): install pass · typecheck pass · lint pass · build pass · test pass 362/0/0
 - **2026-11-08** — Fix round R1 accepted findings addressed by coder agy-2:
   - R1-F1 [BLOCKER]: Driven privacy confirmation flow through the toggle (user event opens modal, cancel resets toggle, confirm enables and submits). Sabotage: emptied toggle's open handler -> test failed with `AssertionError: expected false to be true` on `confirmModal?.hasAttribute("open")`. Restored.
   - R1-F2 [BLOCKER]: Replaced all vacuous `toBeDefined()` assertions on `querySelector` results with presence assertions (`not.toBeNull()`, `toBeTruthy()`) plus attribute/text checks.
@@ -109,3 +109,5 @@ Real, used now: 15, 09. Tests: `testConfig()` loader/action calls. Stubbed: none
   - R1-F9 [MAJOR]: Added UI component cases for default (empty) settings, submitting state (Save button loading), and field error responses.
 - **2026-11-08** — Fix round R2 accepted findings addressed by coder agy-2:
   - R2-F1 [BLOCKER]: Fixed privacy confirmation UI test (`admin-settings.test.tsx`): spied on Polaris modal web component methods `showOverlay`/`hideOverlay` (removed unsupported `s-modal[open]`), asserted Cancel produces no submission and no database write, confirmed toggle and clicked Save, asserted `requestSubmit()` call and observed fetcher submission with `storeRxInOrder: "true"` and `confirmStoreRxInOrder: "true"`, and verified persistent write to database. Sabotages: (1) deleting `showOverlay()` turned test red (`AssertionError: expected "spy" to be called 1 times, but got 0 times`), restored; (2) deleting `requestSubmit()` turned test red (`AssertionError: expected "requestSubmit" to be called at least once`), restored.
+- **2026-11-08** — Fix round R3 accepted findings addressed by coder agy-2:
+  - R3-F1 [BLOCKER]: Handled controlled Polaris web components in React 18 via `usePolarisProperty` ref and isomorphic layout effect helper in `app/routes/app.settings.tsx` to set `checked`/`value` directly as DOM properties on every render/mount and keep state in sync across events. Explicitly reset `storeRxRef.current.checked = false` upon modal cancel. Updated tests to assert DOM properties (`toggle.checked === false`/`true`, `textArea.value`, `checkbox.checked`) instead of serialised attributes, and added explicit test verifying property assignment and toggle revert after cancel.

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
   ActionFunctionArgs,
   HeadersFunction,
@@ -275,6 +275,31 @@ type ActionData =
     }
   | ErrorResponseBody;
 
+const useIsomorphicLayoutEffect =
+  typeof window !== "undefined" ? useLayoutEffect : useEffect;
+
+function usePolarisProperty<T extends HTMLElement>(
+  propName: "checked" | "value",
+  val: boolean | string,
+) {
+  const ref = useRef<T | null>(null);
+
+  useIsomorphicLayoutEffect(() => {
+    if (ref.current) {
+      (ref.current as Record<string, unknown>)[propName] = val;
+    }
+  });
+
+  const refCallback = (el: T | null) => {
+    ref.current = el;
+    if (el) {
+      (el as Record<string, unknown>)[propName] = val;
+    }
+  };
+
+  return [ref, refCallback] as const;
+}
+
 export default function SettingsRoute() {
   const loaderData = useLoaderData<typeof loader>();
   const initialSettings = loaderData.settings;
@@ -303,6 +328,22 @@ export default function SettingsRoute() {
   const [privacyConfirmed, setPrivacyConfirmed] = useState(
     initialSettings.storeRxInOrder,
   );
+
+  const [, setLabEmailRef] = usePolarisProperty<
+    HTMLElementTagNameMap["s-text-area"]
+  >("value", labEmailText);
+  const [, setTicketFormatRef] = usePolarisProperty<
+    HTMLElementTagNameMap["s-select"]
+  >("value", ticketFormat);
+  const [, setManualRxRef] = usePolarisProperty<
+    HTMLElementTagNameMap["s-checkbox"]
+  >("checked", manualRxEnabled);
+  const [, setRxUploadRef] = usePolarisProperty<
+    HTMLElementTagNameMap["s-checkbox"]
+  >("checked", rxUploadEnabled);
+  const [storeRxRef, setStoreRxRef] = usePolarisProperty<
+    HTMLElementTagNameMap["s-checkbox"]
+  >("checked", storeRxInOrder);
 
   const prevStateRef = useRef(fetcher.state);
   const lastToastDataRef = useRef<ActionData | null | undefined>(null);
@@ -368,18 +409,27 @@ export default function SettingsRoute() {
     } else {
       setStoreRxInOrder(false);
       setPrivacyConfirmed(false);
+      if (storeRxRef.current) {
+        storeRxRef.current.checked = false;
+      }
     }
   };
 
   const handleConfirmPrivacy = () => {
     setStoreRxInOrder(true);
     setPrivacyConfirmed(true);
+    if (storeRxRef.current) {
+      storeRxRef.current.checked = true;
+    }
     hideModal();
   };
 
   const handleCancelPrivacy = () => {
     setStoreRxInOrder(false);
     setPrivacyConfirmed(false);
+    if (storeRxRef.current) {
+      storeRxRef.current.checked = false;
+    }
     hideModal();
   };
 
@@ -449,6 +499,7 @@ export default function SettingsRoute() {
           <s-section heading="Lab fulfillment">
             <s-stack direction="block" gap="base">
               <s-text-area
+                ref={setLabEmailRef}
                 label="Lab email addresses"
                 name="labEmail"
                 value={labEmailText}
@@ -457,13 +508,21 @@ export default function SettingsRoute() {
                 onInput={(e) => {
                   setLabEmailText(e.currentTarget.value);
                 }}
+                onChange={(e) => {
+                  setLabEmailText(e.currentTarget.value);
+                }}
               />
 
               <s-select
+                ref={setTicketFormatRef}
                 label="Ticket format"
                 name="ticketFormatSelect"
                 value={ticketFormat}
                 onChange={(e) => {
+                  const val = e.currentTarget.value as TicketFormat;
+                  if (val) setTicketFormat(val);
+                }}
+                onInput={(e) => {
                   const val = e.currentTarget.value as TicketFormat;
                   if (val) setTicketFormat(val);
                 }}
@@ -492,26 +551,44 @@ export default function SettingsRoute() {
               </s-paragraph>
 
               <s-checkbox
+                ref={setManualRxRef}
                 label="Shoppers can type their prescription"
                 name="manualRxCheckbox"
                 checked={manualRxEnabled}
                 onChange={(e) => {
-                  setManualRxEnabled(e.currentTarget.checked);
+                  const checked = Boolean(
+                    e.currentTarget.checked ??
+                      (e.target as HTMLInputElement).checked,
+                  );
+                  setManualRxEnabled(checked);
                 }}
                 onInput={(e) => {
-                  setManualRxEnabled(e.currentTarget.checked);
+                  const checked = Boolean(
+                    e.currentTarget.checked ??
+                      (e.target as HTMLInputElement).checked,
+                  );
+                  setManualRxEnabled(checked);
                 }}
               />
 
               <s-checkbox
+                ref={setRxUploadRef}
                 label="Shoppers can upload a prescription file"
                 name="rxUploadCheckbox"
                 checked={rxUploadEnabled}
                 onChange={(e) => {
-                  setRxUploadEnabled(e.currentTarget.checked);
+                  const checked = Boolean(
+                    e.currentTarget.checked ??
+                      (e.target as HTMLInputElement).checked,
+                  );
+                  setRxUploadEnabled(checked);
                 }}
                 onInput={(e) => {
-                  setRxUploadEnabled(e.currentTarget.checked);
+                  const checked = Boolean(
+                    e.currentTarget.checked ??
+                      (e.target as HTMLInputElement).checked,
+                  );
+                  setRxUploadEnabled(checked);
                 }}
               />
             </s-stack>
@@ -520,14 +597,23 @@ export default function SettingsRoute() {
           <s-section heading="Order privacy">
             <s-stack direction="block" gap="base">
               <s-checkbox
+                ref={setStoreRxRef}
                 label="Save prescription values in Shopify orders"
                 name="storeRxInOrderCheckbox"
                 checked={storeRxInOrder}
                 onChange={(e) => {
-                  handlePrivacyToggleChange(e.currentTarget.checked);
+                  const checked = Boolean(
+                    e.currentTarget.checked ??
+                      (e.target as HTMLInputElement).checked,
+                  );
+                  handlePrivacyToggleChange(checked);
                 }}
                 onInput={(e) => {
-                  handlePrivacyToggleChange(e.currentTarget.checked);
+                  const checked = Boolean(
+                    e.currentTarget.checked ??
+                      (e.target as HTMLInputElement).checked,
+                  );
+                  handlePrivacyToggleChange(checked);
                 }}
               />
 

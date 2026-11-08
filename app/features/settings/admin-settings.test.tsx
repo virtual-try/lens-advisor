@@ -606,9 +606,9 @@ describe("Spec 20 — Admin Settings Route (Server)", () => {
       const { container } = render(<SettingsRoute />);
       const textArea = container.querySelector(
         's-text-area[name="labEmail"]',
-      );
+      ) as (HTMLElement & { value: string }) | null;
       expect(textArea).not.toBeNull();
-      expect(textArea?.getAttribute("value")).toBe(
+      expect(textArea?.value).toBe(
         "lab1@example.com\nlab2@example.com",
       );
     }, DB_TIMEOUT_MS);
@@ -685,9 +685,9 @@ describe("Spec 20 — Admin Settings Component (UI)", () => {
 
     const labTextArea = container.querySelector(
       's-text-area[name="labEmail"]',
-    );
+    ) as (HTMLElement & { value: string }) | null;
     expect(labTextArea).not.toBeNull();
-    expect(labTextArea?.getAttribute("value")).toBe(
+    expect(labTextArea?.value).toBe(
       "lab1@example.com\nlab2@example.com",
     );
 
@@ -756,27 +756,29 @@ describe("Spec 20 — Admin Settings Component (UI)", () => {
 
     const { container } = render(<SettingsRoute />);
 
-    const textArea = container.querySelector('s-text-area[name="labEmail"]');
+    const textArea = container.querySelector(
+      's-text-area[name="labEmail"]',
+    ) as (HTMLElement & { value: string }) | null;
     expect(textArea).not.toBeNull();
-    expect(textArea?.getAttribute("value")).toBe("");
+    expect(textArea?.value).toBe("");
 
     const manualRx = container.querySelector(
       's-checkbox[name="manualRxCheckbox"]',
-    );
+    ) as (HTMLElement & { checked: boolean }) | null;
     expect(manualRx).not.toBeNull();
-    expect(manualRx?.getAttribute("checked")).toBe("true");
+    expect(manualRx?.checked).toBe(true);
 
     const rxUpload = container.querySelector(
       's-checkbox[name="rxUploadCheckbox"]',
-    );
+    ) as (HTMLElement & { checked: boolean }) | null;
     expect(rxUpload).not.toBeNull();
-    expect(rxUpload?.getAttribute("checked")).toBe("true");
+    expect(rxUpload?.checked).toBe(true);
 
     const storeRx = container.querySelector(
       's-checkbox[name="storeRxInOrderCheckbox"]',
-    );
+    ) as (HTMLElement & { checked: boolean }) | null;
     expect(storeRx).not.toBeNull();
-    expect(storeRx?.getAttribute("checked")).toBe("false");
+    expect(storeRx?.checked).toBe(false);
   });
 
   it("renders submitting state with busy/loading save button (R1-F9)", () => {
@@ -1008,8 +1010,9 @@ describe("Spec 20 — Admin Settings Component (UI)", () => {
 
     const toggle = container.querySelector(
       's-checkbox[name="storeRxInOrderCheckbox"]',
-    );
+    ) as (HTMLElement & { checked: boolean }) | null;
     expect(toggle).not.toBeNull();
+    expect(toggle?.checked).toBe(false);
 
     // 1. User changes the checkbox to true -> modal's showOverlay() MUST be called (not open attribute)
     fireEvent.input(toggle!, {
@@ -1025,6 +1028,7 @@ describe("Spec 20 — Admin Settings Component (UI)", () => {
     fireEvent.click(cancelBtn);
 
     expect(hideOverlaySpy).toHaveBeenCalledTimes(1);
+    expect((toggle as HTMLElement & { checked: boolean }).checked).toBe(false);
     expect(hiddenStoreInput?.value).toBe("false");
     expect(hiddenConfirmInput?.value).toBe("false");
 
@@ -1047,6 +1051,7 @@ describe("Spec 20 — Admin Settings Component (UI)", () => {
     fireEvent.click(confirmBtn);
 
     expect(hideOverlaySpy).toHaveBeenCalledTimes(2);
+    expect((toggle as HTMLElement & { checked: boolean }).checked).toBe(true);
     expect(hiddenStoreInput?.value).toBe("true");
     expect(hiddenConfirmInput?.value).toBe("true");
 
@@ -1079,5 +1084,109 @@ describe("Spec 20 — Admin Settings Component (UI)", () => {
 
     const savedInDb = await getSettings(shopId, getTestPrisma());
     expect(savedInDb.storeRxInOrder).toBe(true);
+  });
+
+  it("controlled Polaris fields assign DOM properties (checked/value) and cancel resets toggle.checked (R3-F1)", () => {
+    vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+      settings: {
+        labEmail: ["lab@example.com"],
+        ticketFormat: "BOTH" as const,
+        storeRxInOrder: false,
+        rxUploadEnabled: true,
+        manualRxEnabled: false,
+      },
+      plan: {
+        active: true,
+        planName: "Pro Plan",
+        test: false,
+      },
+      pricingUrl: "https://pricing.test",
+    });
+
+    vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+      data: undefined,
+      state: "idle",
+      Form: ({
+        children,
+        ...props
+      }: React.PropsWithChildren<Record<string, unknown>>) => (
+        <form {...props}>{children}</form>
+      ),
+      submit: vi.fn(),
+      load: vi.fn(),
+    } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+    const { container } = render(<SettingsRoute />);
+
+    const textArea = container.querySelector(
+      's-text-area[name="labEmail"]',
+    ) as (HTMLElement & { value: string }) | null;
+    expect(textArea).not.toBeNull();
+    expect(textArea?.value).toBe("lab@example.com");
+
+    const select = container.querySelector(
+      's-select[name="ticketFormatSelect"]',
+    ) as (HTMLElement & { value: string }) | null;
+    expect(select).not.toBeNull();
+    expect(select?.value).toBe("BOTH");
+
+    const manualRx = container.querySelector(
+      's-checkbox[name="manualRxCheckbox"]',
+    ) as (HTMLElement & { checked: boolean }) | null;
+    expect(manualRx).not.toBeNull();
+    expect(manualRx?.checked).toBe(false);
+
+    const rxUpload = container.querySelector(
+      's-checkbox[name="rxUploadCheckbox"]',
+    ) as (HTMLElement & { checked: boolean }) | null;
+    expect(rxUpload).not.toBeNull();
+    expect(rxUpload?.checked).toBe(true);
+
+    const toggle = container.querySelector(
+      's-checkbox[name="storeRxInOrderCheckbox"]',
+    ) as (HTMLElement & { checked: boolean }) | null;
+    expect(toggle).not.toBeNull();
+    expect(toggle?.checked).toBe(false);
+
+    const modal = container.querySelector(
+      "#privacy-confirm-modal",
+    ) as HTMLElement & {
+      showOverlay: ReturnType<typeof vi.fn>;
+      hideOverlay: ReturnType<typeof vi.fn>;
+    };
+    expect(modal).not.toBeNull();
+    modal.showOverlay = vi.fn();
+    modal.hideOverlay = vi.fn();
+
+    // Toggle on -> opens modal
+    fireEvent.input(toggle!, {
+      target: { checked: true },
+      currentTarget: { checked: true },
+    });
+    expect(modal.showOverlay).toHaveBeenCalledTimes(1);
+
+    // Cancel -> toggle.checked is strictly false as a DOM property
+    const cancelBtn = screen.getByText("Cancel");
+    fireEvent.click(cancelBtn);
+    expect(modal.hideOverlay).toHaveBeenCalledTimes(1);
+    expect(toggle?.checked).toBe(false);
+
+    // Toggle on again -> confirm
+    fireEvent.input(toggle!, {
+      target: { checked: true },
+      currentTarget: { checked: true },
+    });
+    const confirmBtn = screen.getByText("Confirm");
+    fireEvent.click(confirmBtn);
+    expect(modal.hideOverlay).toHaveBeenCalledTimes(2);
+    expect(toggle?.checked).toBe(true);
+
+    // Toggle off -> toggle.checked becomes false without opening modal
+    fireEvent.input(toggle!, {
+      target: { checked: false },
+      currentTarget: { checked: false },
+    });
+    expect(toggle?.checked).toBe(false);
+    expect(modal.showOverlay).toHaveBeenCalledTimes(2);
   });
 });
