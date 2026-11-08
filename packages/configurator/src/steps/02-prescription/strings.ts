@@ -53,13 +53,28 @@ export const strings = {
     takePhoto: "Take a photo",
     pdHint: "If your PD isn't on the photo, we'll ask for it after checkout.",
     uploading: "Uploading...",
+    progressLabel: "Uploading prescription file",
     removeLabel: "Remove",
+    fileChip: {
+      onFile: "Prescription on file",
+    },
+    units: {
+      kb: "KB",
+      mb: "MB",
+    },
     errors: {
       fileTooLarge: "File is too large. Maximum size is 10 MB.",
       invalidType: "Invalid file type. Please upload a JPG, PNG, HEIC, or PDF.",
       uploadFailed: "Upload failed. Please try again.",
     },
   },
+  apiErrors: {
+    VALIDATION_FAILED: "Please check your prescription entries.",
+    NETWORK_ERROR: "Unable to connect. Please check your network connection.",
+    INVALID_FILE_TYPE: "Only JPEG, PNG, HEIC and PDF files are allowed.",
+    FILE_TOO_LARGE: "File size exceeds 10 MB limit.",
+    GENERIC: "Something went wrong. Please try again.",
+  } as Record<string, string>,
   errors: {
     SPH_REQUIRED: "Sphere is required",
     SPH_RANGE: "Sphere must be between −20.00 and +20.00",
@@ -76,6 +91,7 @@ export const strings = {
     PD_STEP: "PD must be in 0.5 mm steps (e.g. 63 or 63.5)",
     NON_PRESCRIPTION_NOT_EMPTY: "Prescription must be empty for non-prescription lenses",
     INVALID: "Please enter a valid number",
+    GENERIC: "Please check this value.",
     SUBMIT_FAILED: "Could not submit prescription. Please check the values above.",
   } as Record<string, string>,
 };

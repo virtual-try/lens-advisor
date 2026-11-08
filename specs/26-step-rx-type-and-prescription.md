@@ -86,22 +86,36 @@ Real, used now: shell (16), rx-core (10). Tests: fake API client in context. Stu
   - `index.tsx`: StepModule contract export (`id: "rx-type"`, `titleKey: "Vision"`, `isComplete: (state) => state.rxType !== null`, `isApplicable: () => true`).
   - `rx-type.test.tsx`: 8 unit tests verifying card selection, dynamic pricing, absence of options without lenses, clinical guidance disclosure, and StepModule contract.
 - **2026-11-08** — Created `packages/configurator/src/steps/02-prescription/`:
-  - `strings.ts`: Centralized user-visible strings for tabs, table headers, OD/OS inputs, dual PD toggle, validation error codes (`RX_VALIDATION_CODES`), disclosures, upload prompt, progress, file chip, and privacy note (INV-9).
+  - `strings.ts`: Centralized user-visible strings for tabs, table headers, OD/OS inputs, dual PD toggle, validation error codes, api errors, disclosures, upload prompt, progress, file chip, and privacy note (INV-9).
   - `prescription.css`: Fully tokenized CSS using variables from `tokens.css`. At mobile (`<= 40rem`), row labels stack above 2-column input grid (`minmax(0, 1fr) minmax(0, 1fr)`) ensuring zero horizontal overflow at 375 px (INV-7).
   - `PrescriptionStep.tsx`:
     - Tab switching between manual entry and file upload based on `settings.manualRxEnabled` and `settings.rxUploadEnabled`.
     - Manual entry: OD/OS inputs for SPH, CYL, AXIS, ADD (ADD rendered only for Progressive and Reading), single/dual PD toggle.
     - Blur validation uses spec 10 parsers (`parseSphText`, `parseCylText`, `parseAxis`, `parseAddText`, `parsePd`) and cross-field checks. All inputs have visible labels and `aria-describedby` linking to error spans.
-    - Quick-fill: "Same as right eye? Copy to left" duplicates OD SPH, CYL, and AXIS into OS.
+    - Quick-fill: "Same as right eye? Copy to left" duplicates OD SPH, CYL, AXIS, and ADD into OS.
     - Upload panel: File picker and drag-and-drop supporting JPEG, PNG, HEIC, and PDF up to 10 MB (`accept`, `capture`). Preflight rejects files exceeding 10 MB without making network calls. Presigned upload via `api.getUploadUrl` and `api.uploadFile`, progress indicator, and file chip with remove action.
     - Submission handling: Intercepts Continue click on the shell footer during step 2. Calls `api.submitPrescription(...)`. Maps server 400 validation error paths (e.g. `od.axis`) back to individual field errors. On success, dispatches `SET_PRESCRIPTION_REF` and `CONTINUE`.
   - `index.tsx`: StepModule contract export (`id: "prescription"`, `titleKey: "Prescription"`, `isComplete`, `isApplicable: (state) => state.rxType !== "NON_PRESCRIPTION"`).
   - `prescription.test.tsx`: 14 unit tests covering all 7 Examples table rows, copy-to-left, dual PD mode, upload progress/remove flow, 375 px mobile layout verification, and accessible label/error relationships.
 - **2026-11-08** — Self-checks:
-  - 1. At 375 px, the OD/OS grid fits without horizontal scroll: verified responsive styles in `prescription.css` and unit test asserting mobile container layout rules.
+  - 1. At 375 px, the OD/OS grid fits without horizontal scroll: verified responsive styles in `prescription.css` and unit test asserting mobile container layout rules; actual 375 px visual overflow is verified in the e2e suite (spec 33) rather than claimed by this unit test.
   - 2. Every field has a visible label and an `aria-describedby` pointing to its error container: verified in unit test across all manual input fields.
   - 3. INV-2: Verified by unit test spying on `console.log`, `console.info`, `console.warn`, `console.error`, and `console.debug` across full manual submission, asserting no Rx diopter or parameter value is passed to console.
   - 4. UI checklist (`spec-quality.md` §8) satisfied.
+- **2026-11-08** — Fix round R1 (accepted findings R1-F1 through R1-F13):
+  - R1-F1: Continue interception submits typed manual Rx whenever valid and no prescriptionRef exists, whichever tab is active. Added test for typing, switching tab, and clicking Continue.
+  - R1-F2: Clears prescriptionRef on manual value edits, file replacement/removal, and Rx type change in step 1. Added test for submit, edit, Continue calling submitPrescription twice, and for type change.
+  - R1-F3: On remount, rehydrates inputs from state.prescription (formatted with formatDiopter and formatAxis) and file chip from state.prescriptionRef. Added tests verifying rehydration.
+  - R1-F4: Added visible focus via label:has(input:focus-visible) for PD segment and upload controls, removed tabIndex from wrapping labels, and added tests.
+  - R1-F5: Added @media (prefers-reduced-motion: reduce) { transition: none } for .la-choice, .la-tab, .la-segment label, and .la-drop, plus tests.
+  - R1-F6: Mapped ApiError.code to strings.ts messages with generic fallback. Never render err.message or raw codes. Strict MIME checking in isFileTypeAllowed requiring allowed MIME types and falling back to extension only when file.type is empty. Added test.
+  - R1-F7: Moved KB/MB unit labels into strings.upload.units.
+  - R1-F8: Added <progress class="la-progress"> element with accessible label from strings.upload.progressLabel during upload. Added test.
+  - R1-F9: Noted in Log that 375 px layout is verified in the e2e suite (spec 33) while keeping CSS structure unit assertion.
+  - R1-F10: Linked visible row labels to inputs via aria-labelledby combining eye and field labels, included dual-PD inputs in the test, and asserted visible label text.
+  - R1-F11: Restored console spies in afterEach(vi.restoreAllMocks).
+  - R1-F12: Asserted CONTINUE dispatch for Row 1, verified shell skipping step 2 for non-prescription (Row 7), and tested Continue interception using real Footer from spec 16.
+  - R1-F13: Corrected Log and inventory fragment to match code (parser names, copied fields including ADD, validation codes).
 - **2026-11-08** — Sabotage verifications:
   - Sabotage 1: In `packages/configurator/src/steps/01-rx-type/index.tsx`, temporarily forced `isComplete: () => false`. Test failed: `AssertionError: expected false to be true // Object.is equality`. Restored, verified green.
   - Sabotage 2: In `packages/configurator/src/steps/02-prescription/PrescriptionStep.tsx`, temporarily commented out line setting `newErrors.odAxis = strings.errors.AXIS_REQUIRED` on CYL blur with empty AXIS. Test failed: `TestingLibraryElementError: Unable to find an element with the text: Axis is required when you enter a cylinder`. Restored, verified green.
@@ -115,4 +129,4 @@ Real, used now: shell (16), rx-core (10). Tests: fake API client in context. Stu
   - `pnpm build`: passed (`configurator.js` 142948 B, `loader.css` 3319 B, `loader.js` 1314 B <= 10240 B limit).
   - `pnpm test`: 60 test files passed, 1009 tests passed (0 failures).
   - `git diff --check`: clean (no whitespace errors or conflict markers).
-- **2026-11-08** — Evidence (orchestro spec verify, tree cfff4fa0): install pass · typecheck pass · lint pass · build pass · test pass 1009/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree e8ed7449): install pass · typecheck pass · lint pass · build pass · test pass 1018/0/0

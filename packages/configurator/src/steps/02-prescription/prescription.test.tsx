@@ -1,9 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import type { JSX } from "preact";
 import { useCallback, useState } from "preact/hooks";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CatalogResponse } from "../../../../rx-core/src/index.js";
 import { ApiError, type ApiClient } from "../../shared/api";
+import { Footer } from "../../shell/Footer";
 import { createInitialState } from "../../shell/reducer";
 import type { ConfiguratorAction, ConfiguratorState } from "../../shell/types";
 import { PrescriptionStep } from "./PrescriptionStep";
@@ -71,20 +72,24 @@ function TestWrapper({
   return (
     <div class="la-sheet">
       <PrescriptionStep state={state} dispatch={handleDispatch} api={api} />
-      <div class="la-footer">
-        <button
-          type="button"
-          class="la-btn la-btn--primary"
-          disabled={!complete}
-        >
-          Continue
-        </button>
-      </div>
+      <Footer
+        state={state}
+        dispatch={handleDispatch}
+        api={api}
+        canGoBack={false}
+        isComplete={complete}
+        onBack={() => {}}
+        onContinue={() => handleDispatch({ type: "CONTINUE" })}
+      />
     </div>
   );
 }
 
 describe("02-prescription step", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("exports correct StepModule contract", () => {
     expect(prescriptionStep.id).toBe("prescription");
     expect(prescriptionStep.titleKey).toBe("Prescription");
@@ -107,6 +112,15 @@ describe("02-prescription step", () => {
       rxType: "PROGRESSIVE",
     };
     expect(isApplicable(progressiveState)).toBe(true);
+
+    // Verify shell skips step 2 for non-prescription
+    const stepModules = [
+      { id: "rx-type", isApplicable: () => true },
+      { id: "prescription", isApplicable: (s: ConfiguratorState) => isApplicable(s) },
+      { id: "lens", isApplicable: () => true },
+    ];
+    const applicableSteps = stepModules.filter((s) => s.isApplicable(nonRxState));
+    expect(applicableSteps.map((s) => s.id)).toEqual(["rx-type", "lens"]);
   });
 
   // Example Row 1: choose Progressive, type OD −2.25/−0.50×180 ADD +2.00, OS −2.00 ADD +2.00, PD 63 -> Continue enabled; submit; rxRef stored
@@ -199,6 +213,10 @@ describe("02-prescription step", () => {
     expect(dispatchedActions).toContainEqual({
       type: "SET_PRESCRIPTION_REF",
       prescriptionRef: "rx_normal_123",
+    });
+    // Assert CONTINUE dispatched
+    expect(dispatchedActions).toContainEqual({
+      type: "CONTINUE",
     });
   });
 
@@ -601,7 +619,7 @@ describe("02-prescription step", () => {
   });
 
   // Self-check 2: Every field has a visible label and an aria-describedby to its error
-  it("Self-check 2: every field has a visible label and an aria-describedby to its error", () => {
+  it("Self-check 2: every field has a visible label and an aria-describedby to its error, including dual PD", () => {
     const state: ConfiguratorState = {
       ...createInitialState(),
       catalog: mockCatalog,
@@ -611,16 +629,22 @@ describe("02-prescription step", () => {
 
     render(<TestWrapper initialState={state} api={mockApi} />);
 
+    // Assert visible row labels exist and contain expected title text
+    expect(document.getElementById("lbl-sph-title")?.textContent).toBe(strings.grid.sphere);
+    expect(document.getElementById("lbl-cyl-title")?.textContent).toBe(strings.grid.cylinder);
+    expect(document.getElementById("lbl-axis-title")?.textContent).toBe(strings.grid.axis);
+    expect(document.getElementById("lbl-add-title")?.textContent).toBe(strings.grid.add);
+
     const fields = [
-      { id: "od-sph", errorId: "od-sph-error", labelText: /Right eye \(OD\) Sphere/i },
-      { id: "os-sph", errorId: "os-sph-error", labelText: /Left eye \(OS\) Sphere/i },
-      { id: "od-cyl", errorId: "od-cyl-error", labelText: /Right eye \(OD\) Cylinder/i },
-      { id: "os-cyl", errorId: "os-cyl-error", labelText: /Left eye \(OS\) Cylinder/i },
-      { id: "od-axis", errorId: "od-axis-error", labelText: /Right eye \(OD\) Axis/i },
-      { id: "os-axis", errorId: "os-axis-error", labelText: /Left eye \(OS\) Axis/i },
-      { id: "od-add", errorId: "od-add-error", labelText: /Right eye \(OD\) Add/i },
-      { id: "os-add", errorId: "os-add-error", labelText: /Left eye \(OS\) Add/i },
-      { id: "pd-single", errorId: "pd-single-error", labelText: /PD \(mm\)/i },
+      { id: "od-sph", errorId: "od-sph-error", labelledBy: "eye-od lbl-sph-title" },
+      { id: "os-sph", errorId: "os-sph-error", labelledBy: "eye-os lbl-sph-title" },
+      { id: "od-cyl", errorId: "od-cyl-error", labelledBy: "eye-od lbl-cyl-title" },
+      { id: "os-cyl", errorId: "os-cyl-error", labelledBy: "eye-os lbl-cyl-title" },
+      { id: "od-axis", errorId: "od-axis-error", labelledBy: "eye-od lbl-axis-title" },
+      { id: "os-axis", errorId: "os-axis-error", labelledBy: "eye-os lbl-axis-title" },
+      { id: "od-add", errorId: "od-add-error", labelledBy: "eye-od lbl-add-title" },
+      { id: "os-add", errorId: "os-add-error", labelledBy: "eye-os lbl-add-title" },
+      { id: "pd-single", errorId: "pd-single-error", labelFor: "pd-single", visibleText: strings.pd.singleLabel },
     ];
 
     for (const f of fields) {
@@ -629,7 +653,381 @@ describe("02-prescription step", () => {
       expect(input?.getAttribute("aria-describedby")).toBe(f.errorId);
       const errorEl = document.getElementById(f.errorId);
       expect(errorEl).not.toBeNull();
-      expect(screen.getByLabelText(f.labelText)).toBe(input);
+      if ("labelledBy" in f && f.labelledBy) {
+        expect(input?.getAttribute("aria-labelledby")).toBe(f.labelledBy);
+      }
+      if ("labelFor" in f && f.labelFor) {
+        const lbl = document.querySelector(`label[for="${f.labelFor}"]`);
+        expect(lbl).not.toBeNull();
+        expect(lbl?.textContent?.trim()).toBe(f.visibleText);
+      }
     }
+
+    // Toggle to Dual PD mode and verify dual-PD inputs
+    const dualRadio = screen.getByRole("radio", { name: strings.pd.dualMode });
+    fireEvent.click(dualRadio);
+
+    const dualFields = [
+      { id: "pd-od", errorId: "pd-od-error", labelFor: "pd-od", visibleText: strings.pd.dualRightLabel },
+      { id: "pd-os", errorId: "pd-os-error", labelFor: "pd-os", visibleText: strings.pd.dualLeftLabel },
+    ];
+
+    for (const f of dualFields) {
+      const input = document.getElementById(f.id) as HTMLInputElement | null;
+      expect(input).not.toBeNull();
+      expect(input?.getAttribute("aria-describedby")).toBe(f.errorId);
+      const lbl = document.querySelector(`label[for="${f.labelFor}"]`);
+      expect(lbl).not.toBeNull();
+      expect(lbl?.textContent?.trim()).toBe(f.visibleText);
+    }
+  });
+
+  // R1-F1: typing manual Rx, switching to upload tab, and clicking Continue submits the typed Rx
+  it("R1-F1: typing manual Rx, switching to upload tab, and clicking Continue submits the typed Rx", async () => {
+    const initialState: ConfiguratorState = {
+      ...createInitialState(),
+      catalog: mockCatalog,
+      rxType: "SINGLE_VISION",
+    };
+
+    const mockApi: ApiClient = {
+      proxyBase: "/apps/lens-advisor",
+      getCatalog: vi.fn(),
+      submitPrescription: vi.fn().mockResolvedValue({ rxRef: "rx-ref-manual-tab-switched" }),
+      getUploadUrl: vi.fn(),
+      uploadFile: vi.fn(),
+    };
+
+    const dispatchedActions: ConfiguratorAction[] = [];
+    const handleDispatch = (action: ConfiguratorAction) => {
+      dispatchedActions.push(action);
+    };
+
+    render(
+      <TestWrapper
+        initialState={initialState}
+        api={mockApi}
+        onDispatch={handleDispatch}
+      />,
+    );
+
+    // Type valid manual Rx
+    const odSph = screen.getByLabelText(/Right eye.*Sphere/i);
+    const osSph = screen.getByLabelText(/Left eye.*Sphere/i);
+    const pdInput = screen.getByLabelText(/PD \(mm\)/i);
+
+    fireEvent.input(odSph, { target: { value: "-2.00" } });
+    fireEvent.blur(odSph);
+    fireEvent.input(osSph, { target: { value: "-2.00" } });
+    fireEvent.blur(osSph);
+    fireEvent.input(pdInput, { target: { value: "63" } });
+    fireEvent.blur(pdInput);
+
+    // Continue is now enabled
+    const continueBtn = screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(continueBtn.disabled).toBe(false);
+    });
+
+    // Switch tab to "Upload a photo"
+    const uploadTab = screen.getByRole("tab", { name: /Upload/i });
+    fireEvent.click(uploadTab);
+
+    // Click Continue
+    await act(async () => {
+      fireEvent.click(continueBtn);
+    });
+
+    // Expect submitPrescription to be called with the typed Rx
+    expect(mockApi.submitPrescription).toHaveBeenCalledWith({
+      rxType: "SINGLE_VISION",
+      prescription: expect.objectContaining({
+        od: expect.objectContaining({ sph: -200 }),
+        os: expect.objectContaining({ sph: -200 }),
+        pd: { single: 630 },
+      }),
+    });
+
+    // Expect rxRef stored and CONTINUE dispatched
+    expect(dispatchedActions).toContainEqual({
+      type: "SET_PRESCRIPTION_REF",
+      prescriptionRef: "rx-ref-manual-tab-switched",
+    });
+    expect(dispatchedActions).toContainEqual({ type: "CONTINUE" });
+  });
+
+  // R1-F2: editing a value clears prescriptionRef and clicking Continue calls submitPrescription a second time
+  it("R1-F2: editing a value clears prescriptionRef and clicking Continue calls submitPrescription a second time", async () => {
+    const initialState: ConfiguratorState = {
+      ...createInitialState(),
+      catalog: mockCatalog,
+      rxType: "SINGLE_VISION",
+    };
+
+    const mockApi: ApiClient = {
+      proxyBase: "/apps/lens-advisor",
+      getCatalog: vi.fn(),
+      submitPrescription: vi
+        .fn()
+        .mockResolvedValueOnce({ rxRef: "rx-first-ref" })
+        .mockResolvedValueOnce({ rxRef: "rx-second-ref" }),
+      getUploadUrl: vi.fn(),
+      uploadFile: vi.fn(),
+    };
+
+    const dispatchedActions: ConfiguratorAction[] = [];
+    const handleDispatch = (action: ConfiguratorAction) => {
+      dispatchedActions.push(action);
+    };
+
+    render(
+      <TestWrapper
+        initialState={initialState}
+        api={mockApi}
+        onDispatch={handleDispatch}
+      />,
+    );
+
+    const odSph = screen.getByLabelText(/Right eye.*Sphere/i);
+    const osSph = screen.getByLabelText(/Left eye.*Sphere/i);
+    const pdInput = screen.getByLabelText(/PD \(mm\)/i);
+
+    fireEvent.input(odSph, { target: { value: "-2.00" } });
+    fireEvent.blur(odSph);
+    fireEvent.input(osSph, { target: { value: "-2.00" } });
+    fireEvent.blur(osSph);
+    fireEvent.input(pdInput, { target: { value: "63" } });
+    fireEvent.blur(pdInput);
+
+    const continueBtn = screen.getByRole("button", { name: "Continue" });
+    await waitFor(() => {
+      expect((continueBtn as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    // First submit
+    await act(async () => {
+      fireEvent.click(continueBtn);
+    });
+    expect(mockApi.submitPrescription).toHaveBeenCalledTimes(1);
+    expect(dispatchedActions).toContainEqual({
+      type: "SET_PRESCRIPTION_REF",
+      prescriptionRef: "rx-first-ref",
+    });
+
+    // Edit SPH
+    fireEvent.input(odSph, { target: { value: "-3.00" } });
+    fireEvent.blur(odSph);
+
+    // prescriptionRef was cleared
+    expect(dispatchedActions).toContainEqual({
+      type: "SET_PRESCRIPTION_REF",
+      prescriptionRef: "",
+    });
+
+    // Click Continue again
+    await act(async () => {
+      fireEvent.click(continueBtn);
+    });
+
+    // Second submitPrescription call
+    expect(mockApi.submitPrescription).toHaveBeenCalledTimes(2);
+    expect(mockApi.submitPrescription).toHaveBeenLastCalledWith({
+      rxType: "SINGLE_VISION",
+      prescription: expect.objectContaining({
+        od: expect.objectContaining({ sph: -300 }),
+      }),
+    });
+    expect(dispatchedActions).toContainEqual({
+      type: "SET_PRESCRIPTION_REF",
+      prescriptionRef: "rx-second-ref",
+    });
+  });
+
+  // R1-F3: rehydrates inputs from state.prescription on remount
+  it("R1-F3: rehydrates inputs from state.prescription on remount", () => {
+    const state: ConfiguratorState = {
+      ...createInitialState(),
+      catalog: mockCatalog,
+      rxType: "PROGRESSIVE",
+      prescription: {
+        od: { sph: -225, cyl: -50, axis: 180, add: 200 },
+        os: { sph: -200, add: 200 },
+        pd: { single: 630 },
+      },
+      prescriptionRef: "rx-existing-123",
+    };
+    const mockApi = {} as ApiClient;
+
+    render(<TestWrapper initialState={state} api={mockApi} />);
+
+    expect((screen.getByLabelText(/Right eye.*Sphere/i) as HTMLInputElement).value).toBe("-2.25");
+    expect((screen.getByLabelText(/Right eye.*Cylinder/i) as HTMLInputElement).value).toBe("-0.50");
+    expect((screen.getByLabelText(/Right eye.*Axis/i) as HTMLInputElement).value).toBe("180");
+    expect((screen.getByLabelText(/Right eye.*Add/i) as HTMLInputElement).value).toBe("+2.00");
+    expect((screen.getByLabelText(/Left eye.*Sphere/i) as HTMLInputElement).value).toBe("-2.00");
+    expect((screen.getByLabelText(/Left eye.*Add/i) as HTMLInputElement).value).toBe("+2.00");
+    expect((screen.getByLabelText(/PD \(mm\)/i) as HTMLInputElement).value).toBe("63");
+  });
+
+  it("R1-F3: rehydrates file chip on upload tab when prescriptionRef exists without manual prescription", () => {
+    const state: ConfiguratorState = {
+      ...createInitialState(),
+      catalog: mockCatalog,
+      rxType: "SINGLE_VISION",
+      prescription: null,
+      prescriptionRef: "rx-file-ref-123",
+    };
+    const mockApi = {} as ApiClient;
+
+    render(<TestWrapper initialState={state} api={mockApi} />);
+
+    expect(screen.getByText(strings.upload.fileChip.onFile)).not.toBeNull();
+  });
+
+  // R1-F4: upload controls drop tabIndex on labels, focusing input directly, and CSS provides visible focus
+  it("R1-F4: upload controls drop tabIndex on labels, focusing input directly, and CSS provides visible focus for PD and upload controls", () => {
+    const state: ConfiguratorState = {
+      ...createInitialState(),
+      catalog: mockCatalog,
+      rxType: "SINGLE_VISION",
+    };
+    const mockApi = {} as ApiClient;
+
+    render(<TestWrapper initialState={state} api={mockApi} />);
+
+    // Switch to upload tab
+    fireEvent.click(screen.getByRole("tab", { name: /Upload/i }));
+
+    const chooseFileBtnText = screen.getByText(strings.upload.chooseFile);
+    const chooseFileLabel = chooseFileBtnText.closest("label");
+    expect(chooseFileLabel).not.toBeNull();
+    expect(chooseFileLabel?.hasAttribute("tabindex")).toBe(false);
+
+    const takePhotoBtnText = screen.getByText(strings.upload.takePhoto);
+    const takePhotoLabel = takePhotoBtnText.closest("label");
+    expect(takePhotoLabel).not.toBeNull();
+    expect(takePhotoLabel?.hasAttribute("tabindex")).toBe(false);
+
+    // CSS check for :has(input:focus-visible)
+    expect(prescriptionCss).toContain(".la-segment label:has(input:focus-visible)");
+    expect(prescriptionCss).toContain(".la-drop__actions label:has(input:focus-visible)");
+  });
+
+  // R1-F5: reduced motion in prescriptionCss
+  it("R1-F5: disables transitions under prefers-reduced-motion: reduce", () => {
+    expect(prescriptionCss).toContain("prefers-reduced-motion: reduce");
+    expect(prescriptionCss).toMatch(/@media[^{]*prefers-reduced-motion:\s*reduce[^{]*\{[\s\S]*?\.la-tab[\s\S]*?transition:\s*none/);
+    expect(prescriptionCss).toMatch(/@media[^{]*prefers-reduced-motion:\s*reduce[^{]*\{[\s\S]*?\.la-segment label[\s\S]*?transition:\s*none/);
+    expect(prescriptionCss).toMatch(/@media[^{]*prefers-reduced-motion:\s*reduce[^{]*\{[\s\S]*?\.la-drop[\s\S]*?transition:\s*none/);
+  });
+
+  // R1-F6: maps ApiError.code to strings.ts without rendering raw err.message or unknown codes, and rejects invalid MIME types even with allowed extension
+  it("R1-F6: maps ApiError.code to strings.ts without rendering raw err.message or unknown codes, and rejects invalid MIME types even with allowed extension", async () => {
+    const state: ConfiguratorState = {
+      ...createInitialState(),
+      catalog: mockCatalog,
+      rxType: "SINGLE_VISION",
+    };
+
+    const mockApi: ApiClient = {
+      proxyBase: "/apps/lens-advisor",
+      getCatalog: vi.fn(),
+      submitPrescription: vi.fn().mockRejectedValue(
+        new ApiError({
+          status: 400,
+          message: 'Zod raw error dump: [{"message": "Invalid"}]',
+          code: "VALIDATION_FAILED",
+        }),
+      ),
+      getUploadUrl: vi.fn(),
+      uploadFile: vi.fn(),
+    };
+
+    render(<TestWrapper initialState={state} api={mockApi} />);
+
+    const odSph = screen.getByLabelText(/Right eye.*Sphere/i);
+    const osSph = screen.getByLabelText(/Left eye.*Sphere/i);
+    const pdInput = screen.getByLabelText(/PD \(mm\)/i);
+
+    fireEvent.input(odSph, { target: { value: "-2.00" } });
+    fireEvent.blur(odSph);
+    fireEvent.input(osSph, { target: { value: "-2.00" } });
+    fireEvent.blur(osSph);
+    fireEvent.input(pdInput, { target: { value: "63" } });
+    fireEvent.blur(pdInput);
+
+    const continueBtn = screen.getByRole("button", { name: "Continue" });
+    await waitFor(() => {
+      expect((continueBtn as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    await act(async () => {
+      fireEvent.click(continueBtn);
+    });
+
+    // Shows mapped strings message, NOT raw zod dump
+    await waitFor(() => {
+      expect(screen.queryByText(/Zod raw error dump/i)).toBeNull();
+      expect(screen.getByText(strings.apiErrors.VALIDATION_FAILED)).not.toBeNull();
+    });
+
+    // Now test upload tab with disallowed MIME type and .pdf extension
+    fireEvent.click(screen.getByRole("tab", { name: /Upload/i }));
+
+    const disallowedMimeFile = new File(["dummy content"], "prescription.pdf", {
+      type: "application/octet-stream",
+    });
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(fileInput, { target: { files: [disallowedMimeFile] } });
+    });
+
+    expect(screen.getByText(strings.upload.errors.invalidType)).not.toBeNull();
+    expect(mockApi.getUploadUrl).not.toHaveBeenCalled();
+  });
+
+  // R1-F8: progress element during upload
+  it("R1-F8: displays progress element with accessible label during upload", async () => {
+    let resolveUpload: () => void;
+    const uploadPromise = new Promise<{ rxRef: string }>((resolve) => {
+      resolveUpload = () => resolve({ rxRef: "rx-uploaded-progress" });
+    });
+
+    const state: ConfiguratorState = {
+      ...createInitialState(),
+      catalog: mockCatalog,
+      rxType: "SINGLE_VISION",
+    };
+
+    const mockApi: ApiClient = {
+      proxyBase: "/apps/lens-advisor",
+      getCatalog: vi.fn(),
+      submitPrescription: vi.fn().mockImplementation(() => uploadPromise),
+      getUploadUrl: vi.fn().mockResolvedValue({ uploadUrl: "https://upload.example.com", key: "k1", draftId: "d1" }),
+      uploadFile: vi.fn().mockResolvedValue(undefined),
+    };
+
+    render(<TestWrapper initialState={state} api={mockApi} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /Upload/i }));
+
+    const validFile = new File(["dummy"], "rx.png", { type: "image/png" });
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+
+    act(() => {
+      fireEvent.change(fileInput, { target: { files: [validFile] } });
+    });
+
+    // Check for progress element with accessible label
+    await waitFor(() => {
+      const progressEl = screen.getByRole("progressbar");
+      expect(progressEl).not.toBeNull();
+      expect(progressEl.getAttribute("aria-label")).toBe(strings.upload.progressLabel);
+    });
+
+    await act(async () => {
+      resolveUpload!();
+    });
   });
 });

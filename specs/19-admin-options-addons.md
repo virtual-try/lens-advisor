@@ -1,6 +1,6 @@
 # Spec 19 — Admin: lens options and add-ons
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 09, Spec 13, Spec 14, Spec 17
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —

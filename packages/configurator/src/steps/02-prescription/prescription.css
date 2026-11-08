@@ -247,6 +247,11 @@
   box-shadow: 0 0 0 var(--la-border-width) var(--la-hairline-2);
 }
 
+.la-segment label:has(input:focus-visible) {
+  outline: var(--la-focus-outline);
+  outline-offset: var(--la-focus-offset);
+}
+
 .la-segment input {
   position: absolute;
   width: var(--la-border-width);
@@ -342,6 +347,11 @@
   gap: var(--la-space-3);
 }
 
+.la-drop__actions label:has(input:focus-visible) {
+  outline: var(--la-focus-outline);
+  outline-offset: var(--la-focus-offset);
+}
+
 .la-file {
   display: flex;
   align-items: center;
@@ -379,11 +389,41 @@
 
 .la-upload-progress {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: var(--la-space-2);
   margin-top: var(--la-space-3);
   font-size: var(--la-text-sm);
   color: var(--la-muted);
+}
+
+.la-progress {
+  width: 100%;
+  height: var(--la-space-2);
+  border-radius: var(--la-radius-full);
+  appearance: none;
+  border: none;
+  background: var(--la-hairline);
+  overflow: hidden;
+}
+
+.la-progress::-webkit-progress-bar {
+  background: var(--la-hairline);
+}
+
+.la-progress::-webkit-progress-value {
+  background: var(--la-accent);
+}
+
+.la-progress::-moz-progress-bar {
+  background: var(--la-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .la-tab,
+  .la-segment label,
+  .la-drop {
+    transition: none;
+  }
 }
 
 /* Mobile responsive */

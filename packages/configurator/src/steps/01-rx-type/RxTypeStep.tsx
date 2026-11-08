@@ -127,7 +127,10 @@ export function RxTypeStep({ state, dispatch }: StepProps): JSX.Element {
                   name="rx-type"
                   value={opt.type}
                   checked={isSelected}
-                  onChange={() => dispatch({ type: "SET_RX_TYPE", rxType: opt.type })}
+                  onChange={() => {
+                    dispatch({ type: "SET_RX_TYPE", rxType: opt.type });
+                    dispatch({ type: "SET_PRESCRIPTION_REF", prescriptionRef: "" });
+                  }}
                 />
                 {opt.renderPictogram()}
                 <span class="la-choice__body">

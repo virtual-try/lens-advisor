@@ -11,7 +11,12 @@ import {
   validatePrescription,
   type RxValidationCode,
 } from "../../../../rx-core/src/rx/validate.js";
-import type { Pd, Prescription } from "../../../../rx-core/src/index.js";
+import {
+  formatAxis,
+  formatDiopter,
+  type Pd,
+  type Prescription,
+} from "../../../../rx-core/src/index.js";
 import { ApiError } from "../../shared/api";
 import type { StepProps } from "../../shell/types";
 import { strings } from "./strings";
@@ -29,8 +34,8 @@ const ALLOWED_MIME_TYPES = new Set([
 const ALLOWED_EXTENSIONS = new Set(["jpg", "jpeg", "png", "heic", "pdf"]);
 
 function isFileTypeAllowed(file: File): boolean {
-  if (file.type && ALLOWED_MIME_TYPES.has(file.type.toLowerCase())) {
-    return true;
+  if (file.type && file.type.trim().length > 0) {
+    return ALLOWED_MIME_TYPES.has(file.type.toLowerCase());
   }
   const ext = file.name.split(".").pop()?.toLowerCase();
   return ext ? ALLOWED_EXTENSIONS.has(ext) : false;
@@ -39,12 +44,12 @@ function isFileTypeAllowed(file: File): boolean {
 function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) {
     const kb = Math.round(bytes / 1024);
-    return `${kb} KB`;
+    return `${kb} ${strings.upload.units.kb}`;
   }
   const tenths = Math.round((bytes * 10) / (1024 * 1024));
   const whole = Math.floor(tenths / 10);
   const frac = tenths % 10;
-  return `${whole}.${frac} MB`;
+  return `${whole}.${frac} ${strings.upload.units.mb}`;
 }
 
 function mapPathToFieldKey(path: string): string | null {
@@ -87,35 +92,90 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
   const manualEnabled = state.catalog?.settings?.manualRxEnabled !== false;
   const uploadEnabled = state.catalog?.settings?.rxUploadEnabled !== false;
 
+  const initialRx = state.prescription;
+  const hasUploadedFile = Boolean(!state.prescription && state.prescriptionRef);
+
   const showTabs = manualEnabled && uploadEnabled;
-  const defaultTab = manualEnabled ? "manual" : "upload";
+  const defaultTab = hasUploadedFile
+    ? "upload"
+    : manualEnabled
+      ? "manual"
+      : "upload";
   const [activeTab, setActiveTab] = useState<"manual" | "upload">(defaultTab);
 
-  // Manual inputs
-  const [odSph, setOdSph] = useState("");
-  const [odCyl, setOdCyl] = useState("");
-  const [odAxis, setOdAxis] = useState("");
-  const [odAdd, setOdAdd] = useState("");
+  // Manual inputs (rehydrated from state.prescription)
+  const [odSph, setOdSph] = useState(() =>
+    initialRx?.od.sph !== undefined ? formatDiopter(initialRx.od.sph) : "",
+  );
+  const [odCyl, setOdCyl] = useState(() =>
+    initialRx?.od.cyl !== undefined ? formatDiopter(initialRx.od.cyl) : "",
+  );
+  const [odAxis, setOdAxis] = useState(() =>
+    initialRx?.od.axis !== undefined ? formatAxis(initialRx.od.axis) : "",
+  );
+  const [odAdd, setOdAdd] = useState(() =>
+    initialRx?.od.add !== undefined ? formatDiopter(initialRx.od.add) : "",
+  );
 
-  const [osSph, setOsSph] = useState("");
-  const [osCyl, setOsCyl] = useState("");
-  const [osAxis, setOsAxis] = useState("");
-  const [osAdd, setOsAdd] = useState("");
+  const [osSph, setOsSph] = useState(() =>
+    initialRx?.os.sph !== undefined ? formatDiopter(initialRx.os.sph) : "",
+  );
+  const [osCyl, setOsCyl] = useState(() =>
+    initialRx?.os.cyl !== undefined ? formatDiopter(initialRx.os.cyl) : "",
+  );
+  const [osAxis, setOsAxis] = useState(() =>
+    initialRx?.os.axis !== undefined ? formatAxis(initialRx.os.axis) : "",
+  );
+  const [osAdd, setOsAdd] = useState(() =>
+    initialRx?.os.add !== undefined ? formatDiopter(initialRx.os.add) : "",
+  );
 
-  const [pdMode, setPdMode] = useState<"single" | "dual">("single");
-  const [singlePd, setSinglePd] = useState("");
-  const [dualPdOd, setDualPdOd] = useState("");
-  const [dualPdOs, setDualPdOs] = useState("");
+  const [pdMode, setPdMode] = useState<"single" | "dual">(() => {
+    if (initialRx?.pd && "od" in initialRx.pd) return "dual";
+    return "single";
+  });
+  const [singlePd, setSinglePd] = useState(() => {
+    if (initialRx?.pd && "single" in initialRx.pd) {
+      return String(initialRx.pd.single / 10);
+    }
+    return "";
+  });
+  const [dualPdOd, setDualPdOd] = useState(() => {
+    if (initialRx?.pd && "od" in initialRx.pd) {
+      return String(initialRx.pd.od / 10);
+    }
+    return "";
+  });
+  const [dualPdOs, setDualPdOs] = useState(() => {
+    if (initialRx?.pd && "os" in initialRx.pd) {
+      return String(initialRx.pd.os / 10);
+    }
+    return "";
+  });
 
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // Upload inputs
+  // Upload inputs (rehydrated if prescriptionRef exists without manual Rx)
   const [uploadedFile, setUploadedFile] = useState<{
     name: string;
     size: string;
     key?: string;
-  } | null>(null);
+  } | null>(() => {
+    if (hasUploadedFile) {
+      return {
+        name: strings.upload.fileChip.onFile,
+        size: "",
+      };
+    }
+    return null;
+  });
+
+  const clearPrescriptionRef = useCallback(() => {
+    if (state.prescriptionRef) {
+      dispatch({ type: "SET_PRESCRIPTION_REF", prescriptionRef: "" });
+    }
+  }, [dispatch, state.prescriptionRef]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -353,6 +413,7 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
   };
 
   const handleCopyEye = () => {
+    clearPrescriptionRef();
     setOsSph(odSph);
     setOsCyl(odCyl);
     setOsAxis(odAxis);
@@ -456,12 +517,15 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
           const key = mapPathToFieldKey(f.path);
           if (key) {
             const codeKey = f.code as RxValidationCode;
-            errs[key] = strings.errors[codeKey] || f.code;
+            errs[key] = strings.errors[codeKey] || strings.errors.GENERIC || strings.errors.INVALID;
           }
         }
         setFieldErrors((prev) => ({ ...prev, ...errs }));
       } else {
-        setSubmitError(strings.errors.SUBMIT_FAILED);
+        const apiCode = err instanceof ApiError ? (err.code as keyof typeof strings.apiErrors) : undefined;
+        setSubmitError(
+          (apiCode && strings.apiErrors[apiCode]) || strings.errors.SUBMIT_FAILED,
+        );
       }
     }
   }, [
@@ -486,6 +550,7 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
 
   // Handle file upload
   const handleUploadFile = async (file: File) => {
+    clearPrescriptionRef();
     setUploadError(null);
 
     if (file.size > MAX_FILE_SIZE_BYTES) {
@@ -514,9 +579,12 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
       });
       dispatch({ type: "SET_PRESCRIPTION_REF", prescriptionRef: submitRes.rxRef });
     } catch (err: unknown) {
-      setUploadError(
-        err instanceof Error ? err.message : strings.upload.errors.uploadFailed,
-      );
+      if (err instanceof ApiError) {
+        const apiCode = err.code as keyof typeof strings.apiErrors;
+        setUploadError(strings.apiErrors[apiCode] || strings.upload.errors.uploadFailed);
+      } else {
+        setUploadError(strings.upload.errors.uploadFailed);
+      }
     } finally {
       setIsUploading(false);
     }
@@ -546,18 +614,17 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
       if (state.rxType === "NON_PRESCRIPTION") return;
       if (state.prescriptionRef) return; // already submitted, allow continue
 
-      if (activeTab === "manual") {
-        e.stopPropagation();
-        e.preventDefault();
-        await handleManualSubmit();
-      }
+      // Submit manual Rx whenever the typed Rx is valid and there is no rxRef, whichever tab is active
+      e.stopPropagation();
+      e.preventDefault();
+      await handleManualSubmit();
     };
 
     sheet.addEventListener("click", handleSheetClick, true);
     return () => {
       sheet.removeEventListener("click", handleSheetClick, true);
     };
-  }, [activeTab, handleManualSubmit, state.prescriptionRef, state.rxType]);
+  }, [handleManualSubmit, state.prescriptionRef, state.rxType]);
 
   return (
     <div class="la-step-prescription" ref={containerRef}>
@@ -610,28 +677,25 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
             }}
           >
             <div class="la-rx">
-              <div class="la-rx__head" aria-hidden="true">
+              <div class="la-rx__head">
                 <span />
                 <span class="la-rx__eye" id="eye-od">
-                  {strings.grid.rightEye}
-                  <small>{strings.grid.rightEyeShort}</small>
+                  {strings.grid.rightEye}{" "}
+                  <small>({strings.grid.rightEyeShort})</small>
                 </span>
                 <span class="la-rx__eye" id="eye-os">
-                  {strings.grid.leftEye}
-                  <small>{strings.grid.leftEyeShort}</small>
+                  {strings.grid.leftEye}{" "}
+                  <small>({strings.grid.leftEyeShort})</small>
                 </span>
               </div>
 
               {/* Sphere row */}
               <div class="la-rx__row">
                 <div class="la-rx__label" id="lbl-sph">
-                  <strong>{strings.grid.sphere}</strong>
+                  <strong id="lbl-sph-title">{strings.grid.sphere}</strong>
                   <span>{strings.grid.sphereDesc}</span>
                 </div>
                 <div class="la-rx__cell">
-                  <label for="od-sph" class="la-sr">
-                    {strings.grid.srLabelOdPrefix}{strings.grid.sphere}
-                  </label>
                   <input
                     class="la-control"
                     id="od-sph"
@@ -640,8 +704,10 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
                     value={odSph}
                     onInput={(e) => {
                       setOdSph((e.target as HTMLInputElement).value);
+                      clearPrescriptionRef();
                     }}
                     onBlur={() => validateField("odSph")}
+                    aria-labelledby="eye-od lbl-sph-title"
                     aria-describedby="od-sph-error"
                     aria-invalid={Boolean(fieldErrors.odSph)}
                   />
@@ -654,9 +720,6 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
                   </p>
                 </div>
                 <div class="la-rx__cell">
-                  <label for="os-sph" class="la-sr">
-                    {strings.grid.srLabelOsPrefix}{strings.grid.sphere}
-                  </label>
                   <input
                     class="la-control"
                     id="os-sph"
@@ -665,8 +728,10 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
                     value={osSph}
                     onInput={(e) => {
                       setOsSph((e.target as HTMLInputElement).value);
+                      clearPrescriptionRef();
                     }}
                     onBlur={() => validateField("osSph")}
+                    aria-labelledby="eye-os lbl-sph-title"
                     aria-describedby="os-sph-error"
                     aria-invalid={Boolean(fieldErrors.osSph)}
                   />
@@ -683,13 +748,10 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
               {/* Cylinder row */}
               <div class="la-rx__row">
                 <div class="la-rx__label" id="lbl-cyl">
-                  <strong>{strings.grid.cylinder}</strong>
+                  <strong id="lbl-cyl-title">{strings.grid.cylinder}</strong>
                   <span>{strings.grid.cylinderDesc}</span>
                 </div>
                 <div class="la-rx__cell">
-                  <label for="od-cyl" class="la-sr">
-                    {strings.grid.srLabelOdPrefix}{strings.grid.cylinder}
-                  </label>
                   <input
                     class="la-control"
                     id="od-cyl"
@@ -698,8 +760,10 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
                     value={odCyl}
                     onInput={(e) => {
                       setOdCyl((e.target as HTMLInputElement).value);
+                      clearPrescriptionRef();
                     }}
                     onBlur={() => validateField("odCyl")}
+                    aria-labelledby="eye-od lbl-cyl-title"
                     aria-describedby="od-cyl-error"
                     aria-invalid={Boolean(fieldErrors.odCyl)}
                   />
@@ -712,9 +776,6 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
                   </p>
                 </div>
                 <div class="la-rx__cell">
-                  <label for="os-cyl" class="la-sr">
-                    {strings.grid.srLabelOsPrefix}{strings.grid.cylinder}
-                  </label>
                   <input
                     class="la-control"
                     id="os-cyl"
@@ -723,8 +784,10 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
                     value={osCyl}
                     onInput={(e) => {
                       setOsCyl((e.target as HTMLInputElement).value);
+                      clearPrescriptionRef();
                     }}
                     onBlur={() => validateField("osCyl")}
+                    aria-labelledby="eye-os lbl-cyl-title"
                     aria-describedby="os-cyl-error"
                     aria-invalid={Boolean(fieldErrors.osCyl)}
                   />
@@ -741,13 +804,10 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
               {/* Axis row */}
               <div class="la-rx__row">
                 <div class="la-rx__label" id="lbl-axis">
-                  <strong>{strings.grid.axis}</strong>
+                  <strong id="lbl-axis-title">{strings.grid.axis}</strong>
                   <span>{strings.grid.axisDesc}</span>
                 </div>
                 <div class="la-rx__cell">
-                  <label for="od-axis" class="la-sr">
-                    {strings.grid.srLabelOdPrefix}{strings.grid.axis}
-                  </label>
                   <input
                     class="la-control"
                     id="od-axis"
@@ -757,8 +817,10 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
                     value={odAxis}
                     onInput={(e) => {
                       setOdAxis((e.target as HTMLInputElement).value);
+                      clearPrescriptionRef();
                     }}
                     onBlur={() => validateField("odAxis")}
+                    aria-labelledby="eye-od lbl-axis-title"
                     aria-describedby="od-axis-error"
                     aria-invalid={Boolean(fieldErrors.odAxis)}
                   />
@@ -771,9 +833,6 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
                   </p>
                 </div>
                 <div class="la-rx__cell">
-                  <label for="os-axis" class="la-sr">
-                    {strings.grid.srLabelOsPrefix}{strings.grid.axis}
-                  </label>
                   <input
                     class="la-control"
                     id="os-axis"
@@ -783,8 +842,10 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
                     value={osAxis}
                     onInput={(e) => {
                       setOsAxis((e.target as HTMLInputElement).value);
+                      clearPrescriptionRef();
                     }}
                     onBlur={() => validateField("osAxis")}
+                    aria-labelledby="eye-os lbl-axis-title"
                     aria-describedby="os-axis-error"
                     aria-invalid={Boolean(fieldErrors.osAxis)}
                   />
@@ -802,13 +863,10 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
               {isAddApplicable && (
                 <div class="la-rx__row">
                   <div class="la-rx__label" id="lbl-add">
-                    <strong>{strings.grid.add}</strong>
+                    <strong id="lbl-add-title">{strings.grid.add}</strong>
                     <span>{strings.grid.addDesc}</span>
                   </div>
                   <div class="la-rx__cell">
-                    <label for="od-add" class="la-sr">
-                      {strings.grid.srLabelOdPrefix}{strings.grid.add}
-                    </label>
                     <input
                       class="la-control"
                       id="od-add"
@@ -817,8 +875,10 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
                       value={odAdd}
                       onInput={(e) => {
                         setOdAdd((e.target as HTMLInputElement).value);
+                        clearPrescriptionRef();
                       }}
                       onBlur={() => validateField("odAdd")}
+                      aria-labelledby="eye-od lbl-add-title"
                       aria-describedby="od-add-error"
                       aria-invalid={Boolean(fieldErrors.odAdd)}
                     />
@@ -831,9 +891,6 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
                     </p>
                   </div>
                   <div class="la-rx__cell">
-                    <label for="os-add" class="la-sr">
-                      {strings.grid.srLabelOsPrefix}{strings.grid.add}
-                    </label>
                     <input
                       class="la-control"
                       id="os-add"
@@ -842,8 +899,10 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
                       value={osAdd}
                       onInput={(e) => {
                         setOsAdd((e.target as HTMLInputElement).value);
+                        clearPrescriptionRef();
                       }}
                       onBlur={() => validateField("osAdd")}
+                      aria-labelledby="eye-os lbl-add-title"
                       aria-describedby="os-add-error"
                       aria-invalid={Boolean(fieldErrors.osAdd)}
                     />
@@ -879,6 +938,7 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
                     value="single"
                     checked={pdMode === "single"}
                     onChange={() => {
+                      clearPrescriptionRef();
                       setPdMode("single");
                       const errs = { ...fieldErrors };
                       delete errs.dualPdOd;
@@ -895,6 +955,7 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
                     value="dual"
                     checked={pdMode === "dual"}
                     onChange={() => {
+                      clearPrescriptionRef();
                       setPdMode("dual");
                       const errs = { ...fieldErrors };
                       delete errs.singlePd;
@@ -908,7 +969,7 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
               <div class="la-pd__fields">
                 {pdMode === "single" ? (
                   <div class="la-pd__field">
-                    <label for="pd-single" class="la-pd__label">
+                    <label for="pd-single" class="la-pd__label" id="lbl-pd-single">
                       {strings.pd.singleLabel}
                     </label>
                     <input
@@ -919,6 +980,7 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
                       value={singlePd}
                       onInput={(e) => {
                         setSinglePd((e.target as HTMLInputElement).value);
+                        clearPrescriptionRef();
                       }}
                       onBlur={() => validateField("singlePd")}
                       aria-describedby="pd-single-error"
@@ -935,7 +997,7 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
                 ) : (
                   <>
                     <div class="la-pd__field">
-                      <label for="pd-od" class="la-pd__label">
+                      <label for="pd-od" class="la-pd__label" id="lbl-pd-od">
                         {strings.pd.dualRightLabel}
                       </label>
                       <input
@@ -946,6 +1008,7 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
                         value={dualPdOd}
                         onInput={(e) => {
                           setDualPdOd((e.target as HTMLInputElement).value);
+                          clearPrescriptionRef();
                         }}
                         onBlur={() => validateField("dualPdOd")}
                         aria-describedby="pd-od-error"
@@ -960,7 +1023,7 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
                       </p>
                     </div>
                     <div class="la-pd__field">
-                      <label for="pd-os" class="la-pd__label">
+                      <label for="pd-os" class="la-pd__label" id="lbl-pd-os">
                         {strings.pd.dualLeftLabel}
                       </label>
                       <input
@@ -971,6 +1034,7 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
                         value={dualPdOs}
                         onInput={(e) => {
                           setDualPdOs((e.target as HTMLInputElement).value);
+                          clearPrescriptionRef();
                         }}
                         onBlur={() => validateField("dualPdOs")}
                         aria-describedby="pd-os-error"
@@ -1067,7 +1131,7 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
               <span class="la-drop__desktop-only">{strings.upload.dropHintDesktop}</span>
             </p>
             <div class="la-drop__actions">
-              <label class="la-btn la-btn--ghost" tabIndex={0}>
+              <label class="la-btn la-btn--ghost">
                 <span>{uploadedFile ? strings.upload.replaceFile : strings.upload.chooseFile}</span>
                 <input
                   ref={fileInputRef}
@@ -1082,7 +1146,7 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
                   }}
                 />
               </label>
-              <label class="la-btn la-btn--ghost" tabIndex={0}>
+              <label class="la-btn la-btn--ghost">
                 <span>{strings.upload.takePhoto}</span>
                 <input
                   ref={cameraInputRef}
@@ -1113,6 +1177,10 @@ export function PrescriptionStep({ state, dispatch, api }: StepProps): JSX.Eleme
 
           {isUploading && (
             <div class="la-upload-progress" role="status">
+              <progress
+                class="la-progress"
+                aria-label={strings.upload.progressLabel}
+              />
               <span>{strings.upload.uploading}</span>
             </div>
           )}

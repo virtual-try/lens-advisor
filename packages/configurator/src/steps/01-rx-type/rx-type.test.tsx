@@ -5,6 +5,7 @@ import { createInitialState } from "../../shell/reducer";
 import type { ConfiguratorState, StepProps } from "../../shell/types";
 import { RxTypeStep, getLowestPriceForRxType } from "./RxTypeStep";
 import { isApplicable, isComplete, rxTypeStep } from "./index";
+import rxTypeCss from "./rx-type.css?inline";
 import { strings } from "./strings";
 
 const mockCatalog: CatalogResponse = {
@@ -263,6 +264,15 @@ describe("01-rx-type step", () => {
       type: "SET_RX_TYPE",
       rxType: "PROGRESSIVE",
     });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "SET_PRESCRIPTION_REF",
+      prescriptionRef: "",
+    });
+  });
+
+  it("R1-F5: disables transitions under prefers-reduced-motion: reduce", () => {
+    expect(rxTypeCss).toContain("prefers-reduced-motion: reduce");
+    expect(rxTypeCss).toMatch(/@media[^{]*prefers-reduced-motion:\s*reduce[^{]*\{[\s\S]*?\.la-choice[\s\S]*?transition:\s*none/);
   });
 
   it("reflects checked state for selected rxType", () => {
