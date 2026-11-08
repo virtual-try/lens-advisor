@@ -1,6 +1,6 @@
 # Spec 23 — orders/create webhook → lab orders
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 02, Spec 08, Spec 11, Spec 22
 **Model:** Heavy — `claude-opus-5-5` · `gpt-6-astra` · `gemini-3.1-pro-preview`
 **Issue:** —
