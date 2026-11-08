@@ -74,6 +74,7 @@ and run once, in spec 33. `Model` is the tier; per-provider ids are on each spec
 | 32 | [Admin: lab orders list, resend and ticket download](./32-admin-lab-orders.md) | 7 | Standard | Admin lab orders list, detail, resend, ticket download |
 | 33 | [End-to-end suite](./33-e2e-suite.md) | 8 | Heavy | Installs Playwright, one test per flow (server + dev-store storefront), runs them. |
 | 34 | [Verification pass](./34-verification-pass.md) | 9 | Heavy | Final gate: clean build, both suites, every done-when re-checked, duplication sweep. |
+| 35 | [Fix verification findings](./35-verification-findings.md) | 10 | Light | Fix invalid token --la-radius-full and object-store test process.env references |
 
 ## Waves
 
