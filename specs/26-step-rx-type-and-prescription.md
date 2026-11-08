@@ -1,6 +1,6 @@
 # Spec 26 — Configurator steps 1–2: Rx type and prescription
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 10, Spec 16
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —
@@ -129,5 +129,5 @@ Real, used now: shell (16), rx-core (10). Tests: fake API client in context. Stu
   - `pnpm build`: passed (`configurator.js` 142948 B, `loader.css` 3319 B, `loader.js` 1314 B <= 10240 B limit).
   - `pnpm test`: 60 test files passed, 1009 tests passed (0 failures).
   - `git diff --check`: clean (no whitespace errors or conflict markers).
-- **2026-11-08** — Evidence (orchestro spec verify, tree af19c300): install pass · typecheck pass · lint pass · build pass · test pass 1242/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 4a75ff09): install pass · typecheck pass · lint pass · build pass · test pass 1242/0/0
 - **2026-11-08** — Merged origin/main bringing branch up to date with specs 27, 28, and 30. Resolved merge conflicts in 4 files: packages/configurator/src/shell/reducer.ts (merged GO_TO_STEP stepId lookup from main with step completion guard from spec 26; retained CLEAR_PRESCRIPTION and SET_RX_TYPE reset logic alongside lensGroupId and lens actions), packages/configurator/src/shell/reducer.test.ts (retained test suites from both sides), packages/configurator/src/shell/shell.test.tsx (retained all tests from both sides: canContinue/onContinue hook tests and lens-group continue tests), and extensions/lens-configurator/assets/configurator.js (checked out theirs then rebuilt configurator bundle). Gates: pnpm typecheck (pass), pnpm lint (pass), pnpm build (pass), pnpm test with TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:54316/lens_test (pass: 69 test files passed, 1242 tests passed, 0 unhandled errors).
