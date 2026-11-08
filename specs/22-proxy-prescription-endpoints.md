@@ -1,6 +1,6 @@
 # Spec 22 — App proxy: prescription submit and upload endpoints
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 02, Spec 05, Spec 06, Spec 10
 **Model:** Heavy — `claude-opus-5-5` · `gpt-6-astra` · `gemini-3.1-pro-preview`
 **Issue:** —
