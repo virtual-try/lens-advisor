@@ -213,8 +213,8 @@ model LabOrder {
   bundleId       String
   prescriptionId String?
   prescription   Prescription?  @relation(fields: [prescriptionId], references: [id], onDelete: SetNull)
-  lensId         String
-  lens           Lens           @relation(fields: [lensId], references: [id], onDelete: Cascade)
+  lensId         String?
+  lens           Lens?          @relation(fields: [lensId], references: [id], onDelete: SetNull)
   optionValueIds String[]       @default([])
   addOnIds       String[]       @default([])
   frameTitle     String
