@@ -1,6 +1,6 @@
 # Spec 19 — Admin: lens options and add-ons
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 09, Spec 13, Spec 14, Spec 17
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —
@@ -90,7 +90,7 @@ Real, used now: 14, 17, 09. Tests: `testConfig()` loader/action calls, fake admi
     - `pnpm lint` -> exit 0 (0 errors, 0 warnings)
     - `pnpm build` -> exit 0
     - `git diff --check` -> exit 0
-- **2026-11-08** — Evidence (orchestro spec verify, tree af474f62): install pass · typecheck pass · lint pass · build pass · test pass 723/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 75e42fad): install pass · typecheck pass · lint pass · build pass · test pass 1094/0/0
 - **2026-11-08** — Addressed Review R5 findings:
   - R5-F1: Upon successful save without syncFailed, navigate back to `/app/options` and display 'Saved' toast via App Bridge; when syncFailed is true, remain on the form and display the sync failed badge (both `app.options.$id.tsx` and `app.add-ons.$id.tsx`).
   - R5-F3: Reworded swatch help example in `OptionValueForm` to colour name 'black', removing the raw hex literal `#1a1a1a` to satisfy INV-7.
