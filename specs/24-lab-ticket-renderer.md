@@ -63,10 +63,29 @@ Real, used now: compiler (12), formatters (03). Stubbed: none. Consumer: 30.
 
 ## Done when
 
-- [ ] `pnpm vitest run app/features/lab-orders/ticket` passes: every Examples row is a case; PDF text extraction asserts both eyes and the lab code. [unit]
-- [ ] INV-2: a test forces a render error and asserts the thrown message and captured logs contain no Rx value. [unit]
-- [ ] INV-5: the ticket's numbers come from spec 03 formatters (`rg 'toFixed' app/features/lab-orders/ticket` finds nothing). [static]
-- [ ] `pnpm test` passes with 0 failures. [unit]
-- [ ] `specs/inventory/24-lab-ticket-renderer.md` lists `TicketData`, `renderPdf`, `renderCsv`. [static]
-- [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
-- [ ] `pnpm build` passes. [static]
+- [x] `pnpm vitest run app/features/lab-orders/ticket` passes: every Examples row is a case; PDF text extraction asserts both eyes and the lab code. [unit]
+- [x] INV-2: a test forces a render error and asserts the thrown message and captured logs contain no Rx value. [unit]
+- [x] INV-5: the ticket's numbers come from spec 03 formatters (`rg 'toFixed' app/features/lab-orders/ticket` finds nothing). [static]
+- [x] `pnpm test` passes with 0 failures. [unit]
+- [x] `specs/inventory/24-lab-ticket-renderer.md` lists `TicketData`, `renderPdf`, `renderCsv`. [static]
+- [x] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
+- [x] `pnpm build` passes. [static]
+
+## Log
+
+- **2026-11-08** — Spec 24 implemented by agy-1 in worktree `spec-24` (branch `spec/24-lab-ticket-renderer`). No git writes (lead commits). GitHub issue skipped: dispatch brief forbids git writes.
+- **2026-11-08** — Installed `pdfkit` 0.20.2 (root dependency) and `@types/pdfkit` 0.17.7, `pdf-parse` 2.4.5, `@types/pdf-parse` 1.1.5 (root devDependencies) for in-memory PDF generation and test text extraction.
+- **2026-11-08** — Built `app/features/lab-orders/ticket/{types.ts,csv-renderer.ts,pdf-renderer.ts,index.ts,ticket.test.ts}` and created inventory fragment `specs/inventory/24-lab-ticket-renderer.md`.
+- **2026-11-08** — Decisions: (1) `TicketData` models order name/number, frame title/SKU, lens name, lab-code template and chosen options/overrides, option labels, add-on names, prescription, source `MANUAL` / `UPLOAD`, file names, `rxOutOfLimits`, and notes. (2) `renderCsv` produces RFC 4180 CRLF output with header row and two rows (OD and OS); CSV injection protection prefixes values starting with `=`, `+`, `-`, or `@` with `'` on all non-diopter text columns, while safely omitting the prefix on numeric diopter columns (`sph`, `cyl`, `add`). (3) `renderPdf` streams a one-page A4 PDF containing order details, frame title/SKU, lens name, compiled lab code (spec 12), compiler warnings (`UNKNOWN_TOKEN`) under the code, selected options/add-ons, and prescription table for both eyes (or "Prescription file attached" and attached file list when source is `UPLOAD`); when `rxOutOfLimits=true`, renders a warning band across the page. (4) Both renderers format diopters via `formatDiopter`, axes via `formatAxis`, and PD via `formatPd` (spec 03 reuse, no local diopter math, no `toFixed`).
+- **2026-11-08** — Self-check 1: CSV injection tested and verified. Cells starting with `=`, `+`, `-`, `@` are prefixed with `'` on non-diopter fields (`frameTitle`, `notes`, `options`, etc.); numeric diopter columns (`sph`, `cyl`, `add`) are emitted without `'` prefix. Tested both negative (`-2.25`, `-0.50`) and positive (`+0.25`, `+2.00`) diopter values, plano (`PL`), and hostile formulas (`=CMD(...)`, `-50mm`, `@admin`).
+- **2026-11-08** — Self-check 2: INV-2 verified. Forced render errors in both `renderCsv` and `renderPdf` with distinctive test Rx values (SPH −7.75, CYL −1.25 × 137, ADD +2.50, PD 64.5, sensitive patient notes); verified that thrown error messages and captured console logs contain zero Rx values or notes.
+- **2026-11-08** — Self-check 3: Logic checklist (`spec-quality.md` §8) holds: all Examples table rows covered with unit test cases; PDF text extraction asserts both eyes and the compiled lab code; dual PD formatted per eye; plano SPH formatted as `PL`; special characters (quotes, commas, newlines) escaped per RFC 4180; long strings and unicode characters handled safely.
+- **2026-11-08** — Sabotage: (1) disable diopter exemption from CSV injection prefixing (`isNumericDiopter` check removed) → 4 tests red (`expected '\'-2.25' to be '-2.25'`), restored; (2) disable out-of-limits warning band check in `pdf-renderer.ts` (`if (false && data.rxOutOfLimits)`) → 1 test red (`expected PDF text to contain 'WARNING'`), restored.
+- **2026-11-08** — Gates after last code change:
+  - `pnpm vitest run app/features/lab-orders/ticket` → `Test Files  1 passed (1)` / `Tests  14 passed (14)`
+  - `rg 'toFixed' app/features/lab-orders/ticket` → 0 matches
+  - `pnpm test` → `Test Files  31 passed (31)` / `Tests  441 passed (441)`
+  - `pnpm typecheck` exit 0
+  - `pnpm lint` (`eslint . --max-warnings 0`) exit 0
+  - `pnpm build` exit 0
+- **2026-11-08** — Evidence (orchestro spec verify, tree ddd3582b): install pass · typecheck pass · lint pass · build pass · test pass 441/0/0
