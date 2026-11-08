@@ -1,6 +1,6 @@
 # Spec 22 — App proxy: prescription submit and upload endpoints
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 02, Spec 05, Spec 06, Spec 10
 **Model:** Heavy — `claude-opus-5-5` · `gpt-6-astra` · `gemini-3.1-pro-preview`
 **Issue:** —
@@ -113,7 +113,7 @@ Stubbed: none. Consumers: configurator steps (26, 29) via spec 16's client; spec
   - `pnpm lint` (`eslint . --max-warnings 0`): exit 0.
   - `pnpm build`: exit 0.
   - `git diff --check`: clean.
-- **2026-11-08** — Evidence (orchestro spec verify, tree 454ef4a8): install pass · typecheck pass · lint pass · build pass · test pass 479/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree e47f2538): install pass · typecheck pass · lint pass · build pass · test pass 752/0/0
 - **2026-11-08** — Fix round R4 by coder agy-3:
   - R4-F1: Enforced mutual exclusion between MANUAL and UPLOAD modes at spec 22 boundary (`app/features/prescriptions/schema.ts`, `PrescriptionsService.submitPrescription`). Ambiguous inputs mixing typed Rx and upload fields return 400 `AMBIGUOUS_RX_SOURCE` without modifying draft state. No edits made to `packages/rx-core`. Tested in service and route tests.
   - R4-F2: Moved verified-domain shop resolution into prescription service (`resolveShopByDomain`, `requestUploadUrlByDomain`, `submitPrescriptionByDomain`). Proxy routes (`app/routes/proxy.prescriptions.ts`, `app/routes/proxy.upload-url.ts`) authenticate, rate-limit, parse body, and call one service function with zero repository imports. Retained tests proving malformed/unsigned requests invoke no repository operations. Tested in service and route tests.
