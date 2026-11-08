@@ -74,6 +74,7 @@ and run once, in spec 33. `Model` is the tier; per-provider ids are on each spec
 | 32 | [Admin: lab orders list, resend and ticket download](./32-admin-lab-orders.md) | 7 | Standard | Admin lab orders list, detail, resend, ticket download |
 | 33 | [End-to-end suite](./33-e2e-suite.md) | 8 | Heavy | Installs Playwright, one test per flow (server + dev-store storefront), runs them. |
 | 34 | [Verification pass](./34-verification-pass.md) | 9 | Heavy | Final gate: clean build, both suites, every done-when re-checked, duplication sweep. |
+| 35 | [Fix: Web feature jobs glob fallback outside Vite](./35-fix-web-feature-jobs-glob.md) | 10 | Light | Fix registerWebFeatureJobs to support runtimes outside Vite bundler |
 
 ## Waves
 
@@ -132,6 +133,7 @@ Critical path: 00 → 01 → 03 → 10 → 22 → 23 → 30 → 32 → 33 → 34
 | 32 | 06, 09, 30 |
 | 33 | 18, 19, 20, 21, 22, 25, 26, 27, 29, 31, 32 |
 | 34 | 33 |
+| 35 | 08, 33 |
 
 ## Status shorthand
 

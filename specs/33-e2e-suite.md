@@ -65,9 +65,41 @@ store — so the integrated paths are proven once, after every implementation sp
 
 ## Done when
 
-- [ ] `pnpm test:e2e --project=server` passes headless with 0 failures (excluding `fixme` tests naming a fix spec). [e2e]
+- [x] `pnpm test:e2e --project=server` passes headless with 0 failures (excluding `fixme` tests naming a fix spec). [e2e]
 - [ ] `pnpm test:e2e --project=storefront` passes headless with 0 failures. [requires: Shopify dev store with app installed and block placed, E2E_STORE_URL/PASSWORD, running app URL]
-- [ ] Every row of the flow table has at least one test, named in the Log. [static]
-- [ ] Every app bug found has a numbered fix spec in `README.md` and `PROGRESS.md`. [static]
-- [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
-- [ ] `pnpm build` passes. [static]
+- [x] Every row of the flow table has at least one test, named in the Log. [static]
+- [x] Every app bug found has a numbered fix spec in `README.md` and `PROGRESS.md`. [static]
+- [x] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
+- [x] `pnpm build` passes. [static]
+
+## Log
+
+- **2026-11-08** — Installed `@playwright/test` and configured `playwright.config.ts` with `server` and `storefront` projects, `screenshot: "only-on-failure"`, and `trace: "retain-on-failure"`. Added `"test:e2e": "playwright test"` to `package.json` and updated `tsconfig.json`.
+- **Flow Table Test Coverage**:
+  - *Shop with no plan opens the admin*: `e2e/server/admin-plan.spec.ts` (`Flow 1: Shop with no plan opens admin -> redirect to plan selection`)
+  - *Create group + lens with limits, save*: `e2e/server/admin-lenses.spec.ts` (`Flow 2: Create group + lens with limits, save -> lens listed, sync badge Synced, variant id stored`)
+  - *Create option group with a priced value and an add-on*: `e2e/server/admin-options.spec.ts` (`Flow 3: Create option group with a priced value and an add-on -> priced value gets a variant; zero-price does not`)
+  - *Save settings with two lab emails, invalid email rejected*: `e2e/server/admin-settings.spec.ts` (`Flow 4: Save settings with two lab emails, invalid email rejected -> values persist after reload; error shown`)
+  - *Admin home checklist ticks after the above*: `e2e/server/admin-home.spec.ts` (`Flow 5: Checklist ticks after lens + lab email -> both ticked shows complete`)
+  - *Storefront: product page → Select lenses → SV → manual Rx → lens → options → add-ons → review → Add to cart*: `e2e/storefront/configurator.spec.ts` (`Flow 6: product page -> Select lenses -> SV -> manual Rx -> lens -> options -> add-ons -> review -> Add to cart`)
+  - *Storefront: Rx beyond a lens's SPH limit*: `e2e/storefront/configurator.spec.ts` (`Flow 7: Rx beyond a lens's SPH limit -> that lens is disabled with its reason`)
+  - *Storefront: upload path with a PNG*: `e2e/storefront/configurator.spec.ts` (`Flow 8: upload path with a PNG -> rxRef stored; review says 'Prescription on file'`)
+  - *Storefront: cart properties with storeRxInOrder off*: `e2e/storefront/configurator.spec.ts` (`Flow 9: cart properties with storeRxInOrder off -> no Rx value in the cart JSON (/cart.js)`)
+  - *Proxy call with a bad signature*: `e2e/server/proxy.spec.ts` (`Flow 10: Proxy call with bad signature (catalog or prescriptions) returns 401 Unauthorized`)
+  - *orders/create webhook for a fixture order*: `e2e/server/orders.spec.ts` (`Flow 11: Webhook orders/create intake -> lab order dispatch (PDF ticket uploaded, mail sent, status SENT)`)
+  - *Lab orders list → Resend*: `e2e/server/orders.spec.ts` (`Flow 12: Resend failed lab order -> resets to PENDING, transitions to SENT with timestamp`)
+  - *Compliance shop/redact*: `e2e/server/compliance.spec.ts` (`Flow 13: Compliance shop/redact -> shop rows and S3 prefix gone`)
+- **Triage & App Bugs**:
+  - Test bug fixed: Isolated `Session` table drops across test files by creating `e2e/helpers/shared-db.ts` to retain the migrated schema reference across sequential in-process server runs.
+  - Test bug fixed: Fixed `LabOrder` creation and assertion fields from non-existent `retryCount` and `emailSentAt` to schema fields `attempts` and `sentAt`.
+  - App bug triaged: `app/shared/queue/web-definitions.server.ts` unconditionally calls `import.meta.glob`, which throws `TypeError: (intermediate value).glob is not a function` outside Vite bundler execution when routes invoke `getQueue()`. Per binding non-scope rules, app code was not edited; tests in `e2e/server/orders.spec.ts` are marked `fixme`, and fix spec 35 (`specs/35-fix-web-feature-jobs-glob.md`) was created and appended to `specs/README.md` and `specs/PROGRESS.md`.
+- **Runner Summaries**:
+  - `pnpm test:e2e --project=server`: `2 skipped, 9 passed (1.7s)`
+  - `pnpm test:e2e --project=storefront`: `5 skipped (0.8s)` (requires live Shopify dev store; env missing)
+  - `pnpm test:e2e`: `7 skipped, 9 passed (2.4s)`
+  - `pnpm typecheck`: `✔ Generated Prisma Client ... Done in 1.3s` (0 errors)
+  - `pnpm lint`: `eslint . --max-warnings 0` (0 errors, 0 warnings)
+  - `pnpm build`: `build/client ... build/server/index.js 523.30 kB ... Done in 745ms` (0 errors)
+  - `pnpm test`: `Test Files 72 passed (72), Tests 1307 passed (1307), Duration 14.28s`
+- **Inventory Fragment**: `specs/inventory/33-e2e-suite.md` recorded for `e2e-shared-db`, `e2e-shopify-auth-fixtures`, `e2e-shopify-mock`, `e2e-storage-mail-mock`, and `e2e-seed-helpers`.
+- **2026-11-08** — Evidence (orchestro spec verify, tree e0cbeb76): install pass · typecheck pass · lint pass · build pass · test pass 1307/0/0
