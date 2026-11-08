@@ -49,6 +49,10 @@ Real, used now: compiler (12), formatters (03). Stubbed: none. Consumer: 30.
 | uploaded-file Rx | PDF text "Prescription file attached" | upload path |
 | `rxOutOfLimits=true` | PDF warning band text; CSV column `rx_out_of_limits=true` | flag |
 | lab-code warning `UNKNOWN_TOKEN` | printed under the code on the PDF | compiler warning |
+| minimal ticket (no options, no add-ons, no notes) | CSV emits empty cells for options, add-ons, files, notes; PDF renders "Options: None", "Add-ons: None", no Rx table | minimal / empty data |
+| single-item lists (`optionLabels=["Anti-Reflective Coating"]`, `addOnNames=["Edge Polish"]`, `uploadFileNames=["single_scan.pdf"]`) | CSV emits single values without delimiter; PDF renders exact single item without trailing comma or "+N more" | single-item list boundary |
+
+Ties and rounding do not apply in spec 24: all prescription values come pre-formatted from rx-core formatters (INV-5), so the renderers perform zero numeric rounding or tie-breaking.
 
 ## Steps
 
@@ -88,4 +92,11 @@ Real, used now: compiler (12), formatters (03). Stubbed: none. Consumer: 30.
   - `pnpm typecheck` exit 0
   - `pnpm lint` (`eslint . --max-warnings 0`) exit 0
   - `pnpm build` exit 0
-- **2026-11-08** — Evidence (orchestro spec verify, tree ddd3582b): install pass · typecheck pass · lint pass · build pass · test pass 441/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 25d6b2f2): install pass · typecheck pass · lint pass · build pass · test pass 447/0/0
+- **2026-11-08** — Review R1 fixes applied by agy-1 (accepted findings R1-F1..R1-F6):
+  - R1-F1: Fixed INV-2 error privacy so all renderer failures (including PDFKit-layer and stream errors) surface as a fixed, data-free error (`TICKET_RENDER_FAILED`) with no original message or cause. Added test forcing a PDFKit text-layer failure with sensitive Rx notes and asserted none reaches error or logs.
+  - R1-F2: Formatted CSV axes via rx-core `formatAxis` for both eyes (INV-5); added unit test verifying boundary axes 1 -> `001` and 180 -> `180`.
+  - R1-F3: Embedded Unicode TrueType font `DejaVuSans` and `DejaVuSans-Bold` from npm package `dejavu-fonts-ttf` (covering Latin, Latin-extended, Greek, Cyrillic) and asserted extracted Unicode text for 'Lunettes élégance Łódź'. Noted that CJK glyphs are out of scope for MVP; tested that CJK input renders 1 page without throwing.
+  - R1-F4: Enforced one-page A4 contract by truncating long lists with explicit '+N more' marker and constraining long text/notes. Added test for 200 options, 100 add-ons, and long notes, asserting parsed page count is exactly 1.
+  - R1-F5: Made PDF output deterministic by fixing PDF metadata timestamps `CreationDate` and `ModDate` to a fixed constant (no random IDs). Added test verifying byte equality across advanced fake clocks.
+  - R1-F6: Updated Examples table and test suite with minimal data (no options, no add-ons, no notes) and single-item list cases. Noted that ties and rounding do not apply (values come pre-formatted from rx-core, INV-5).

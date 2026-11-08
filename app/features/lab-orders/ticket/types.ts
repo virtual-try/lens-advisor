@@ -1,6 +1,8 @@
 import type { Prescription } from "../../../../packages/rx-core/src/types/index.js";
 import type { LabCodeSelectionsInput } from "../../../../packages/rx-core/src/lab-code/types.js";
 
+export const TICKET_RENDER_FAILED = "TICKET_RENDER_FAILED";
+
 export type PrescriptionSource = "MANUAL" | "UPLOAD";
 
 export interface TicketData {

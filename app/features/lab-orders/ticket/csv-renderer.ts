@@ -1,6 +1,6 @@
-import { formatDiopter, formatPd } from "../../../../packages/rx-core/src/format/index.js";
+import { formatAxis, formatDiopter, formatPd } from "../../../../packages/rx-core/src/format/index.js";
 import { compileLabCode } from "../../../../packages/rx-core/src/lab-code/index.js";
-import type { TicketData } from "./types.js";
+import { TICKET_RENDER_FAILED, type TicketData } from "./types.js";
 
 /**
  * Escapes a single CSV cell according to RFC 4180 and CSV formula injection rules.
@@ -122,7 +122,7 @@ export function renderCsv(data: TicketData): Buffer {
       "OD",
       odEye?.sph !== undefined ? escapeCsvCell(formatDiopter(odEye.sph), true) : "",
       odEye?.cyl !== undefined ? escapeCsvCell(formatDiopter(odEye.cyl), true) : "",
-      odEye?.axis !== undefined ? escapeCsvCell(String(odEye.axis)) : "",
+      odEye?.axis !== undefined ? escapeCsvCell(formatAxis(odEye.axis)) : "",
       odEye?.add !== undefined ? escapeCsvCell(formatDiopter(odEye.add), true) : "",
       escapeCsvCell(formatEyePd("OD")),
       escapeCsvCell(notesStr),
@@ -135,7 +135,7 @@ export function renderCsv(data: TicketData): Buffer {
       "OS",
       osEye?.sph !== undefined ? escapeCsvCell(formatDiopter(osEye.sph), true) : "",
       osEye?.cyl !== undefined ? escapeCsvCell(formatDiopter(osEye.cyl), true) : "",
-      osEye?.axis !== undefined ? escapeCsvCell(String(osEye.axis)) : "",
+      osEye?.axis !== undefined ? escapeCsvCell(formatAxis(osEye.axis)) : "",
       osEye?.add !== undefined ? escapeCsvCell(formatDiopter(osEye.add), true) : "",
       escapeCsvCell(formatEyePd("OS")),
       escapeCsvCell(notesStr),
@@ -145,12 +145,8 @@ export function renderCsv(data: TicketData): Buffer {
     const csvContent = `${headerLine}\r\n${odRow}\r\n${osRow}\r\n`;
 
     return Buffer.from(csvContent, "utf-8");
-  } catch (err: unknown) {
-    // INV-2: Error message must never contain prescription values
-    const safeMsg =
-      err instanceof Error
-        ? err.message.replace(/[-+]?\d+(\.\d+)?/g, "[NUM]")
-        : "Unknown render error";
-    throw new Error(`Failed to render CSV ticket: ${safeMsg}`);
+  } catch {
+    // INV-2: Fixed data-free error with no original message or cause
+    throw new Error(TICKET_RENDER_FAILED);
   }
 }

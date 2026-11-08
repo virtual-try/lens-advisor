@@ -1,7 +1,44 @@
+import { createRequire } from "module";
+import path from "path";
 import PDFDocument from "pdfkit";
 import { formatAxis, formatDiopter, formatPd } from "../../../../packages/rx-core/src/format/index.js";
 import { compileLabCode } from "../../../../packages/rx-core/src/lab-code/index.js";
-import type { TicketData } from "./types.js";
+import { TICKET_RENDER_FAILED, type TicketData } from "./types.js";
+
+const req = createRequire(import.meta.url);
+const pkgPath = req.resolve("dejavu-fonts-ttf/package.json");
+const FONT_REGULAR = path.join(path.dirname(pkgPath), "ttf/DejaVuSans.ttf");
+const FONT_BOLD = path.join(path.dirname(pkgPath), "ttf/DejaVuSans-Bold.ttf");
+
+// Fixed metadata timestamp for deterministic PDF output
+const FIXED_PDF_DATE = new Date("2026-01-01T00:00:00.000Z");
+
+function formatTruncatedList(
+  items: string[],
+  maxItems = 5,
+  maxItemLen = 50,
+): string {
+  if (items.length === 0) {
+    return "None";
+  }
+  const slice = items.slice(0, maxItems).map((item) => {
+    const trimmed = String(item).trim();
+    return trimmed.length > maxItemLen
+      ? `${trimmed.slice(0, maxItemLen - 1)}…`
+      : trimmed;
+  });
+  if (items.length > maxItems) {
+    const remaining = items.length - maxItems;
+    return `${slice.join(", ")} (+${remaining} more)`;
+  }
+  return slice.join(", ");
+}
+
+function truncateString(str: string, maxLen = 100): string {
+  const trimmed = str.trim();
+  if (trimmed.length <= maxLen) return trimmed;
+  return `${trimmed.slice(0, maxLen - 1)}…`;
+}
 
 /**
  * Renders a one-page A4 PDF lab job ticket in memory as a Buffer.
@@ -11,7 +48,7 @@ import type { TicketData } from "./types.js";
  * - Warning band if rxOutOfLimits is true
  * - Job metadata: frame title/SKU, lens name, compiled lab code
  * - Compiler warnings (e.g. UNKNOWN_TOKEN) printed directly under the lab code
- * - Chosen option labels and add-on names
+ * - Chosen option labels and add-on names (truncated with '+N more' if excessive)
  * - Prescription section:
  *   - If source is UPLOAD: "Prescription file attached" and file list
  *   - Both eyes (OD, OS) formatted with spec 03 formatters
@@ -20,6 +57,20 @@ import type { TicketData } from "./types.js";
  */
 export async function renderPdf(data: TicketData): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {
+    let settled = false;
+    const fail = () => {
+      if (!settled) {
+        settled = true;
+        reject(new Error(TICKET_RENDER_FAILED));
+      }
+    };
+    const succeed = (buf: Buffer) => {
+      if (!settled) {
+        settled = true;
+        resolve(buf);
+      }
+    };
+
     try {
       const selections = data.optionSelections ?? data.options;
       const { code: labCode, warnings: labCodeWarnings } = compileLabCode(
@@ -46,15 +97,24 @@ export async function renderPdf(data: TicketData): Promise<Buffer> {
         info: {
           Title: `Lab Job Ticket - ${data.orderName}`,
           Author: "LensAdvisor",
+          CreationDate: FIXED_PDF_DATE,
+          ModDate: FIXED_PDF_DATE,
         },
       });
 
+      // Prevent multi-page additions to strictly satisfy the one-page A4 contract
+      doc.addPage = () => doc;
+
+      // Register Unicode-capable TrueType fonts
+      doc.registerFont("DejaVuSans", FONT_REGULAR);
+      doc.registerFont("DejaVuSans-Bold", FONT_BOLD);
+
       const chunks: Buffer[] = [];
       doc.on("data", (chunk: Buffer) => chunks.push(chunk));
-      doc.on("end", () => resolve(Buffer.concat(chunks)));
-      doc.on("error", (err) => {
-        // INV-2: Ensure no Rx is in error message
-        reject(new Error(`PDF generation stream error: ${err.message}`));
+      doc.on("end", () => succeed(Buffer.concat(chunks)));
+      doc.on("error", () => {
+        // INV-2: Ensure fixed, data-free error with no original message or cause
+        fail();
       });
 
       const pageWidth = 595.28;
@@ -62,12 +122,12 @@ export async function renderPdf(data: TicketData): Promise<Buffer> {
       const contentWidth = pageWidth - margin * 2;
 
       // 1. Header
-      doc.fontSize(20).font("Helvetica-Bold").text("LAB JOB TICKET", {
+      doc.fontSize(20).font("DejaVuSans-Bold").text("LAB JOB TICKET", {
         align: "center",
       });
       doc.moveDown(0.3);
 
-      doc.fontSize(12).font("Helvetica-Bold").text(`Order: ${data.orderName}`, {
+      doc.fontSize(12).font("DejaVuSans-Bold").text(`Order: ${data.orderName}`, {
         align: "center",
       });
       doc.moveDown(0.5);
@@ -81,7 +141,7 @@ export async function renderPdf(data: TicketData): Promise<Buffer> {
 
         doc
           .fontSize(11)
-          .font("Helvetica-Bold")
+          .font("DejaVuSans-Bold")
           .fillColor("#856404")
           .text(
             "WARNING: Prescription parameters exceed standard lab limits (Out of limits)",
@@ -103,36 +163,53 @@ export async function renderPdf(data: TicketData): Promise<Buffer> {
       doc.moveDown(0.5);
 
       // 3. Frame & Lens Details
-      doc.fontSize(13).font("Helvetica-Bold").text("Order & Frame Details");
+      doc.fontSize(13).font("DejaVuSans-Bold").text("Order & Frame Details");
       doc.moveDown(0.3);
 
-      doc.fontSize(10).font("Helvetica");
+      doc.fontSize(10).font("DejaVuSans");
+      const truncatedTitle = truncateString(frameTitle, 100);
       const frameText = frameSku
-        ? `Frame: ${frameTitle} (SKU: ${frameSku})`
-        : `Frame: ${frameTitle}`;
-      doc.text(frameText);
-      doc.text(`Lens: ${data.lensName}`);
+        ? `Frame: ${truncatedTitle} (SKU: ${truncateString(frameSku, 40)})`
+        : `Frame: ${truncatedTitle}`;
+      doc.text(frameText, { width: contentWidth, height: 28, ellipsis: true });
+      doc.text(`Lens: ${truncateString(data.lensName, 100)}`, {
+        width: contentWidth,
+        height: 18,
+        ellipsis: true,
+      });
       doc.moveDown(0.3);
 
       // Lab code
-      doc.font("Helvetica-Bold").text(`Lab Code: ${labCode}`);
+      doc.font("DejaVuSans-Bold").text(`Lab Code: ${labCode}`);
 
       // Lab code compiler warnings (printed directly under the code)
       if (labCodeWarnings && labCodeWarnings.length > 0) {
         doc
           .fontSize(9)
-          .font("Helvetica-Bold")
+          .font("DejaVuSans-Bold")
           .fillColor("#C0392B")
-          .text(`Warning: ${labCodeWarnings.join("; ")}`);
+          .text(`Warning: ${formatTruncatedList(labCodeWarnings, 3)}`, {
+            width: contentWidth,
+            height: 20,
+            ellipsis: true,
+          });
         doc.fillColor("#000000").fontSize(10);
       }
       doc.moveDown(0.3);
 
       // Options & Add-ons
       doc
-        .font("Helvetica")
-        .text(`Options: ${optionLabels.length > 0 ? optionLabels.join(", ") : "None"}`);
-      doc.text(`Add-ons: ${addOnNames.length > 0 ? addOnNames.join(", ") : "None"}`);
+        .font("DejaVuSans")
+        .text(`Options: ${formatTruncatedList(optionLabels, 5)}`, {
+          width: contentWidth,
+          height: 28,
+          ellipsis: true,
+        });
+      doc.text(`Add-ons: ${formatTruncatedList(addOnNames, 5)}`, {
+        width: contentWidth,
+        height: 28,
+        ellipsis: true,
+      });
       doc.moveDown(0.6);
 
       // Divider line
@@ -144,14 +221,18 @@ export async function renderPdf(data: TicketData): Promise<Buffer> {
       doc.moveDown(0.5);
 
       // 4. Prescription Details
-      doc.fontSize(13).font("Helvetica-Bold").text("Prescription Details");
+      doc.fontSize(13).font("DejaVuSans-Bold").text("Prescription Details");
       doc.moveDown(0.4);
 
       if (data.source === "UPLOAD") {
-        doc.fontSize(11).font("Helvetica-Bold").text("Prescription file attached");
-        doc.fontSize(10).font("Helvetica");
+        doc.fontSize(11).font("DejaVuSans-Bold").text("Prescription file attached");
+        doc.fontSize(10).font("DejaVuSans");
         if (files.length > 0) {
-          doc.text(`Attached files: ${files.join(", ")}`);
+          doc.text(`Attached files: ${formatTruncatedList(files, 5)}`, {
+            width: contentWidth,
+            height: 28,
+            ellipsis: true,
+          });
         } else {
           doc.text("Attached files: (Document attached to dispatch email)");
         }
@@ -174,7 +255,7 @@ export async function renderPdf(data: TicketData): Promise<Buffer> {
 
         doc
           .fontSize(10)
-          .font("Helvetica-Bold")
+          .font("DejaVuSans-Bold")
           .fillColor("#333333")
           .text("Eye", colEye + 8, tableTop + 4)
           .text("SPH", colSph, tableTop + 4)
@@ -182,7 +263,7 @@ export async function renderPdf(data: TicketData): Promise<Buffer> {
           .text("AXIS", colAxis, tableTop + 4)
           .text("ADD", colAdd, tableTop + 4);
 
-        doc.fillColor("#000000").font("Helvetica");
+        doc.fillColor("#000000").font("DejaVuSans");
         let rowY = tableTop + 22;
 
         // OD Row
@@ -193,9 +274,9 @@ export async function renderPdf(data: TicketData): Promise<Buffer> {
         const odAdd = od.add !== undefined ? formatDiopter(od.add) : "—";
 
         doc
-          .font("Helvetica-Bold")
+          .font("DejaVuSans-Bold")
           .text("OD (Right)", colEye + 8, rowY)
-          .font("Helvetica")
+          .font("DejaVuSans")
           .text(odSph, colSph, rowY)
           .text(odCyl, colCyl, rowY)
           .text(odAxis, colAxis, rowY)
@@ -211,9 +292,9 @@ export async function renderPdf(data: TicketData): Promise<Buffer> {
         const osAdd = os.add !== undefined ? formatDiopter(os.add) : "—";
 
         doc
-          .font("Helvetica-Bold")
+          .font("DejaVuSans-Bold")
           .text("OS (Left)", colEye + 8, rowY)
-          .font("Helvetica")
+          .font("DejaVuSans")
           .text(osSph, colSph, rowY)
           .text(osCyl, colCyl, rowY)
           .text(osAxis, colAxis, rowY)
@@ -223,9 +304,9 @@ export async function renderPdf(data: TicketData): Promise<Buffer> {
 
         // PD
         doc
-          .font("Helvetica-Bold")
+          .font("DejaVuSans-Bold")
           .text("Pupillary Distance (PD): ", margin, doc.y, { continued: true })
-          .font("Helvetica")
+          .font("DejaVuSans")
           .text(`${formatPd(rx.pd)} mm`);
         doc.moveDown(0.3);
       }
@@ -234,22 +315,25 @@ export async function renderPdf(data: TicketData): Promise<Buffer> {
       const notes = data.notes ?? rx?.notes;
       if (notes) {
         doc.moveDown(0.3);
+        const normalizedNotes = notes.replace(/\r\n|\r|\n/g, " ").trim();
+        const MAX_NOTES_LEN = 250;
+        let displayNotes = normalizedNotes;
+        if (normalizedNotes.length > MAX_NOTES_LEN) {
+          const remaining = normalizedNotes.length - MAX_NOTES_LEN;
+          displayNotes = `${normalizedNotes.slice(0, MAX_NOTES_LEN).trimEnd()}… (+${remaining} more)`;
+        }
         doc
-          .font("Helvetica-Bold")
+          .font("DejaVuSans-Bold")
           .text("Notes: ", margin, doc.y, { continued: true })
-          .font("Helvetica")
-          .text(notes);
+          .font("DejaVuSans")
+          .text(displayNotes, { width: contentWidth - 50, height: 50, ellipsis: true });
       }
 
       // End of PDF
       doc.end();
-    } catch (err: unknown) {
-      // INV-2: Ensure no Rx value is leaked in error message
-      const safeMsg =
-        err instanceof Error
-          ? err.message.replace(/[-+]?\d+(\.\d+)?/g, "[NUM]")
-          : "Unknown error";
-      reject(new Error(`Failed to render PDF ticket: ${safeMsg}`));
+    } catch {
+      // INV-2: Ensure fixed, data-free error with no original message or cause
+      fail();
     }
   });
 }

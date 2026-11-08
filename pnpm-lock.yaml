@@ -38,6 +38,9 @@ importers:
       '@shopify/shopify-app-session-storage-prisma':
         specifier: ^11.0.3
         version: 11.0.3(@prisma/client@6.19.2(prisma@6.19.2(typescript@5.9.3))(typescript@5.9.3))(@shopify/shopify-api@15.1.0)(@shopify/shopify-app-session-storage@7.0.2(@shopify/shopify-api@15.1.0))(prisma@6.19.2(typescript@5.9.3))
+      dejavu-fonts-ttf:
+        specifier: ^2.37.3
+        version: 2.37.3
       isbot:
         specifier: ^5.1.31
         version: 5.2.2
@@ -2193,6 +2196,9 @@ packages:
 
   defu@6.1.7:
     resolution: {integrity: sha512-7z22QmUWiQ/2d0KkdYmANbRUVABpZ9SNYyH5vx6PZ+nE5bcC0l7uFvEfHlyld/HcGBFTL536ClDt3DEcSlEJAQ==}
+
+  dejavu-fonts-ttf@2.37.3:
+    resolution: {integrity: sha512-f1hd7jJbeQa1VWcw+K2KrTXS50zTMaHpVC4XIKJpNcDeYR5ajMtj/iLlQDYNvLOKamUB3ARVVCf79lNwNVztSQ==}
 
   depd@2.0.0:
     resolution: {integrity: sha512-g7nH6P6dyDioJogAAGprGpCtVImJhpPk/roCzdb3fIh61/s/nPsfR6onyMwkCAR/OlC3yBC0lESvUoQEAssIrw==}
@@ -6423,6 +6429,8 @@ snapshots:
       object-keys: 1.1.1
 
   defu@6.1.7: {}
+
+  dejavu-fonts-ttf@2.37.3: {}
 
   depd@2.0.0: {}
 

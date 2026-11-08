@@ -1,9 +1,12 @@
+import crypto from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
+import PDFDocument from "pdfkit";
 import { PDFParse } from "pdf-parse";
 import {
   escapeCsvCell,
   renderCsv,
   renderPdf,
+  TICKET_RENDER_FAILED,
   type TicketData,
 } from "./index.js";
 
@@ -14,6 +17,17 @@ async function extractPdfText(buffer: Buffer): Promise<string> {
     const parser = new PDFParse(new Uint8Array(buffer));
     const res = await parser.getText();
     return res.text;
+  } finally {
+    console.warn = origWarn;
+  }
+}
+
+async function getPdfInfo(buffer: Buffer) {
+  const origWarn = console.warn;
+  console.warn = () => {};
+  try {
+    const parser = new PDFParse(new Uint8Array(buffer));
+    return await parser.getInfo();
   } finally {
     console.warn = origWarn;
   }
@@ -157,12 +171,67 @@ describe("Spec 24: Lab job ticket renderer", () => {
       // Warning is printed under the code
       expect(pdfText).toContain("Warning: UNKNOWN_TOKEN lens_tint");
     });
+
+    // R1-F6: minimal data (no options, no add-ons, no notes)
+    it("row 6: minimal ticket (no options, no add-ons, no notes) -> empty CSV fields and None on PDF", async () => {
+      const minimalData: TicketData = {
+        orderName: "#2000",
+        frameTitle: "Basic Frame",
+        lensName: "Basic Lens",
+        labCodeTemplate: "BASIC-CODE",
+        source: "MANUAL",
+      };
+
+      const csvText = renderCsv(minimalData).toString("utf-8");
+      const lines = csvText.split("\r\n").filter(Boolean);
+      expect(lines).toHaveLength(3);
+      // Both OD and OS rows have empty options, add_ons, files, and rx columns
+      expect(lines[1]).toContain("#2000,Basic Frame,,Basic Lens,BASIC-CODE,,,MANUAL,false,,OD,,,,,,");
+      expect(lines[2]).toContain("#2000,Basic Frame,,Basic Lens,BASIC-CODE,,,MANUAL,false,,OS,,,,,,");
+
+      const pdfBuf = await renderPdf(minimalData);
+      const pdfText = await extractPdfText(pdfBuf);
+      expect(pdfText).toContain("Order: #2000");
+      expect(pdfText).toContain("Options: None");
+      expect(pdfText).toContain("Add-ons: None");
+      expect(pdfText).not.toContain("OD (Right)");
+      expect(pdfText).not.toContain("Notes:");
+    });
+
+    // R1-F6: single-item lists
+    it("row 7: single-item lists -> single values without delimiter or +N more", async () => {
+      const singleItemData: TicketData = {
+        ...baseFixture,
+        optionLabels: ["Anti-Reflective Coating"],
+        addOnNames: ["Edge Polish"],
+        uploadFileNames: ["single_scan.pdf"],
+        source: "UPLOAD",
+        prescription: null,
+      };
+
+      const csvText = renderCsv(singleItemData).toString("utf-8");
+      expect(csvText).toContain("Anti-Reflective Coating");
+      expect(csvText).not.toContain("Anti-Reflective Coating;");
+      expect(csvText).toContain("Edge Polish");
+      expect(csvText).not.toContain("Edge Polish;");
+      expect(csvText).toContain("single_scan.pdf");
+      expect(csvText).not.toContain("single_scan.pdf;");
+
+      const pdfBuf = await renderPdf(singleItemData);
+      const pdfText = await extractPdfText(pdfBuf);
+      expect(pdfText).toContain("Options: Anti-Reflective Coating");
+      expect(pdfText).not.toContain("Anti-Reflective Coating,");
+      expect(pdfText).not.toContain("+");
+      expect(pdfText).toContain("Add-ons: Edge Polish");
+      expect(pdfText).not.toContain("Edge Polish,");
+      expect(pdfText).toContain("Attached files: single_scan.pdf");
+    });
   });
 
-  // --- INV-2: Prescription data is encrypted at rest and never logged ---
+  // --- INV-2: Privacy & Error Logging (R1-F1) ---
 
   describe("INV-2: Privacy & Error Logging", () => {
-    it("forces a render error and asserts the thrown message and captured logs contain no Rx value", async () => {
+    it("forces compile errors and asserts TICKET_RENDER_FAILED with zero Rx values in message or logs", async () => {
       const sensitiveNotes = "SensitivePatientDiagnosis-998877";
       const sensitiveData: TicketData = {
         ...baseFixture,
@@ -180,37 +249,29 @@ describe("Spec 24: Lab job ticket renderer", () => {
       const spyWarn = vi.spyOn(console, "warn");
 
       // Test renderCsv error safety
-      expect(() => renderCsv(sensitiveData)).toThrow();
+      expect(() => renderCsv(sensitiveData)).toThrow(TICKET_RENDER_FAILED);
       try {
         renderCsv(sensitiveData);
       } catch (err: unknown) {
-        const msg = (err as Error).message;
-        expect(msg).not.toContain("-7.75");
-        expect(msg).not.toContain("-775");
-        expect(msg).not.toContain("-1.25");
-        expect(msg).not.toContain("-125");
-        expect(msg).not.toContain("137");
-        expect(msg).not.toContain("+2.50");
-        expect(msg).not.toContain("-6.25");
-        expect(msg).not.toContain("64.5");
-        expect(msg).not.toContain(sensitiveNotes);
+        const error = err as Error;
+        expect(error.message).toBe(TICKET_RENDER_FAILED);
+        expect((error as unknown as { cause?: unknown }).cause).toBeUndefined();
+        expect(error.message).not.toContain("-7.75");
+        expect(error.message).not.toContain("-775");
+        expect(error.message).not.toContain(sensitiveNotes);
       }
 
       // Test renderPdf error safety
-      await expect(renderPdf(sensitiveData)).rejects.toThrow();
+      await expect(renderPdf(sensitiveData)).rejects.toThrow(TICKET_RENDER_FAILED);
       try {
         await renderPdf(sensitiveData);
       } catch (err: unknown) {
-        const msg = (err as Error).message;
-        expect(msg).not.toContain("-7.75");
-        expect(msg).not.toContain("-775");
-        expect(msg).not.toContain("-1.25");
-        expect(msg).not.toContain("-125");
-        expect(msg).not.toContain("137");
-        expect(msg).not.toContain("+2.50");
-        expect(msg).not.toContain("-6.25");
-        expect(msg).not.toContain("64.5");
-        expect(msg).not.toContain(sensitiveNotes);
+        const error = err as Error;
+        expect(error.message).toBe(TICKET_RENDER_FAILED);
+        expect((error as unknown as { cause?: unknown }).cause).toBeUndefined();
+        expect(error.message).not.toContain("-7.75");
+        expect(error.message).not.toContain("-775");
+        expect(error.message).not.toContain(sensitiveNotes);
       }
 
       // Verify no logs occurred containing sensitive Rx data
@@ -227,6 +288,177 @@ describe("Spec 24: Lab job ticket renderer", () => {
       spyLog.mockRestore();
       spyError.mockRestore();
       spyWarn.mockRestore();
+    });
+
+    it("forces a PDFKit-layer failure containing Rx data and asserts TICKET_RENDER_FAILED with no leak", async () => {
+      const sensitiveNotes = "SensitivePatientDiagnosis-ForcedPDFKitFailure";
+      const sensitiveData: TicketData = {
+        ...baseFixture,
+        prescription: {
+          od: { sph: -775, cyl: -125, axis: 137, add: 250 },
+          os: { sph: -625, cyl: -75, axis: 42, add: 250 },
+          pd: { single: 645 },
+          notes: sensitiveNotes,
+        },
+      };
+
+      const spyLog = vi.spyOn(console, "log");
+      const spyError = vi.spyOn(console, "error");
+      const spyWarn = vi.spyOn(console, "warn");
+
+      // Force PDFKit text method to throw an error containing the sensitive notes
+      const origText = PDFDocument.prototype.text;
+      const textSpy = vi
+        .spyOn(PDFDocument.prototype, "text")
+        .mockImplementation(function (this: InstanceType<typeof PDFDocument>, ...args: unknown[]) {
+          const textArg = String(args[0] ?? "");
+          if (textArg.includes("Notes") || textArg.includes(sensitiveNotes)) {
+            throw new Error(`PDFKit font encode failure: ${sensitiveNotes} SPH -7.75`);
+          }
+          return origText.apply(this, args as Parameters<typeof origText>);
+        });
+
+      try {
+        await expect(renderPdf(sensitiveData)).rejects.toThrow(TICKET_RENDER_FAILED);
+
+        try {
+          await renderPdf(sensitiveData);
+        } catch (err: unknown) {
+          const error = err as Error;
+          expect(error.message).toBe(TICKET_RENDER_FAILED);
+          expect((error as unknown as { cause?: unknown }).cause).toBeUndefined();
+          expect(error.message).not.toContain(sensitiveNotes);
+          expect(error.message).not.toContain("-7.75");
+        }
+
+        // Verify console logs were clean
+        for (const spy of [spyLog, spyError, spyWarn]) {
+          for (const call of spy.mock.calls) {
+            const joined = call.map(String).join(" ");
+            expect(joined).not.toContain(sensitiveNotes);
+            expect(joined).not.toContain("-7.75");
+          }
+        }
+      } finally {
+        textSpy.mockRestore();
+        spyLog.mockRestore();
+        spyError.mockRestore();
+        spyWarn.mockRestore();
+      }
+    });
+  });
+
+  // --- INV-5: CSV Axis formatting (R1-F2) ---
+
+  describe("INV-5: CSV Axis formatting via formatAxis", () => {
+    it("formats CSV axes with rx-core formatAxis for both eyes (axis 1 -> 001 and 180 -> 180)", () => {
+      const data: TicketData = {
+        ...baseFixture,
+        prescription: {
+          od: { sph: -200, cyl: -100, axis: 1 },
+          os: { sph: -200, cyl: -100, axis: 180 },
+          pd: { single: 630 },
+        },
+      };
+
+      const csvText = renderCsv(data).toString("utf-8");
+      const lines = csvText.split("\r\n").filter(Boolean);
+
+      // OD row must contain formatted axis '001', OS row must contain '180'
+      expect(lines[1]).toContain(",OD,-2.00,-1.00,001,,63.0,");
+      expect(lines[2]).toContain(",OS,-2.00,-1.00,180,,63.0,");
+
+      // Crucially, neither line should have raw unpadded '1'
+      expect(lines[1]).not.toContain(",OD,-2.00,-1.00,1,,");
+    });
+  });
+
+  // --- Unicode font coverage & non-ASCII (R1-F3) ---
+
+  describe("Unicode font coverage & non-ASCII characters (R1-F3)", () => {
+    it("renders and extracts Unicode text cleanly (e.g. Lunettes élégance Łódź) without mojibake", async () => {
+      const unicodeTitle = "Lunettes élégance Łódź";
+      const unicodeNotes = "Qualité supérieure Łódź — spécial";
+      const data: TicketData = {
+        ...baseFixture,
+        frameTitle: unicodeTitle,
+        notes: unicodeNotes,
+      };
+
+      const pdfBuf = await renderPdf(data);
+      const extractedText = await extractPdfText(pdfBuf);
+
+      // Latin-extended / Polish characters must be extracted correctly without corruption
+      expect(extractedText).toContain(unicodeTitle);
+      expect(extractedText).toContain(unicodeNotes);
+    });
+
+    it("renders CJK input safely on exactly 1 page without throwing", async () => {
+      const data: TicketData = {
+        ...baseFixture,
+        frameTitle: "Frame メガネ 54口18",
+        notes: "日本語の処方箋ノート: 近視と乱視",
+      };
+
+      const pdfBuf = await renderPdf(data);
+      expect(pdfBuf.length).toBeGreaterThan(1000);
+
+      const info = await getPdfInfo(pdfBuf);
+      expect(info.total).toBe(1);
+    });
+  });
+
+  // --- One-page A4 contract & Truncation (R1-F4) ---
+
+  describe("One-page A4 contract & Truncation (R1-F4)", () => {
+    it("truncates 200 options, 100 add-ons, and long notes to keep the PDF to exactly 1 A4 page", async () => {
+      const options = Array.from({ length: 200 }, (_, i) => `Option ${i + 1}`);
+      const addons = Array.from({ length: 100 }, (_, i) => `Add-on ${i + 1}`);
+      const longNotes = "Detailed medical notes regarding prescription parameters and measurements. ".repeat(30);
+
+      const data: TicketData = {
+        ...baseFixture,
+        frameTitle: "Very Long Designer Frame Title ".repeat(10),
+        optionLabels: options,
+        addOnNames: addons,
+        rxOutOfLimits: true, // Also include warning band
+        notes: longNotes,
+      };
+
+      const pdfBuf = await renderPdf(data);
+      const info = await getPdfInfo(pdfBuf);
+      expect(info.total).toBe(1);
+
+      const text = await extractPdfText(pdfBuf);
+      // Assert explicit '+N more' marker
+      expect(text).toContain("+195 more");
+      expect(text).toContain("+95 more");
+      expect(text).toContain("… (+");
+    });
+  });
+
+  // --- Deterministic PDF output (R1-F5) ---
+
+  describe("Deterministic PDF output (R1-F5)", () => {
+    it("produces byte-identical PDF output across time", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-01-15T09:00:00Z"));
+        const pdf1 = await renderPdf(baseFixture);
+
+        // Advance fake system clock by several weeks
+        vi.advanceTimersByTime(1000 * 60 * 60 * 24 * 30);
+        vi.setSystemTime(new Date("2026-02-14T14:30:00Z"));
+        const pdf2 = await renderPdf(baseFixture);
+
+        expect(pdf1.equals(pdf2)).toBe(true);
+
+        const hash1 = crypto.createHash("sha256").update(pdf1).digest("hex");
+        const hash2 = crypto.createHash("sha256").update(pdf2).digest("hex");
+        expect(hash1).toBe(hash2);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
@@ -348,42 +580,6 @@ describe("Spec 24: Lab job ticket renderer", () => {
 
       const pdfText = await extractPdfText(await renderPdf(data));
       expect(pdfText).toContain("PO-67-POLR-GREY-00");
-    });
-
-    it("handles non-ASCII characters and long strings safely", async () => {
-      const longTitle = "Frame-".repeat(100) + "メガネ";
-      const data: TicketData = {
-        ...baseFixture,
-        frameTitle: longTitle,
-        notes: "日本語の処方箋ノート",
-      };
-
-      const csv = renderCsv(data).toString("utf-8");
-      expect(csv).toContain(longTitle);
-      expect(csv).toContain("日本語の処方箋ノート");
-
-      const pdfBuf = await renderPdf(data);
-      expect(pdfBuf.length).toBeGreaterThan(1000);
-    });
-
-    it("handles missing optional fields cleanly without throwing", async () => {
-      const minimalData: TicketData = {
-        orderName: "#2000",
-        frameTitle: "Basic Frame",
-        lensName: "Basic Lens",
-        labCodeTemplate: "BASIC-CODE",
-        source: "MANUAL",
-      };
-
-      const csv = renderCsv(minimalData).toString("utf-8");
-      expect(csv).toContain("#2000");
-      expect(csv).toContain("BASIC-CODE");
-
-      const pdfBuf = await renderPdf(minimalData);
-      expect(pdfBuf.length).toBeGreaterThan(1000);
-      const pdfText = await extractPdfText(pdfBuf);
-      expect(pdfText).toContain("BASIC-CODE");
-      expect(pdfText).toContain("Order: #2000");
     });
   });
 });
