@@ -75,6 +75,7 @@
   --la-modal-max: 720px;
   --la-drawer-max: 420px;
   --la-sheet-gap: 8px;
+  --la-sheet-max-height: 90vh;
   --la-label-col: 168px;
   --la-target: 44px;
   --la-segment-h: 44px;

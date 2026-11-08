@@ -99,6 +99,23 @@ export function configuratorReducer(
       }
 
       case "CATALOG_ERROR": {
+        if (action.error.code === "NOT_AVAILABLE") {
+          return {
+            ...state,
+            status: "empty",
+            error: null,
+            catalog: state.catalog ?? {
+              lensGroups: [],
+              optionGroups: [],
+              addOns: [],
+              settings: {
+                manualRxEnabled: false,
+                rxUploadEnabled: false,
+                storeRxInOrder: false,
+              },
+            },
+          };
+        }
         return {
           ...state,
           status: "error",

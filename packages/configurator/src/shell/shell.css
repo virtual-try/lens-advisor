@@ -41,7 +41,7 @@
   flex-direction: column;
   width: 100%;
   max-width: var(--la-modal-max);
-  max-height: 90vh;
+  max-height: var(--la-sheet-max-height);
   background: var(--la-bg);
   border-radius: var(--la-radius-lg);
   box-shadow: var(--la-shadow-sheet);

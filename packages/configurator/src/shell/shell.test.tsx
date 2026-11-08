@@ -2,7 +2,7 @@ import { act, fireEvent, render, waitFor } from "@testing-library/preact";
 import type { JSX } from "preact";
 import { describe, expect, it, vi } from "vitest";
 import { selectionSchema, type CatalogResponse } from "../../../rx-core/src/index.js";
-import type { ApiClient } from "../shared/api";
+import { ApiError, type ApiClient } from "../shared/api";
 import { strings } from "../shared/strings";
 import shellCss from "./shell.css?inline";
 import { ConfiguratorApp } from "./ConfiguratorApp";
@@ -843,6 +843,109 @@ describe("Configurator Shell - Examples Table Rows", () => {
     // Spec 03 schema validation on Selection: must succeed with normalized string id
     const parsed = selectionSchema.safeParse(capturedState!.selection);
     expect(parsed.success).toBe(true);
+
+    view.unmount();
+  });
+
+  it("uses --la-sheet-max-height token for sheet max-height (R4-F1)", () => {
+    expect(shellCss).toMatch(/max-height:\s*var\(--la-sheet-max-height\);/);
+    expect(shellCss).not.toMatch(/max-height:\s*90vh/);
+  });
+
+  it("maps ApiError NOT_AVAILABLE to empty state without Retry button (R4-F2)", async () => {
+    const apiClient = createMockApiClient({
+      getCatalog: vi.fn(async () => {
+        throw new ApiError({
+          code: "NOT_AVAILABLE",
+          message: "Shop not installed or inactive plan",
+          status: 404,
+        });
+      }),
+    });
+
+    const steps = createFixtureSteps();
+    const onClose = vi.fn();
+
+    const view = render(
+      <ConfiguratorApp
+        product={{ title: "Harlow" }}
+        steps={steps}
+        apiClient={apiClient}
+        onClose={onClose}
+      />,
+    );
+
+    // Empty state heading and description are displayed
+    const emptyHeading = await view.findByRole("heading", {
+      name: strings.empty.title,
+    });
+    expect(emptyHeading).not.toBeNull();
+    expect(view.getByText(strings.empty.message)).not.toBeNull();
+
+    // No retryable error view or Retry button
+    expect(view.queryByRole("alert")).toBeNull();
+    expect(view.queryByRole("heading", { name: strings.error.title })).toBeNull();
+    expect(view.queryByRole("button", { name: strings.error.retry })).toBeNull();
+
+    // Close button is present and triggers onClose
+    const closeBtn = view.getByRole("button", { name: strings.empty.close });
+    expect(closeBtn).not.toBeNull();
+    fireEvent.click(closeBtn);
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+
+    view.unmount();
+  });
+
+  it("keeps other ApiError codes as retryable errors with Retry button (R4-F2)", async () => {
+    let callCount = 0;
+    const apiClient = createMockApiClient({
+      getCatalog: vi.fn(async () => {
+        callCount++;
+        if (callCount === 1) {
+          throw new ApiError({
+            code: "RATE_LIMITED",
+            message: "Too many requests",
+            status: 429,
+          });
+        }
+        return mockCatalog;
+      }),
+    });
+
+    const steps = createFixtureSteps();
+    const view = render(
+      <ConfiguratorApp
+        product={{ title: "Harlow" }}
+        steps={steps}
+        apiClient={apiClient}
+      />,
+    );
+
+    // Initial load fails with retryable error
+    const alert = await view.findByRole("alert");
+    expect(alert).not.toBeNull();
+
+    const errorHeading = view.getByRole("heading", { name: strings.error.title });
+    expect(errorHeading).not.toBeNull();
+
+    // Empty state is NOT rendered
+    expect(view.queryByRole("heading", { name: strings.empty.title })).toBeNull();
+    expect(view.queryByRole("button", { name: strings.empty.close })).toBeNull();
+
+    // Retry button is present
+    const retryBtn = view.getByRole("button", { name: strings.error.retry });
+    expect(retryBtn).not.toBeNull();
+
+    // Clicking Retry refetches and recovers to step 1
+    fireEvent.click(retryBtn);
+
+    const visionHeading = await view.findByRole("heading", {
+      name: `${strings.header.titlePrefix}Vision`,
+    });
+    expect(visionHeading).not.toBeNull();
+    expect(callCount).toBe(2);
 
     view.unmount();
   });

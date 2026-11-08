@@ -111,6 +111,10 @@ describe("configuratorReducer", () => {
       name: "CATALOG_ERROR",
       action: { type: "CATALOG_ERROR", error: { code: "SERVER_ERROR" } },
     },
+    {
+      name: "CATALOG_ERROR (NOT_AVAILABLE)",
+      action: { type: "CATALOG_ERROR", error: { code: "NOT_AVAILABLE" } },
+    },
     { name: "SET_RX_TYPE", action: { type: "SET_RX_TYPE", rxType: "SINGLE_VISION" } },
     {
       name: "SET_PRESCRIPTION",
@@ -173,8 +177,13 @@ describe("configuratorReducer", () => {
             expect(nextState.status).toBe(isEmpty ? "empty" : "ready");
             expect(nextState.catalog).toEqual(action.catalog);
           } else if (action.type === "CATALOG_ERROR") {
-            expect(nextState.status).toBe("error");
-            expect(nextState.error?.code).toBe("SERVER_ERROR");
+            if (action.error.code === "NOT_AVAILABLE") {
+              expect(nextState.status).toBe("empty");
+              expect(nextState.error).toBeNull();
+            } else {
+              expect(nextState.status).toBe("error");
+              expect(nextState.error?.code).toBe("SERVER_ERROR");
+            }
           } else if (action.type === "SET_RX_TYPE") {
             expect(nextState.rxType).toBe("SINGLE_VISION");
             expect(nextState.selection.rxType).toBe("SINGLE_VISION");
@@ -331,6 +340,30 @@ describe("configuratorReducer", () => {
 
       state = configuratorReducer(state, { type: "TOGGLE_ADDON", addOnId: "addon-1" });
       expect(state.selection.addOnIds).toEqual([]);
+    });
+  });
+
+  describe("catalog error mapping (R4-F2)", () => {
+    it("maps NOT_AVAILABLE error code to empty state without error", () => {
+      const state = { ...createInitialState(), status: "loading" as const };
+      const nextState = configuratorReducer(state, {
+        type: "CATALOG_ERROR",
+        error: { code: "NOT_AVAILABLE" },
+      });
+      expect(nextState.status).toBe("empty");
+      expect(nextState.error).toBeNull();
+      expect(nextState.catalog?.lensGroups).toEqual([]);
+    });
+
+    it("maps other error codes to error state with error details", () => {
+      const state = { ...createInitialState(), status: "loading" as const };
+      const nextState = configuratorReducer(state, {
+        type: "CATALOG_ERROR",
+        error: { code: "RATE_LIMITED", message: "Too many requests" },
+      });
+      expect(nextState.status).toBe("error");
+      expect(nextState.error?.code).toBe("RATE_LIMITED");
+      expect(nextState.error?.message).toBe("Too many requests");
     });
   });
 });

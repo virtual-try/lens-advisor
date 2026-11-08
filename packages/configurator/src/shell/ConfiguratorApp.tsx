@@ -307,13 +307,26 @@ export function ConfiguratorApp({
       .catch((err: unknown) => {
         if (cancelled) return;
         const errObj = err as { code?: string; message?: string };
-        dispatch({
-          type: "CATALOG_ERROR",
-          error: {
-            code: errObj.code || "HTTP_ERROR",
-            message: errObj.message,
-          },
-        });
+        const code = errObj.code || "HTTP_ERROR";
+        if (code === "NOT_AVAILABLE") {
+          // Spec 21: Shop not installed or no active plan returns 404 NOT_AVAILABLE,
+          // which maps to spec 16's empty state (no Retry) rather than a retryable error.
+          dispatch({
+            type: "CATALOG_ERROR",
+            error: {
+              code: "NOT_AVAILABLE",
+              message: errObj.message,
+            },
+          });
+        } else {
+          dispatch({
+            type: "CATALOG_ERROR",
+            error: {
+              code,
+              message: errObj.message,
+            },
+          });
+        }
       });
 
     return () => {
