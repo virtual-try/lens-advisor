@@ -1,6 +1,6 @@
 # Spec 30 — Lab order dispatch job (ticket → S3 → email)
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 05, Spec 06, Spec 07, Spec 14, Spec 15, Spec 23, Spec 24
 **Model:** Heavy — `claude-opus-5-5` · `gpt-6-astra` · `gemini-3.1-pro-preview`
 **Issue:** —
@@ -138,4 +138,4 @@ test DB). Stubbed: none.
   - `pnpm lint`: exit 0 (0 errors, 0 warnings).
   - `pnpm build`: exit 0.
   - `git diff --check`: clean.
-- **2026-11-08** — Evidence (orchestro spec verify, tree cd82ed52): install pass · typecheck pass · lint pass · build pass · test pass 850/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree c304a179): install pass · typecheck pass · lint pass · build pass · test pass 1128/0/0
