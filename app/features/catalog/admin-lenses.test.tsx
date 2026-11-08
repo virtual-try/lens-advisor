@@ -1223,6 +1223,53 @@ describe("Spec 18 — Admin: lens groups and lenses", () => {
         where: { shopId, groupId: archivedGroup.id },
       });
       expect(afterCount).toBe(0);
+
+      // 4. Save action refuses moving an existing lens into an archived target group (404, no write, no sync) (R5-F1)
+      const activeLens = await repo.createLens(shopId, {
+        groupId: group.id,
+        name: "Active Lens In Active Group",
+        priceMinor: 4000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -100,
+        sphMax: 100,
+        cylMin: 0,
+        cylMax: 0,
+      });
+
+      mocks.adminGraphql.mockClear();
+      const reparentReq = new Request(`https://app.test/app/lenses/${activeLens.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent: "save",
+          groupId: archivedGroup.id,
+          name: "Active Lens In Active Group",
+          price: "40.00",
+          sphMin: "-1.00",
+          sphMax: "+1.00",
+          cylMin: "0.00",
+          cylMax: "0.00",
+          rxTypes: ["SINGLE_VISION"],
+        }),
+      });
+
+      const reparentRes = await lensAction(createActionArgs(reparentReq, { id: activeLens.id }));
+      const reparentUnwrapped = await unwrapResponse(reparentRes);
+      expect(reparentUnwrapped.status).toBe(404);
+
+      // Assert no DB update happened on groupId
+      const dbActiveLens = await getTestPrisma().lens.findUnique({
+        where: { shopId_id: { shopId, id: activeLens.id } },
+      });
+      expect(dbActiveLens?.groupId).toBe(group.id);
+
+      // Assert no syncItem / productUpdate was called
+      const reparentCalls = mocks.adminGraphql.mock.calls;
+      const productSyncCall = reparentCalls.find((call) =>
+        String(call[0]).includes("ProductUpdate") || String(call[0]).includes("productUpdate"),
+      );
+      expect(productSyncCall).toBeUndefined();
     }, DB_TIMEOUT_MS);
 
     it("derives shop currency server-side for new lenses and rejects form data currency override (R1-F2)", async () => {

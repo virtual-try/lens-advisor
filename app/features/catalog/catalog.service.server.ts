@@ -291,7 +291,7 @@ export class CatalogService {
 
   async deleteLensGroup(shopId: string, id: string): Promise<CatalogLensGroupDto> {
     const existing = await this.repository.getLensGroup(shopId, id);
-    if (!existing) {
+    if (!existing || existing.archivedAt) {
       throw new NotFoundError("LensGroup not found");
     }
     const activeLenses = (existing.lenses ?? []).filter((l) => !l.archivedAt);
@@ -357,13 +357,17 @@ export class CatalogService {
       throw new ValidationError("LIMITS_INVERTED");
     }
 
-    // Verify groupId exists and belongs to shopId
+    // Verify groupId exists and belongs to shopId and is not archived
     const group = await this.repository.getLensGroup(shopId, valid.groupId);
-    if (!group) {
+    if (!group || group.archivedAt) {
       throw new NotFoundError("LensGroup not found");
     }
 
     return this.withAdvisoryLock(shopId, "lens", valid.groupId, async (repo) => {
+      const lockedGroup = await repo.getLensGroup(shopId, valid.groupId);
+      if (!lockedGroup || lockedGroup.archivedAt) {
+        throw new NotFoundError("LensGroup not found");
+      }
       // Enforce unique name within groupId among active lenses
       const lensesInGroup = await repo.listLenses(shopId, {
         groupId: valid.groupId,
@@ -407,14 +411,14 @@ export class CatalogService {
     const valid = validateInput(lensUpdateSchema, input);
 
     const existing = await this.repository.getLens(shopId, id);
-    if (!existing) {
+    if (!existing || existing.archivedAt) {
       throw new NotFoundError("Lens not found");
     }
 
     const targetGroupId = valid.groupId ?? existing.groupId;
-    if (valid.groupId && valid.groupId !== existing.groupId) {
+    if (valid.groupId !== undefined) {
       const group = await this.repository.getLensGroup(shopId, valid.groupId);
-      if (!group) {
+      if (!group || group.archivedAt) {
         throw new NotFoundError("LensGroup not found");
       }
     }
@@ -472,6 +476,12 @@ export class CatalogService {
     if (valid.name !== undefined || (valid.groupId && valid.groupId !== existing.groupId)) {
       const targetName = valid.name ?? existing.name;
       return this.withAdvisoryLock(shopId, "lens", targetGroupId, async (repo) => {
+        if (valid.groupId !== undefined) {
+          const group = await repo.getLensGroup(shopId, valid.groupId);
+          if (!group || group.archivedAt) {
+            throw new NotFoundError("LensGroup not found");
+          }
+        }
         const lensesInGroup = await repo.listLenses(shopId, {
           groupId: targetGroupId,
           includeArchived: false,

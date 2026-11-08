@@ -247,6 +247,52 @@ describe("CatalogService (DB-backed)", { timeout: 60_000 }, () => {
       expect(checkA.groupId).toBe(originalGroupId);
     });
 
+    it("createLens into an archived group throws NotFoundError (R5-F1)", async () => {
+      const group = await service.createLensGroup(shopA, { name: "Archived Group For Create R5F1" });
+      await service.deleteLensGroup(shopA, group.id);
+
+      await expect(
+        service.createLens(shopA, {
+          groupId: group.id,
+          name: "Lens in Archived Group",
+          priceMinor: 1000,
+          currency: "USD",
+          rxTypes: ["SINGLE_VISION"],
+          sphMin: -200,
+          sphMax: 200,
+          cylMin: -100,
+          cylMax: 0,
+        }),
+      ).rejects.toThrow(NotFoundError);
+    });
+
+    it("updateLens moving a lens into an archived group throws NotFoundError and leaves row unchanged (R5-F1)", async () => {
+      const activeGroup = await service.createLensGroup(shopA, { name: "Active Source Group R5F1" });
+      const archivedGroup = await service.createLensGroup(shopA, { name: "Archived Target Group R5F1" });
+      const lens = await service.createLens(shopA, {
+        groupId: activeGroup.id,
+        name: "Lens To Move R5F1",
+        priceMinor: 1000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -200,
+        sphMax: 200,
+        cylMin: -100,
+        cylMax: 0,
+      });
+
+      await service.deleteLensGroup(shopA, archivedGroup.id);
+
+      await expect(
+        service.updateLens(shopA, lens.id, {
+          groupId: archivedGroup.id,
+        }),
+      ).rejects.toThrow(NotFoundError);
+
+      const checkLens = await service.getLens(shopA, lens.id);
+      expect(checkLens.groupId).toBe(activeGroup.id);
+    });
+
     it("updateOptionValue reassigning optionGroupId to another shop's group throws NotFoundError and leaves row unchanged", async () => {
       const optGroupsA = await service.listOptionGroups(shopA);
       const optGroupA = optGroupsA[0];
