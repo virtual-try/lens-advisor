@@ -1,0 +1,181 @@
+import React, { useState } from "react";
+
+export interface OptionValueFormData {
+  id?: string;
+  optionGroupId?: string;
+  label?: string;
+  priceDelta?: string;
+  codeType?: "none" | "token" | "override";
+  token?: string;
+  tokenKey?: string | null;
+  tokenValue?: string | null;
+  overrideCode?: string | null;
+  swatch?: string | null;
+}
+
+export interface OptionValueFormProps {
+  initialData?: OptionValueFormData;
+  groupKind?: "MATERIAL" | "TINT_TYPE" | "COLOR";
+  currency?: string;
+  errors?: Record<string, string>;
+  isSubmitting?: boolean;
+  onCancel?: () => void;
+  onSubmit?: (e: React.FormEvent<HTMLFormElement>) => void;
+}
+
+export function OptionValueForm({
+  initialData,
+  groupKind = "MATERIAL",
+  currency = "USD",
+  errors = {},
+  isSubmitting = false,
+  onCancel,
+  onSubmit,
+}: OptionValueFormProps) {
+  const initialToken =
+    initialData?.token ||
+    (initialData?.tokenKey && initialData?.tokenValue
+      ? `${initialData.tokenKey}=${initialData.tokenValue}`
+      : initialData?.tokenKey || "");
+
+  const initialCodeType: "none" | "token" | "override" =
+    initialData?.codeType ??
+    (initialData?.overrideCode
+      ? "override"
+      : initialToken
+        ? "token"
+        : "none");
+
+  const [label, setLabel] = useState(initialData?.label ?? "");
+  const [priceDelta, setPriceDelta] = useState(initialData?.priceDelta ?? "0");
+  const [codeType, setCodeType] = useState<"none" | "token" | "override">(initialCodeType);
+  const [token, setToken] = useState(initialToken);
+  const [overrideCode, setOverrideCode] = useState(initialData?.overrideCode ?? "");
+  const [swatch, setSwatch] = useState(initialData?.swatch ?? "");
+
+  const hasBothCodes = Boolean(token.trim() && overrideCode.trim());
+  const showBoth = hasBothCodes || Boolean(errors.ONE_CODE_SOURCE || errors.overrideCode === "ONE_CODE_SOURCE");
+
+  return (
+    <form onSubmit={onSubmit} method="post">
+      <s-stack direction="block" gap="base">
+        {errors.ONE_CODE_SOURCE && (
+          <s-banner tone="critical" heading="Code source conflict">
+            <s-paragraph>
+              Choose either a lab-code token or an override code, not both.
+            </s-paragraph>
+          </s-banner>
+        )}
+        {errors.MONEY_PRECISION && (
+          <s-banner tone="critical" heading="Invalid price precision">
+            <s-paragraph>
+              Maximum 2 decimal places allowed for {currency}.
+            </s-paragraph>
+          </s-banner>
+        )}
+        {errors.NEGATIVE_PRICE && (
+          <s-banner tone="critical" heading="Invalid price delta">
+            <s-paragraph>Price delta must be at least 0.</s-paragraph>
+          </s-banner>
+        )}
+        {errors.REQUIRED && (
+          <s-banner tone="critical" heading="Missing required fields">
+            <s-paragraph>Please fill in all required fields.</s-paragraph>
+          </s-banner>
+        )}
+
+        <s-text-field
+          label="Label"
+          name="label"
+          value={label}
+          onInput={(e) => setLabel(e.currentTarget.value)}
+          error={errors.label}
+          required
+        />
+
+        <s-text-field
+          label={`Price delta (${currency})`}
+          name="priceDelta"
+          value={priceDelta}
+          onInput={(e) => setPriceDelta(e.currentTarget.value)}
+          error={errors.priceDelta || errors.NEGATIVE_PRICE || errors.MONEY_PRECISION}
+          details="Additional price for this option in minor units or formatted currency (e.g. 35.00 or 0 for included)."
+        />
+
+        <s-choice-list
+          label="Lab-code mapping"
+          name="codeType"
+          values={[codeType]}
+          onChange={(e) => {
+            const target = e.currentTarget as unknown as { values?: string[] };
+            const val = target.values?.[0] as "none" | "token" | "override" | undefined;
+            if (val) {
+              setCodeType(val);
+              if (val === "token") {
+                setOverrideCode("");
+              } else if (val === "override") {
+                setToken("");
+              } else if (val === "none") {
+                setToken("");
+                setOverrideCode("");
+              }
+            }
+          }}
+        >
+          <s-choice value="token">Lab-code token</s-choice>
+          <s-choice value="override">Override code</s-choice>
+          <s-choice value="none">None</s-choice>
+        </s-choice-list>
+
+        {(codeType === "token" || showBoth) && (
+          <s-text-field
+            label="Lab-code token"
+            name="token"
+            value={token}
+            onInput={(e) => setToken(e.currentTarget.value)}
+            error={errors.token}
+            details="Token format: key=VALUE (e.g. lens_material=PO-67)"
+          />
+        )}
+
+        {(codeType === "override" || showBoth) && (
+          <s-text-field
+            label="Override code"
+            name="overrideCode"
+            value={overrideCode}
+            onInput={(e) => setOverrideCode(e.currentTarget.value)}
+            error={errors.overrideCode || (errors.ONE_CODE_SOURCE ? "ONE_CODE_SOURCE" : undefined)}
+            details="Exact code segment to substitute into the lab-code template."
+          />
+        )}
+
+        {groupKind === "COLOR" && (
+          <s-text-field
+            label="Swatch colour"
+            name="swatch"
+            value={swatch}
+            onInput={(e) => setSwatch(e.currentTarget.value)}
+            error={errors.swatch}
+            details="Merchant colour value (e.g. #1a1a1a or black). Stored as data."
+          />
+        )}
+
+        <s-stack direction="inline" gap="base">
+          <s-button
+            type="submit"
+            variant="primary"
+            loading={isSubmitting}
+            disabled={isSubmitting}
+          >
+            Save option value
+          </s-button>
+          {onCancel && (
+            <s-button type="button" onClick={onCancel} disabled={isSubmitting}>
+              Cancel
+            </s-button>
+          )}
+        </s-stack>
+      </s-stack>
+    </form>
+  );
+}

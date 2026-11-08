@@ -59,11 +59,35 @@ Real, used now: 14, 17, 09. Tests: `testConfig()` loader/action calls, fake admi
 
 ## Done when
 
-- [ ] `pnpm vitest run app/features/catalog/admin-options.test.tsx` passes: every Examples row is a case; empty and populated states render. [unit]
-- [ ] INV-1: posting another shop's option value id returns 404, nothing changes. [unit]
-- [ ] INV-4: money input converts "35.5" → 3550 and "0.1" → 10 exactly (table test). [unit]
-- [ ] INV-7: `rg 'style=|className=|<style' app/routes/app.options* app/routes/app.add-ons* app/features/catalog/components/option-value-form.tsx` finds nothing. [static]
-- [ ] `pnpm test` passes with 0 failures. [unit]
-- [ ] `specs/inventory/19-admin-options-addons.md` lists routes and `OptionValueForm`. [static]
-- [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
-- [ ] `pnpm build` passes. [static]
+- [x] `pnpm vitest run app/features/catalog/admin-options.test.tsx` passes: every Examples row is a case; empty and populated states render. [unit]
+- [x] INV-1: posting another shop's option value id returns 404, nothing changes. [unit]
+- [x] INV-4: money input converts "35.5" → 3550 and "0.1" → 10 exactly (table test). [unit]
+- [x] INV-7: `rg 'style=|className=|<style' app/routes/app.options* app/routes/app.add-ons* app/features/catalog/components/option-value-form.tsx` finds nothing. [static]
+- [x] `pnpm test` passes with 0 failures. [unit]
+- [x] `specs/inventory/19-admin-options-addons.md` lists routes and `OptionValueForm`. [static]
+- [x] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
+- [x] `pnpm build` passes. [static]
+
+## Log
+
+- **2026-11-08** — Implemented Spec 19 (Admin: lens options and add-ons) by agy-1:
+  - Created `app/features/catalog-options/nav.ts` exporting `{ label: "Options & add-ons", href: "/app/options", order: 20 }` in isolated feature folder for auto-discovery by nav glob.
+  - Implemented `app/features/catalog/components/option-value-form.tsx` using Polaris web components (`s-stack`, `s-text-field`, `s-choice-list`, `s-choice`, `s-banner`, `s-button`) without any CSS classes or inline styles (INV-7). Provides label, price delta, code source choice (lab token `key=VALUE` vs override `overrideCode`), swatch colour for `COLOR` group kind, and inline validation errors.
+  - Implemented `app/routes/app.options._index.tsx` presenting 3 sections ("Material & index", "Tint & colour", "Add-ons") with empty and populated states, group modal, deletion, and reordering.
+  - Implemented `app/routes/app.options.$id.tsx` for creating/updating option values scoped to `session.shop`. Uses `parseMoneyText` without floating-point math (INV-4), validates code source exclusivity (`ONE_CODE_SOURCE`), syncs to Shopify via `syncItem` on positive delta, and calls `archiveItem` + clears `shopifyVariantId` on delta reduction to 0. Enforces tenant isolation (INV-1) by returning 404 for missing or cross-shop IDs.
+  - Implemented `app/routes/app.add-ons.$id.tsx` for add-ons CRUD scoped to `session.shop`. Parses price with `parseMoneyText`, triggers `syncItem`, and archives Shopify variant and DB row on archive action.
+  - Created inventory file `specs/inventory/19-admin-options-addons.md`.
+  - Created `app/features/catalog/admin-options.test.tsx` containing 24 tests covering all 5 Examples rows, INV-1 cross-tenant 404, INV-4 money conversion table test, nav discovery, empty/populated section renders, and add-on CRUD.
+  - Sabotages executed and verified:
+    1. Sabotage 1 (code exclusivity): Removed check for both token and override in `app/routes/app.options.$id.tsx` -> `AssertionError: expected 200 to be 400` in `admin-options.test.tsx`; restored, green.
+    2. Sabotage 2 (variant clearing): Bypassed clearing `shopifyVariantId` on delta 1500 -> 0 in `app/routes/app.options.$id.tsx` -> `AssertionError: expected 'gid://shopify/ProductVariant/555' to be null` in `admin-options.test.tsx`; restored, green.
+    3. Sabotage 3 (tenant isolation): Replaced `NotFoundError` 404 response with 200 on cross-shop option value update in `app/routes/app.options.$id.tsx` -> `AssertionError: expected 200 to be 404` in `admin-options.test.tsx`; restored, green.
+  - Gates:
+    - `pnpm vitest run app/features/catalog/admin-options.test.tsx` -> 24 passed (24)
+    - `pnpm test` -> 43 files passed (43), 686 tests passed (686)
+    - `rg 'style=|className=|<style' app/routes/app.options* app/routes/app.add-ons* app/features/catalog/components/option-value-form.tsx` -> 0 matches (exit 1)
+    - `pnpm typecheck` -> exit 0 (0 errors)
+    - `pnpm lint` -> exit 0 (0 errors, 0 warnings)
+    - `pnpm build` -> exit 0
+    - `git diff --check` -> exit 0
+- **2026-11-08** — Evidence (orchestro spec verify, tree f40b5003): install pass · typecheck pass · lint pass · build pass · test pass 686/0/0
