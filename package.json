@@ -32,6 +32,7 @@
     "dejavu-fonts-ttf": "^2.37.3",
     "isbot": "^5.1.31",
     "pdfkit": "^0.20.2",
+    "pg-boss": "12.38.1",
     "prisma": "6.19.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

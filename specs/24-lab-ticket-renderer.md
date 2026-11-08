@@ -92,7 +92,7 @@ Ties and rounding do not apply in spec 24: all prescription values come pre-form
   - `pnpm typecheck` exit 0
   - `pnpm lint` (`eslint . --max-warnings 0`) exit 0
   - `pnpm build` exit 0
-- **2026-11-08** — Evidence (orchestro spec verify, tree 5afea671): install pass · typecheck pass · lint pass · build pass · test pass 449/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 9666306e): install pass · typecheck pass · lint pass · build pass · test pass 629/0/0
 - **2026-11-08** — Review R1 fixes applied by agy-1 (accepted findings R1-F1..R1-F6):
   - R1-F1: Fixed INV-2 error privacy so all renderer failures (including PDFKit-layer and stream errors) surface as a fixed, data-free error (`TICKET_RENDER_FAILED`) with no original message or cause. Added test forcing a PDFKit text-layer failure with sensitive Rx notes and asserted none reaches error or logs.
   - R1-F2: Formatted CSV axes via rx-core `formatAxis` for both eyes (INV-5); added unit test verifying boundary axes 1 -> `001` and 180 -> `180`.

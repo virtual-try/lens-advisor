@@ -26,8 +26,8 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | 17 | [Shopify product sync for lenses, options and add-ons](./17-shopify-product-sync.md) | Not started | 13, 14 | Standard | — |  |
 | 18 | [Admin: lens groups and lenses](./18-admin-lenses.md) | Not started | 09, 10, 12, 13, 14, 17 | Standard | — |  |
 | 19 | [Admin: lens options and add-ons](./19-admin-options-addons.md) | Not started | 09, 13, 14, 17 | Standard | — |  |
-| 20 | [Admin: settings page](./20-admin-settings.md) | Not started | 09, 15 | Standard | — |  |
-| 21 | [App proxy: storefront catalog endpoint](./21-proxy-catalog-endpoint.md) | Not started | 09, 14, 15 | Standard | — |  |
+| 20 | [Admin: settings page](./20-admin-settings.md) | Done | 09, 15 | Standard | — | PR #38 |
+| 21 | [App proxy: storefront catalog endpoint](./21-proxy-catalog-endpoint.md) | Done | 09, 14, 15 | Standard | — | PR #47 |
 | 22 | [App proxy: prescription submit and upload endpoints](./22-proxy-prescription-endpoints.md) | Not started | 02, 05, 06, 10 | Heavy | — |  |
 | 23 | [orders/create webhook → lab orders](./23-orders-webhook.md) | Not started | 02, 08, 11, 22 | Heavy | — |  |
 | 24 | [Lab job ticket renderer (PDF and CSV)](./24-lab-ticket-renderer.md) | Not started | 03, 12 | Standard | — |  |
@@ -77,3 +77,5 @@ Not started · In progress · Blocked · Done
 - **2026-11-08** — Spec 04 merged (PR #22, merged by the owner on GitHub after the commit-author refusal).
 - **2026-11-08** — Spec 14 merged (PR #31).
 - **2026-11-08** — Spec 08 merged (PR #17).
+- **2026-11-08** — Spec 21 merged (PR #47).
+- **2026-11-08** — Spec 20 merged (PR #38).
