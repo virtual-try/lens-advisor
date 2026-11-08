@@ -8,9 +8,14 @@ import {
 } from "../shared/http/errors.server";
 import { authenticate } from "../shopify.server";
 
+const PRODUCT_ID_REGEX = /^(?:\d+|gid:\/\/shopify\/Product\/\d+)$/;
+
 export const productUpdateWebhookPayloadSchema = z
   .object({
-    id: z.union([z.number().int().positive(), z.string().min(1)]),
+    id: z.union([
+      z.number().int().positive(),
+      z.string().regex(PRODUCT_ID_REGEX, "Invalid product ID"),
+    ]),
     title: z.string().optional(),
     admin_graphql_api_id: z.string().optional(),
   })

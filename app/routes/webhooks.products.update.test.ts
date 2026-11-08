@@ -130,6 +130,33 @@ describe("Spec 38: webhooks.products.update", () => {
       expect(result.success).toBe(false);
     });
 
+    it("rejects string id with non-numeric characters (R2-F1)", () => {
+      const invalid = [
+        { id: "\nSPH -2.25 PATIENT" },
+        { id: "invalid-id" },
+        { id: "12345abc" },
+        { id: "SPH -2.25" },
+        { id: " " },
+      ];
+      for (const payload of invalid) {
+        const result = productUpdateWebhookPayloadSchema.safeParse(payload);
+        expect(result.success).toBe(false);
+      }
+    });
+
+    it("rejects invalid GraphQL GID id (empty-suffix or non-numeric) (R2-F1)", () => {
+      const invalid = [
+        { id: "gid://shopify/Product/" },
+        { id: "gid://shopify/Product/abc" },
+        { id: "gid://shopify/Product/\nSPH -2.25" },
+        { id: "gid://shopify/Order/7891234567890" },
+      ];
+      for (const payload of invalid) {
+        const result = productUpdateWebhookPayloadSchema.safeParse(payload);
+        expect(result.success).toBe(false);
+      }
+    });
+
     it("rejects non-string non-number id types", () => {
       const invalid = [
         { id: true },
@@ -265,6 +292,60 @@ describe("Spec 38: webhooks.products.update", () => {
         const logged = call.join(" ");
         expect(logged).not.toContain("No id");
       }
+    });
+
+    it("returns 400 and does not log hostile product id strings (R2-F1)", async () => {
+      const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const hostilePayloads = [
+        { id: "\nSPH -2.25 PATIENT" },
+        { id: "gid://shopify/Product/" },
+        { id: "gid://shopify/Product/abc" },
+        { id: "not-a-number" },
+      ];
+
+      for (const payload of hostilePayloads) {
+        vi.spyOn(getShopify().authenticate, "webhook").mockResolvedValueOnce({
+          shop,
+          topic,
+          webhookId: "wh_test",
+          payload,
+          apiVersion: "2026-10",
+          webhookType: "webhooks" as const,
+          session: undefined,
+          admin: undefined,
+        });
+
+        const request = new Request("https://example.com/webhooks/products/update", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Shopify-Shop-Domain": shop,
+            "X-Shopify-Topic": topic,
+          },
+          body: JSON.stringify(payload),
+        });
+
+        const response = await action(createActionArgs(request));
+        expect(response.status).toBe(400);
+
+        const json = await response.json();
+        expect(json.error?.code).toBe("MALFORMED_PAYLOAD");
+      }
+
+      // Verify safe error logging (no raw product id or hostile content leaked)
+      expect(consoleErrorSpy).toHaveBeenCalled();
+      for (const call of consoleErrorSpy.mock.calls) {
+        const logged = call.join(" ");
+        expect(logged).toContain("MALFORMED_PAYLOAD");
+        expect(logged).toContain(shop);
+        expect(logged).not.toContain("SPH -2.25 PATIENT");
+        expect(logged).not.toContain("not-a-number");
+      }
+
+      // Verify console.log was never called for any hostile payload
+      expect(consoleLogSpy).not.toHaveBeenCalled();
     });
 
     it("processes valid payload, logs product ID only, and returns 200", async () => {

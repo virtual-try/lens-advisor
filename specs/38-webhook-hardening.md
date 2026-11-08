@@ -99,4 +99,4 @@ Real, used now: `app/routes/webhooks.app.scopes_update.tsx`, `app/routes/webhook
     - `pnpm test`: 75 test files passed, 1345 tests passed, 0 failures.
     - `pnpm test:e2e --project=server`: 30 passed, 0 failures.
     - `pnpm build`: passed.
-- **2026-11-08** — Evidence (orchestro spec verify, tree b325f61d): install pass · typecheck pass · lint pass · build pass · test pass 1348/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree e68b3e00): install pass · typecheck pass · lint pass · build pass · test pass 1351/0/0

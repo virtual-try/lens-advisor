@@ -2,10 +2,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createTestDb, seedShop, type TestDb } from "../../../test/db";
-import { updateSessionScopeInDb } from "./session.repository.server";
+import {
+  updateSessionScopeInDb,
+  type UpdateSessionScopeInput,
+} from "./session.repository.server";
 import {
   createSessionService,
   updateSessionScope,
+  type UpdateSessionScopeOptions,
 } from "./session.service.server";
 
 describe("Shared Session: repository and service (session.server.test.ts)", () => {
@@ -116,12 +120,12 @@ describe("Shared Session: repository and service (session.server.test.ts)", () =
         }),
       ).rejects.toThrow("shop is required to update session scope (INV-1)");
 
+      const missingShopInput: unknown = {
+        sessionId: sessionAId,
+        scope: "invalid_update",
+      };
       await expect(
-        // @ts-expect-error shop is required
-        updateSessionScopeInDb(testDb.prisma, {
-          sessionId: sessionAId,
-          scope: "invalid_update",
-        }),
+        updateSessionScopeInDb(testDb.prisma, missingShopInput as UpdateSessionScopeInput),
       ).rejects.toThrow("shop is required to update session scope (INV-1)");
     });
   });
@@ -202,9 +206,13 @@ describe("Shared Session: repository and service (session.server.test.ts)", () =
         service.updateSessionScope(sessionAId, ["read_products"], { shop: "" }),
       ).rejects.toThrow("shop is required to update session scope (INV-1)");
 
+      const missingShopOptions: unknown = {};
       await expect(
-        // @ts-expect-error shop is required
-        service.updateSessionScope(sessionAId, ["read_products"], {}),
+        service.updateSessionScope(
+          sessionAId,
+          ["read_products"],
+          missingShopOptions as UpdateSessionScopeOptions,
+        ),
       ).rejects.toThrow("shop is required to update session scope (INV-1)");
     });
 
