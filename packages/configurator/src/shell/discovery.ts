@@ -37,6 +37,8 @@ export function loadDiscoveredSteps(
         titleKey: step.titleKey,
         isComplete: step.isComplete,
         isApplicable: step.isApplicable,
+        canContinue: step.canContinue,
+        onContinue: step.onContinue,
         Component: step.Component,
         Summary: step.Summary,
         folder,

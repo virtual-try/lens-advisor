@@ -3,7 +3,7 @@ client_id = ""
 
 [access_scopes]
 # Scopes required for Lens Advisor MVP
-scopes = "read_products,write_products,read_orders,write_app_proxy"
+scopes = "read_products,write_products,read_orders,write_app_proxy,write_publications"
 
 [app_proxy]
 url = "/proxy"

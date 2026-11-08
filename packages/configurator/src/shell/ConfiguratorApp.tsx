@@ -63,6 +63,7 @@ export interface ConfiguratorAppProps {
   isOpen?: boolean;
   onClose?: () => void;
   triggerElement?: HTMLElement | null;
+  mountElement?: HTMLElement | null;
 }
 
 export function ConfiguratorApp({
@@ -73,6 +74,7 @@ export function ConfiguratorApp({
   isOpen = true,
   onClose,
   triggerElement,
+  mountElement,
 }: ConfiguratorAppProps): JSX.Element | null {
   const safeProduct = useMemo(() => {
     return parseProductData(product);
@@ -362,12 +364,19 @@ export function ConfiguratorApp({
 
   const canGoBack = applicableIndex > 0;
   const isCurrentComplete = activeStep ? activeStep.isComplete(state) : false;
+  const canCurrentContinue = activeStep?.canContinue
+    ? activeStep.canContinue(state)
+    : isCurrentComplete;
 
   const handleBack = () => {
     dispatch({ type: "BACK", steps });
   };
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
+    if (activeStep?.onContinue) {
+      await activeStep.onContinue({ state, dispatch, api });
+      return;
+    }
     dispatch({ type: "CONTINUE", steps });
   };
 
@@ -407,6 +416,8 @@ export function ConfiguratorApp({
                   state={state}
                   dispatch={dispatch}
                   api={api}
+                  mount={mountElement}
+                  product={safeProduct}
                 />
               )}
             </div>
@@ -417,7 +428,10 @@ export function ConfiguratorApp({
                 api={api}
                 activeStep={activeStep}
                 canGoBack={canGoBack}
+                canContinue={canCurrentContinue}
                 isComplete={isCurrentComplete}
+                mount={mountElement}
+                product={safeProduct}
                 onBack={handleBack}
                 onContinue={handleContinue}
               />
