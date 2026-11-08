@@ -8,6 +8,7 @@ import {
   data,
   redirect,
   useActionData,
+  useFetcher,
   useLoaderData,
   useNavigation,
   useRouteError,
@@ -267,10 +268,14 @@ function usePolarisProperty<T extends HTMLElement>(
 
 export default function LensGroupEditRoute() {
   const { group, isNew } = useLoaderData<typeof loader>();
-  const actionData = useActionData<typeof action>();
+  const fetcher = useFetcher();
+  const routeActionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isSubmitting =
-    navigation.state === "submitting" || navigation.state === "loading";
+    fetcher.state === "submitting" ||
+    fetcher.state === "loading" ||
+    navigation.state === "submitting" ||
+    navigation.state === "loading";
 
   const [name, setName] = useState(group?.name ?? "");
   const [description, setDescription] = useState(group?.description ?? "");
@@ -288,10 +293,11 @@ export default function LensGroupEditRoute() {
     group?.lenses && group.lenses.some((l) => !l.archivedAt),
   );
 
+  const rawActionData = fetcher.data ?? routeActionData;
   const actionError =
-    actionData && typeof actionData === "object" && "error" in actionData
+    rawActionData && typeof rawActionData === "object" && "error" in rawActionData
       ? (
-          actionData as {
+          rawActionData as {
             error?: {
               code?: string;
               message?: string;
@@ -315,18 +321,7 @@ export default function LensGroupEditRoute() {
 
   const handleConfirmArchive = () => {
     handleModalHide();
-    const form = document.getElementById(
-      "lens-group-form",
-    ) as HTMLFormElement | null;
-    if (form) {
-      const intentInput = form.querySelector(
-        'input[name="intent"]',
-      ) as HTMLInputElement | null;
-      if (intentInput) {
-        intentInput.value = "archive";
-      }
-      form.requestSubmit();
-    }
+    fetcher.submit({ intent: "archive" }, { method: "post" });
   };
 
   const handleSubmit = () => {
@@ -342,7 +337,7 @@ export default function LensGroupEditRoute() {
         slot="primary-action"
         variant="primary"
         onClick={handleSubmit}
-        disabled={!name.trim() || isSubmitting}
+        {...(!name.trim() || isSubmitting ? { disabled: true } : {})}
         {...(isSubmitting ? { loading: true } : {})}
       >
         Save
@@ -359,7 +354,7 @@ export default function LensGroupEditRoute() {
         </s-button>
       )}
 
-      <form method="post" id="lens-group-form">
+      <fetcher.Form method="post" id="lens-group-form">
         <input type="hidden" name="intent" value="save" />
         <input type="hidden" name="name" value={name} />
         <input type="hidden" name="description" value={description} />
@@ -410,7 +405,7 @@ export default function LensGroupEditRoute() {
             </s-stack>
           </s-section>
         </s-stack>
-      </form>
+      </fetcher.Form>
 
       {!isNew && (
         <s-modal

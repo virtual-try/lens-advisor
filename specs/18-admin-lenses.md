@@ -84,11 +84,17 @@ Stubbed: none.
   - Created comprehensive test suite in `app/features/catalog/admin-lenses.test.tsx` covering all 5 Examples table cases, INV-1 cross-tenant rejection, INV-5 integer hundredths persistence, UI checklist states (empty, populated, sync-failed, loading), live lab-code preview, group CRUD, and reordering.
   - Dev-store test checkbox left unticked per R7 (requires owner-provided Shopify dev store).
   - Gate results:
-    - `pnpm vitest run app/features/catalog/admin-lenses.test.tsx` → 18/18 tests passed
-    - `pnpm test` → 43 test files passed, 680/680 tests passed
+    - `pnpm vitest run app/features/catalog/admin-lenses.test.tsx` → 38/38 tests passed
+    - `pnpm test` → 43 test files passed, 705/705 tests passed
     - `pnpm typecheck` → 0 errors
     - `pnpm lint` → 0 errors, 0 warnings
     - `pnpm build` → pass (client & ssr builds clean)
     - `git diff --check` → 0 whitespace errors
     - INV-7 grep check (`rg 'style=|className=|<style' ...`) → 0 matches
-- **2026-11-08** — Evidence (orchestro spec verify, tree 31fa91fc): install pass · typecheck pass · lint pass · build pass · test pass 700/0/0
+- **2026-11-08** — Fix round R6 by coder `agy-4`:
+  - R6-F1 [BLOCKER]: Replaced plain `<form method="post">` with `<fetcher.Form method="post">` in `LensForm` and `LensGroupEditRoute` to intercept submits via React Router with App Bridge session tokens; updated archive modals to use `fetcher.submit({ intent: "archive" }, { method: "post" })`; added tests submitting forms through `createMemoryRouter` verifying inline action error rendering.
+  - R6-F2 [MAJOR]: Changed boolean prop passing on custom `s-*` elements to `{...(cond ? { disabled: true } : {})}` and `{...(cond ? { checked: true } : {})}` across `lens-form.tsx`, `app.lens-groups.$id.tsx`, and `app.lenses._index.tsx` so `false` does not set `disabled="false"` or `checked="false"` attributes under React 18; added test asserting valid form Save and non-boundary Move buttons have no disabled attribute.
+  - R6-F4 [MINOR]: Disabled last remaining Rx type checkbox and enforced reset to checked on change so the UI never displays the checkbox unchecked while still submitting that type; added test.
+  - R6-F5 [MINOR]: Started new lenses with empty ADD limits, hid ADD fields and cleared submitted ADD values when neither PROGRESSIVE nor READING is selected, while keeping type-neutral SPH and CYL defaults; added test.
+  - R6-F7 [MINOR]: Replaced stale gate test counts in the Log with current verify output (38/38 tests in `admin-lenses.test.tsx`, 705/705 tests across workspace).
+- **2026-11-08** — Evidence (orchestro spec verify, tree 3fd27b66): install pass · typecheck pass · lint pass · build pass · test pass 705/0/0

@@ -632,13 +632,13 @@ export function LensesList({
                       Add lens to group
                     </s-link>
                     <s-button
-                      disabled={groupIdx === 0}
+                      {...(groupIdx === 0 ? { disabled: true } : {})}
                       onClick={() => handleMoveGroup(groupIdx, -1)}
                     >
                       Move group up
                     </s-button>
                     <s-button
-                      disabled={groupIdx === groups.length - 1}
+                      {...(groupIdx === groups.length - 1 ? { disabled: true } : {})}
                       onClick={() => handleMoveGroup(groupIdx, 1)}
                     >
                       Move group down
@@ -724,7 +724,7 @@ export function LensesList({
                                 Edit lens
                               </s-link>
                               <s-button
-                                disabled={lensIdx === 0}
+                                {...(lensIdx === 0 ? { disabled: true } : {})}
                                 onClick={() =>
                                   handleMoveLens(group, lensIdx, -1)
                                 }
@@ -732,7 +732,7 @@ export function LensesList({
                                 Move lens up
                               </s-button>
                               <s-button
-                                disabled={lensIdx === group.lenses.length - 1}
+                                {...(lensIdx === group.lenses.length - 1 ? { disabled: true } : {})}
                                 onClick={() =>
                                   handleMoveLens(group, lensIdx, 1)
                                 }

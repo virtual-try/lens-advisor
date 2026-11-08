@@ -35,6 +35,8 @@ import LensGroupEditRoute, {
 } from "../../routes/app.lens-groups.$id";
 import { LensForm } from "./components/lens-form";
 
+const actualUseFetcher = ReactRouter.useFetcher;
+
 const DB_TIMEOUT_MS = 120_000;
 
 const mocks = vi.hoisted(() => ({
@@ -2413,6 +2415,313 @@ describe("Spec 18 — Admin: lens groups and lenses", () => {
     it("exports route components as functions", () => {
       expect(typeof LensEditRoute).toBe("function");
       expect(typeof LensGroupEditRoute).toBe("function");
+    });
+  });
+
+  describe("Review Round 6 findings (R6-F1, R6-F2, R6-F4, R6-F5)", () => {
+    it("submits lens form through the router and renders action error inline (R6-F1)", async () => {
+      vi.spyOn(ReactRouter, "useFetcher").mockImplementation(actualUseFetcher);
+
+      const router = ReactRouter.createMemoryRouter(
+        [
+          {
+            path: "/app/lenses/new",
+            Component: () => (
+              <LensForm
+                groups={[{ id: "group-1", name: "Standard", position: 0, lenses: [], archivedAt: null }]}
+                defaultGroupId="group-1"
+                defaultValues={{
+                  name: "Valid Name",
+                  price: "49.99",
+                  sphMin: "-2.00",
+                  sphMax: "+2.00",
+                  cylMin: "-1.00",
+                  cylMax: "0.00",
+                }}
+              />
+            ),
+            action: async () => {
+              return ReactRouter.data(
+                {
+                  error: {
+                    code: "CUSTOM_SAVE_REJECTED",
+                    message: "Server rejected the save submission",
+                  },
+                },
+                { status: 400 },
+              );
+            },
+          },
+        ],
+        { initialEntries: ["/app/lenses/new"] },
+      );
+
+      render(<ReactRouter.RouterProvider router={router} />);
+
+      // Save button is enabled
+      const saveBtn = screen.getByText("Save").closest("s-button") ?? screen.getByText("Save");
+      expect(saveBtn.hasAttribute("disabled")).toBe(false);
+
+      // Click Save to trigger form submit through fetcher.Form
+      fireEvent.click(saveBtn);
+
+      // Verify inline error banner is rendered with the action error message
+      const errorMessage = await screen.findByText("Server rejected the save submission");
+      expect(errorMessage).not.toBeNull();
+      const banner = errorMessage.closest("s-banner");
+      expect(banner?.getAttribute("heading")).toBe("Save failed");
+      expect(banner?.getAttribute("tone")).toBe("critical");
+    });
+
+    it("submits lens group form through the router and renders action error inline, and uses fetcher.submit for archive (R6-F1)", async () => {
+      vi.spyOn(ReactRouter, "useFetcher").mockImplementation(actualUseFetcher);
+
+      let actionCalled = false;
+      let submittedIntent: string | null = null;
+
+      const router = ReactRouter.createMemoryRouter(
+        [
+          {
+            path: "/app/lens-groups/new",
+            HydrateFallback: () => null,
+            Component: LensGroupEditRoute,
+            loader: () => ({
+              group: null,
+              isNew: true,
+            }),
+            action: async ({ request }) => {
+              actionCalled = true;
+              const formData = await request.formData();
+              submittedIntent = formData.get("intent") as string;
+              return ReactRouter.data(
+                {
+                  error: {
+                    code: "NAME_REQUIRED",
+                    message: "Group name is required",
+                  },
+                },
+                { status: 400 },
+              );
+            },
+          },
+        ],
+        { initialEntries: ["/app/lens-groups/new"] },
+      );
+
+      render(<ReactRouter.RouterProvider router={router} />);
+
+      const saveBtn = await screen.findByText("Save");
+      const saveBtnElement = saveBtn.closest("s-button") ?? saveBtn;
+      // Type a name to enable Save
+      const nameField = document.querySelector('s-text-field[name="nameField"]') as
+        | (HTMLElement & { value: string })
+        | null;
+      if (nameField) {
+        nameField.value = "Test Group";
+        fireEvent(nameField, new Event("input", { bubbles: true }));
+        fireEvent(nameField, new Event("change", { bubbles: true }));
+      }
+
+      fireEvent.click(saveBtnElement);
+
+      const errorMessage = await screen.findByText("Group name is required");
+      expect(errorMessage).not.toBeNull();
+      const banner = errorMessage.closest("s-banner");
+      expect(banner?.getAttribute("heading")).toBe("Error");
+      expect(banner?.getAttribute("tone")).toBe("critical");
+      expect(actionCalled).toBe(true);
+      expect(submittedIntent).toBe("save");
+    });
+
+    it("ensures valid form Save button and non-boundary Move buttons have no disabled attribute under React 18 (R6-F2)", () => {
+      // 1. LensForm with valid inputs has no disabled attribute on Save
+      const { unmount: unmountLens } = render(
+        <LensForm
+          groups={[{ id: "g1", name: "Group 1", position: 0, lenses: [], archivedAt: null }]}
+          defaultGroupId="g1"
+          defaultValues={{
+            name: "Premium Lens",
+            price: "50.00",
+            sphMin: "-4.00",
+            sphMax: "+4.00",
+            cylMin: "-2.00",
+            cylMax: "0.00",
+          }}
+        />,
+      );
+
+      const lensSaveBtn = screen.getByText("Save").closest("s-button");
+      expect(lensSaveBtn).not.toBeNull();
+      expect(lensSaveBtn?.hasAttribute("disabled")).toBe(false);
+      expect(lensSaveBtn?.getAttribute("disabled")).toBeNull();
+
+      unmountLens();
+
+      // 2. LensGroupEditRoute with non-empty name has no disabled attribute on Save
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        group: { id: "g1", name: "Valid Group", description: "", position: 0, lenses: [] },
+        isNew: false,
+      });
+
+      const { unmount: unmountGroup } = render(<LensGroupEditRoute />);
+      const groupSaveBtn = screen.getByText("Save").closest("s-button");
+      expect(groupSaveBtn).not.toBeNull();
+      expect(groupSaveBtn?.hasAttribute("disabled")).toBe(false);
+      expect(groupSaveBtn?.getAttribute("disabled")).toBeNull();
+
+      unmountGroup();
+
+      // 3. Move buttons on middle item in LensesList have no disabled attribute
+      const middleGroupLenses = [
+        {
+          id: "l1",
+          groupId: "g1",
+          name: "Lens 1",
+          price: { amountMinor: 1000, currency: "USD" },
+          limits: { rxTypes: ["SINGLE_VISION" as const], sphMin: -200, sphMax: 200, cylMin: 0, cylMax: 0 },
+          labCodeTemplate: "PO-1",
+          shopifyProductId: null,
+          shopifyVariantId: null,
+          position: 0,
+          archivedAt: null,
+        },
+        {
+          id: "l2",
+          groupId: "g1",
+          name: "Lens 2",
+          price: { amountMinor: 2000, currency: "USD" },
+          limits: { rxTypes: ["SINGLE_VISION" as const], sphMin: -200, sphMax: 200, cylMin: 0, cylMax: 0 },
+          labCodeTemplate: "PO-2",
+          shopifyProductId: null,
+          shopifyVariantId: null,
+          position: 1,
+          archivedAt: null,
+        },
+        {
+          id: "l3",
+          groupId: "g1",
+          name: "Lens 3",
+          price: { amountMinor: 3000, currency: "USD" },
+          limits: { rxTypes: ["SINGLE_VISION" as const], sphMin: -200, sphMax: 200, cylMin: 0, cylMax: 0 },
+          labCodeTemplate: "PO-3",
+          shopifyProductId: null,
+          shopifyVariantId: null,
+          position: 2,
+          archivedAt: null,
+        },
+      ];
+      const threeGroups = [
+        { id: "g1", name: "Group 1", position: 0, lenses: middleGroupLenses, archivedAt: null },
+        { id: "g2", name: "Group 2", position: 1, lenses: [], archivedAt: null },
+        { id: "g3", name: "Group 3", position: 2, lenses: [], archivedAt: null },
+      ];
+
+      const { container } = render(<LensesList groups={threeGroups} />);
+
+      // Middle group (g2) Move up and Move down buttons are not disabled
+      const g2Section = container.querySelector('s-section[heading="Group 2"]');
+      const g2MoveUp = Array.from(g2Section?.querySelectorAll("s-button") ?? []).find(
+        (b) => b.textContent?.includes("Move group up"),
+      );
+      const g2MoveDown = Array.from(g2Section?.querySelectorAll("s-button") ?? []).find(
+        (b) => b.textContent?.includes("Move group down"),
+      );
+      expect(g2MoveUp?.hasAttribute("disabled")).toBe(false);
+      expect(g2MoveDown?.hasAttribute("disabled")).toBe(false);
+
+      // Middle lens (l2) Move up and Move down buttons are not disabled
+      const l2Box = Array.from(container.querySelectorAll("s-box")).find((box) =>
+        box.textContent?.includes("Lens 2"),
+      );
+      const l2MoveUp = Array.from(l2Box?.querySelectorAll("s-button") ?? []).find(
+        (b) => b.textContent?.includes("Move lens up"),
+      );
+      const l2MoveDown = Array.from(l2Box?.querySelectorAll("s-button") ?? []).find(
+        (b) => b.textContent?.includes("Move lens down"),
+      );
+      expect(l2MoveUp?.hasAttribute("disabled")).toBe(false);
+      expect(l2MoveDown?.hasAttribute("disabled")).toBe(false);
+
+      cleanup();
+    });
+
+    it("disables the last remaining Rx type checkbox and prevents unchecking it in UI and form submission (R6-F4)", () => {
+      const { container } = render(
+        <LensForm
+          groups={[{ id: "g1", name: "Group 1", position: 0, lenses: [], archivedAt: null }]}
+          defaultGroupId="g1"
+        />,
+      );
+
+      // By default, only SINGLE_VISION is checked
+      const singleVisionBox = container.querySelector(
+        's-checkbox[name="rxTypeSingleVision"]',
+      ) as (HTMLElement & { checked: boolean }) | null;
+      const progressiveBox = container.querySelector(
+        's-checkbox[name="rxTypeProgressive"]',
+      ) as (HTMLElement & { checked: boolean }) | null;
+
+      expect(singleVisionBox).not.toBeNull();
+      expect(progressiveBox).not.toBeNull();
+
+      // Because SINGLE_VISION is the only selected Rx type, it must be disabled
+      expect(singleVisionBox?.hasAttribute("disabled")).toBe(true);
+      expect(progressiveBox?.hasAttribute("disabled")).toBe(false);
+
+      // Attempting to uncheck the last remaining checkbox keeps it checked
+      fireEvent(singleVisionBox!, new Event("change", { bubbles: true }));
+      expect(singleVisionBox?.checked).toBe(true);
+
+      const hiddenRxTypes = container.querySelectorAll('input[name="rxTypes"]');
+      expect(hiddenRxTypes.length).toBe(1);
+      expect((hiddenRxTypes[0] as HTMLInputElement).value).toBe("SINGLE_VISION");
+
+      // Check PROGRESSIVE as a second type
+      progressiveBox!.checked = true;
+      fireEvent(progressiveBox!, new Event("change", { bubbles: true }));
+
+      // Now that 2 types are checked, neither is disabled
+      expect(singleVisionBox?.hasAttribute("disabled")).toBe(false);
+      expect(progressiveBox?.hasAttribute("disabled")).toBe(false);
+
+      cleanup();
+    });
+
+    it("starts a new lens with empty ADD limits and shows ADD fields only when PROGRESSIVE or READING is selected (R6-F5)", () => {
+      const { container } = render(
+        <LensForm
+          groups={[{ id: "g1", name: "Group 1", position: 0, lenses: [], archivedAt: null }]}
+          defaultGroupId="g1"
+        />,
+      );
+
+      // Default single-vision lens has no ADD fields rendered
+      expect(container.querySelector('s-text-field[name="addMinField"]')).toBeNull();
+      expect(container.querySelector('s-text-field[name="addMaxField"]')).toBeNull();
+
+      // Hidden inputs for addMin and addMax must be empty
+      const hiddenAddMin = container.querySelector('input[name="addMin"]') as HTMLInputElement | null;
+      const hiddenAddMax = container.querySelector('input[name="addMax"]') as HTMLInputElement | null;
+      expect(hiddenAddMin?.value).toBe("");
+      expect(hiddenAddMax?.value).toBe("");
+
+      // SPH and CYL defaults are preserved (type-neutral)
+      const hiddenSphMin = container.querySelector('input[name="sphMin"]') as HTMLInputElement | null;
+      const hiddenSphMax = container.querySelector('input[name="sphMax"]') as HTMLInputElement | null;
+      expect(hiddenSphMin?.value).toBe("-8.00");
+      expect(hiddenSphMax?.value).toBe("+6.00");
+
+      // Check PROGRESSIVE -> ADD fields appear
+      const progressiveBox = container.querySelector(
+        's-checkbox[name="rxTypeProgressive"]',
+      ) as (HTMLElement & { checked: boolean }) | null;
+      progressiveBox!.checked = true;
+      fireEvent(progressiveBox!, new Event("change", { bubbles: true }));
+
+      expect(container.querySelector('s-text-field[name="addMinField"]')).not.toBeNull();
+      expect(container.querySelector('s-text-field[name="addMaxField"]')).not.toBeNull();
+
+      cleanup();
     });
   });
 });

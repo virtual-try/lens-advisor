@@ -29,7 +29,7 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | 20 | [Admin: settings page](./20-admin-settings.md) | Done | 09, 15 | Standard | — | PR #38 |
 | 21 | [App proxy: storefront catalog endpoint](./21-proxy-catalog-endpoint.md) | Done | 09, 14, 15 | Standard | — | PR #47 |
 | 22 | [App proxy: prescription submit and upload endpoints](./22-proxy-prescription-endpoints.md) | Done | 02, 05, 06, 10 | Heavy | — | PR #40 |
-| 23 | [orders/create webhook → lab orders](./23-orders-webhook.md) | Not started | 02, 08, 11, 22 | Heavy | — |  |
+| 23 | [orders/create webhook → lab orders](./23-orders-webhook.md) | Done | 02, 08, 11, 22 | Heavy | — | PR #58 |
 | 24 | [Lab job ticket renderer (PDF and CSV)](./24-lab-ticket-renderer.md) | Done | 03, 12 | Standard | — | PR #41 |
 | 25 | [Compliance and uninstall webhooks](./25-compliance-webhooks.md) | Done | 02, 06, 07, 08 | Heavy | — | PR #50 |
 | 26 | [Configurator steps 1–2: Rx type and prescription](./26-step-rx-type-and-prescription.md) | Not started | 10, 16 | Standard | — |  |
@@ -84,3 +84,4 @@ Not started · In progress · Blocked · Done
 - **2026-11-08** — Spec 22 merged (PR #40).
 - **2026-11-08** — Spec 25 merged (PR #50).
 - **2026-11-08** — Spec 31 merged (PR #52).
+- **2026-11-08** — Spec 23 merged (PR #58).

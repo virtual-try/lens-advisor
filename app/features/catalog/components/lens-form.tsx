@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useFetcher } from "react-router";
 import type { RxType } from "../../../../packages/rx-core/src/index.js";
 import { formatDiopter } from "../../../../packages/rx-core/src/format/index.js";
 import {
@@ -49,7 +50,10 @@ function usePolarisProperty<T extends HTMLElement>(
 
 function usePolarisCheckbox(
   checked: boolean,
-  onCheckedChange: (checked: boolean) => void,
+  onCheckedChange: (
+    checked: boolean,
+    target?: HTMLElementTagNameMap["s-checkbox"] | HTMLInputElement,
+  ) => void,
 ) {
   const ref = useRef<HTMLElementTagNameMap["s-checkbox"] | null>(null);
   const onCheckedChangeRef = useRef(onCheckedChange);
@@ -75,7 +79,7 @@ function usePolarisCheckbox(
   function handleChange(e: Event) {
     const target = e.currentTarget as HTMLElementTagNameMap["s-checkbox"] | HTMLInputElement;
     const isNowChecked = Boolean(target?.checked);
-    onCheckedChangeRef.current(isNowChecked);
+    onCheckedChangeRef.current(isNowChecked, target);
   }
 
   useEffect(() => {
@@ -99,6 +103,7 @@ export interface LensFormProps {
   actionData?: unknown;
   onArchiveConfirm?: () => void;
   formId?: string;
+  fetcher?: ReturnType<typeof useFetcher>;
   defaultValues?: {
     name?: string;
     description?: string;
@@ -119,12 +124,20 @@ export function LensForm({
   groups,
   defaultGroupId,
   shopCurrency = "USD",
-  isSubmitting = false,
-  actionData,
+  isSubmitting: isSubmittingProp,
+  actionData: actionDataProp,
   onArchiveConfirm,
   formId = "lens-form",
   defaultValues,
+  fetcher: propsFetcher,
 }: LensFormProps) {
+  const defaultFetcher = useFetcher();
+  const fetcher = propsFetcher ?? defaultFetcher;
+  const isSubmitting =
+    Boolean(isSubmittingProp) ||
+    fetcher.state === "submitting" ||
+    fetcher.state === "loading";
+
   const initialGroupId =
     lens?.groupId ?? defaultGroupId ?? (groups[0]?.id || "");
   const initialName = defaultValues?.name ?? (lens?.name ?? "");
@@ -154,10 +167,10 @@ export function LensForm({
     defaultValues?.cylMax ?? (lens ? formatDiopter(lens.limits.cylMax) : "0.00");
   const initialAddMin =
     defaultValues?.addMin ??
-    (lens?.limits.addMin != null ? formatDiopter(lens.limits.addMin) : "+1.00");
+    (lens?.limits.addMin != null ? formatDiopter(lens.limits.addMin) : "");
   const initialAddMax =
     defaultValues?.addMax ??
-    (lens?.limits.addMax != null ? formatDiopter(lens.limits.addMax) : "+3.00");
+    (lens?.limits.addMax != null ? formatDiopter(lens.limits.addMax) : "");
   const initialTemplate =
     defaultValues?.labCodeTemplate ??
     (lens?.labCodeTemplate ?? "PO-58-[lens_type=NONE]-[lens_color=NONE]-00");
@@ -286,7 +299,11 @@ export function LensForm({
     }
   }
 
+  const showAddLimits =
+    rxTypes.includes("PROGRESSIVE") || rxTypes.includes("READING");
+
   // Action field errors from server (if any)
+  const actionData = (actionDataProp ?? fetcher.data) as unknown;
   const serverError =
     actionData && typeof actionData === "object" && "error" in actionData
       ? (
@@ -321,7 +338,7 @@ export function LensForm({
     !templateValidation.valid ||
     Boolean(sphMaxError) ||
     Boolean(cylMaxError) ||
-    Boolean(addMaxError) ||
+    Boolean(showAddLimits && addMaxError) ||
     Boolean(priceError) ||
     !price.trim() ||
     !name.trim() ||
@@ -329,7 +346,17 @@ export function LensForm({
     rxTypes.length === 0 ||
     isSubmitting;
 
-  const handleSetRxType = (type: RxType, isChecked: boolean) => {
+  const handleSetRxType = (
+    type: RxType,
+    isChecked: boolean,
+    target?: HTMLElementTagNameMap["s-checkbox"] | HTMLInputElement,
+  ) => {
+    if (!isChecked && rxTypes.length <= 1) {
+      if (target) {
+        target.checked = true;
+      }
+      return;
+    }
     setRxTypes((prev) => {
       if (isChecked) {
         if (prev.includes(type)) return prev;
@@ -343,19 +370,19 @@ export function LensForm({
 
   const [, setSingleVisionRef] = usePolarisCheckbox(
     rxTypes.includes("SINGLE_VISION"),
-    (checked) => handleSetRxType("SINGLE_VISION", checked),
+    (checked, target) => handleSetRxType("SINGLE_VISION", checked, target),
   );
   const [, setProgressiveRef] = usePolarisCheckbox(
     rxTypes.includes("PROGRESSIVE"),
-    (checked) => handleSetRxType("PROGRESSIVE", checked),
+    (checked, target) => handleSetRxType("PROGRESSIVE", checked, target),
   );
   const [, setReadingRef] = usePolarisCheckbox(
     rxTypes.includes("READING"),
-    (checked) => handleSetRxType("READING", checked),
+    (checked, target) => handleSetRxType("READING", checked, target),
   );
   const [, setNonPrescriptionRef] = usePolarisCheckbox(
     rxTypes.includes("NON_PRESCRIPTION"),
-    (checked) => handleSetRxType("NON_PRESCRIPTION", checked),
+    (checked, target) => handleSetRxType("NON_PRESCRIPTION", checked, target),
   );
 
   const handleModalHide = useCallback(() => {
@@ -375,16 +402,7 @@ export function LensForm({
     if (onArchiveConfirm) {
       onArchiveConfirm();
     } else {
-      const form = document.getElementById(formId) as HTMLFormElement | null;
-      if (form) {
-        const intentInput = form.querySelector(
-          'input[name="intent"]',
-        ) as HTMLInputElement | null;
-        if (intentInput) {
-          intentInput.value = "archive";
-        }
-        form.requestSubmit();
-      }
+      fetcher.submit({ intent: "archive" }, { method: "post" });
     }
   };
 
@@ -398,7 +416,7 @@ export function LensForm({
       <s-button
         slot="primary-action"
         variant="primary"
-        disabled={isSaveDisabled}
+        {...(isSaveDisabled ? { disabled: true } : {})}
         onClick={handleSubmit}
         {...(isSubmitting ? { loading: true } : {})}
       >
@@ -415,7 +433,7 @@ export function LensForm({
         </s-button>
       )}
 
-      <form method="post" id={formId}>
+      <fetcher.Form method="post" id={formId}>
         <input type="hidden" name="intent" value="save" />
         <input type="hidden" name="groupId" value={groupId} />
         <input type="hidden" name="name" value={name} />
@@ -426,8 +444,16 @@ export function LensForm({
         <input type="hidden" name="sphMax" value={sphMax} />
         <input type="hidden" name="cylMin" value={cylMin} />
         <input type="hidden" name="cylMax" value={cylMax} />
-        <input type="hidden" name="addMin" value={addMin} />
-        <input type="hidden" name="addMax" value={addMax} />
+        <input
+          type="hidden"
+          name="addMin"
+          value={showAddLimits ? addMin : ""}
+        />
+        <input
+          type="hidden"
+          name="addMax"
+          value={showAddLimits ? addMax : ""}
+        />
         <input type="hidden" name="labCodeTemplate" value={template} />
         {rxTypes.map((t) => (
           <input key={t} type="hidden" name="rxTypes" value={t} />
@@ -511,52 +537,71 @@ export function LensForm({
                 ref={setSingleVisionRef}
                 label={RX_TYPE_LABELS.SINGLE_VISION}
                 name="rxTypeSingleVision"
-                checked={rxTypes.includes("SINGLE_VISION")}
+                {...(rxTypes.includes("SINGLE_VISION")
+                  ? { checked: true }
+                  : {})}
+                {...(rxTypes.length === 1 && rxTypes.includes("SINGLE_VISION")
+                  ? { disabled: true }
+                  : {})}
                 onChange={(e) => {
-                  const isChecked = Boolean(
-                    e.currentTarget.checked ??
-                      (e.target as HTMLInputElement).checked,
-                  );
-                  handleSetRxType("SINGLE_VISION", isChecked);
+                  const target = (e.currentTarget ?? e.target) as
+                    | HTMLElementTagNameMap["s-checkbox"]
+                    | HTMLInputElement;
+                  const isChecked = Boolean(target.checked);
+                  handleSetRxType("SINGLE_VISION", isChecked, target);
                 }}
               />
               <s-checkbox
                 ref={setProgressiveRef}
                 label={RX_TYPE_LABELS.PROGRESSIVE}
                 name="rxTypeProgressive"
-                checked={rxTypes.includes("PROGRESSIVE")}
+                {...(rxTypes.includes("PROGRESSIVE")
+                  ? { checked: true }
+                  : {})}
+                {...(rxTypes.length === 1 && rxTypes.includes("PROGRESSIVE")
+                  ? { disabled: true }
+                  : {})}
                 onChange={(e) => {
-                  const isChecked = Boolean(
-                    e.currentTarget.checked ??
-                      (e.target as HTMLInputElement).checked,
-                  );
-                  handleSetRxType("PROGRESSIVE", isChecked);
+                  const target = (e.currentTarget ?? e.target) as
+                    | HTMLElementTagNameMap["s-checkbox"]
+                    | HTMLInputElement;
+                  const isChecked = Boolean(target.checked);
+                  handleSetRxType("PROGRESSIVE", isChecked, target);
                 }}
               />
               <s-checkbox
                 ref={setReadingRef}
                 label={RX_TYPE_LABELS.READING}
                 name="rxTypeReading"
-                checked={rxTypes.includes("READING")}
+                {...(rxTypes.includes("READING") ? { checked: true } : {})}
+                {...(rxTypes.length === 1 && rxTypes.includes("READING")
+                  ? { disabled: true }
+                  : {})}
                 onChange={(e) => {
-                  const isChecked = Boolean(
-                    e.currentTarget.checked ??
-                      (e.target as HTMLInputElement).checked,
-                  );
-                  handleSetRxType("READING", isChecked);
+                  const target = (e.currentTarget ?? e.target) as
+                    | HTMLElementTagNameMap["s-checkbox"]
+                    | HTMLInputElement;
+                  const isChecked = Boolean(target.checked);
+                  handleSetRxType("READING", isChecked, target);
                 }}
               />
               <s-checkbox
                 ref={setNonPrescriptionRef}
                 label={RX_TYPE_LABELS.NON_PRESCRIPTION}
                 name="rxTypeNonPrescription"
-                checked={rxTypes.includes("NON_PRESCRIPTION")}
+                {...(rxTypes.includes("NON_PRESCRIPTION")
+                  ? { checked: true }
+                  : {})}
+                {...(rxTypes.length === 1 &&
+                rxTypes.includes("NON_PRESCRIPTION")
+                  ? { disabled: true }
+                  : {})}
                 onChange={(e) => {
-                  const isChecked = Boolean(
-                    e.currentTarget.checked ??
-                      (e.target as HTMLInputElement).checked,
-                  );
-                  handleSetRxType("NON_PRESCRIPTION", isChecked);
+                  const target = (e.currentTarget ?? e.target) as
+                    | HTMLElementTagNameMap["s-checkbox"]
+                    | HTMLInputElement;
+                  const isChecked = Boolean(target.checked);
+                  handleSetRxType("NON_PRESCRIPTION", isChecked, target);
                 }}
               />
             </s-stack>
@@ -636,38 +681,42 @@ export function LensForm({
                 </s-banner>
               )}
 
-              <s-stack direction="inline" gap="base">
-                <s-text-field
-                  ref={setAddMinRef}
-                  label="ADD minimum"
-                  name="addMinField"
-                  value={addMin}
-                  onChange={(e) => {
-                    setAddMin(e.currentTarget.value);
-                  }}
-                  onInput={(e) => {
-                    setAddMin(e.currentTarget.value);
-                  }}
-                />
+              {showAddLimits && (
+                <>
+                  <s-stack direction="inline" gap="base">
+                    <s-text-field
+                      ref={setAddMinRef}
+                      label="ADD minimum"
+                      name="addMinField"
+                      value={addMin}
+                      onChange={(e) => {
+                        setAddMin(e.currentTarget.value);
+                      }}
+                      onInput={(e) => {
+                        setAddMin(e.currentTarget.value);
+                      }}
+                    />
 
-                <s-text-field
-                  ref={setAddMaxRef}
-                  label="ADD maximum"
-                  name="addMaxField"
-                  value={addMax}
-                  error={addMaxError}
-                  onChange={(e) => {
-                    setAddMax(e.currentTarget.value);
-                  }}
-                  onInput={(e) => {
-                    setAddMax(e.currentTarget.value);
-                  }}
-                />
-              </s-stack>
-              {addMaxError && (
-                <s-banner tone="critical" heading="Invalid ADD range">
-                  {addMaxError}
-                </s-banner>
+                    <s-text-field
+                      ref={setAddMaxRef}
+                      label="ADD maximum"
+                      name="addMaxField"
+                      value={addMax}
+                      error={addMaxError}
+                      onChange={(e) => {
+                        setAddMax(e.currentTarget.value);
+                      }}
+                      onInput={(e) => {
+                        setAddMax(e.currentTarget.value);
+                      }}
+                    />
+                  </s-stack>
+                  {addMaxError && (
+                    <s-banner tone="critical" heading="Invalid ADD range">
+                      {addMaxError}
+                    </s-banner>
+                  )}
+                </>
               )}
             </s-stack>
           </s-section>
@@ -706,7 +755,7 @@ export function LensForm({
             </s-stack>
           </s-section>
         </s-stack>
-      </form>
+      </fetcher.Form>
 
       <s-modal
         id="archive-lens-modal"
