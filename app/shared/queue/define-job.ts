@@ -99,7 +99,7 @@ const DEFAULT_RETRY: JobDefinition["retry"] = Object.freeze({
 
 const registry = new Map<string, AnyJobDefinition>();
 
-function schemaPath(path: readonly string[]): string {
+function schemaPath(path: readonly (string | number)[]): string {
   return path.length === 0 ? "payload" : path.join(".");
 }
 
@@ -266,6 +266,11 @@ function assertNode(
   }
 
   if (schema instanceof z.ZodTuple) {
+    if (schema._def.rest !== null && schema._def.rest !== undefined) {
+      throw new JobDefinitionError(
+        `Job payload field "${schemaPath(path)}" uses a variadic tuple with .rest(), which is not permitted in job payload schemas (INV-2)`
+      );
+    }
     schema.items.forEach((item: z.ZodTypeAny) => {
       assertNode(item, path, allowStringFields);
     });
@@ -419,35 +424,57 @@ export function validateJobPayload(
   definition: AnyJobDefinition,
   payload: unknown
 ): unknown {
+  const issues: SanitizedValidationIssue[] = [];
   const result = definition.schema.safeParse(payload);
   if (!result.success) {
-    const issues: SanitizedValidationIssue[] = result.error.issues.map((issue) => ({
-      path: issue.path,
-      code: issue.code,
-    }));
+    for (const issue of result.error.issues) {
+      issues.push({
+        path: issue.path,
+        code: issue.code,
+      });
+    }
+  }
+
+  collectUnknownKeys(definition.schema, payload, [], issues);
+
+  if (issues.length > 0) {
+    const seen = new Set<string>();
+    const uniqueIssues: SanitizedValidationIssue[] = [];
+    for (const issue of issues) {
+      const key = `${issue.path.join(".")}:${issue.code}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniqueIssues.push(issue);
+      }
+    }
+    throw new JobPayloadValidationError(definition.name, uniqueIssues);
+  }
+
+  if (!result.success) {
     throw new JobPayloadValidationError(definition.name, issues);
   }
-  assertNoUnknownKeys(definition.schema, payload, []);
+
   return result.data;
 }
 
-function assertNoUnknownKeys(
+function collectUnknownKeys(
   schema: z.ZodTypeAny,
   value: unknown,
-  path: readonly string[]
+  path: readonly (string | number)[],
+  issues: SanitizedValidationIssue[]
 ): void {
   if (value === undefined || value === null) return;
 
   if (schema instanceof z.ZodOptional) {
-    assertNoUnknownKeys(schema.unwrap(), value, path);
+    collectUnknownKeys(schema.unwrap(), value, path, issues);
     return;
   }
   if (schema instanceof z.ZodNullable) {
-    assertNoUnknownKeys(schema.unwrap(), value, path);
+    collectUnknownKeys(schema.unwrap(), value, path, issues);
     return;
   }
   if (schema instanceof z.ZodDefault) {
-    assertNoUnknownKeys(schema.removeDefault(), value, path);
+    collectUnknownKeys(schema.removeDefault(), value, path, issues);
     return;
   }
   if (schema instanceof z.ZodCatch) {
@@ -456,7 +483,7 @@ function assertNoUnknownKeys(
     );
   }
   if (schema instanceof z.ZodBranded || schema instanceof z.ZodReadonly) {
-    assertNoUnknownKeys(schema.unwrap(), value, path);
+    collectUnknownKeys(schema.unwrap(), value, path, issues);
     return;
   }
 
@@ -464,15 +491,18 @@ function assertNoUnknownKeys(
     if (typeof value !== "object" || Array.isArray(value)) return;
 
     const record = value as Record<string, unknown>;
+    let hasUnrecognized = false;
     for (const key of Object.keys(record)) {
       if (!(key in schema.shape)) {
-        throw new JobDefinitionError(
-          `Job payload field "${schemaPath([...path, key])}" is not declared by its zod schema (INV-2: ids and enums only)`
-        );
+        hasUnrecognized = true;
+        break;
       }
     }
+    if (hasUnrecognized) {
+      issues.push({ path, code: "unrecognized_keys" });
+    }
     for (const [key, child] of Object.entries(schema.shape)) {
-      assertNoUnknownKeys(child as z.ZodTypeAny, record[key], [...path, key]);
+      collectUnknownKeys(child as z.ZodTypeAny, record[key], [...path, key], issues);
     }
     return;
   }
@@ -480,15 +510,20 @@ function assertNoUnknownKeys(
   if (schema instanceof z.ZodArray) {
     if (!Array.isArray(value)) return;
     value.forEach((item, index) => {
-      assertNoUnknownKeys(schema.element as z.ZodTypeAny, item, [...path, String(index)]);
+      collectUnknownKeys(schema.element as z.ZodTypeAny, item, [...path, index], issues);
     });
     return;
   }
 
   if (schema instanceof z.ZodTuple) {
+    if (schema._def.rest !== null && schema._def.rest !== undefined) {
+      throw new JobDefinitionError(
+        `Job payload field "${schemaPath(path)}" uses a variadic tuple with .rest(), which is not permitted in job payload schemas (INV-2)`
+      );
+    }
     if (!Array.isArray(value)) return;
     schema.items.forEach((item: z.ZodTypeAny, index: number) => {
-      assertNoUnknownKeys(item, value[index], [...path, String(index)]);
+      collectUnknownKeys(item, value[index], [...path, index], issues);
     });
     return;
   }
@@ -505,7 +540,7 @@ function assertNoUnknownKeys(
     const discValue = (value as Record<string, unknown>)[discKey];
     const branch = schema.optionsMap.get(discValue as string);
     if (branch) {
-      assertNoUnknownKeys(branch, value, path);
+      collectUnknownKeys(branch, value, path, issues);
     }
     return;
   }

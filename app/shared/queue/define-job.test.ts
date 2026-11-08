@@ -425,30 +425,66 @@ describe("defineJob payload guard (INV-2)", () => {
       validateJobPayload(definition, { kind: "account", accountId: "acc-456" })
     ).toEqual({ kind: "account", accountId: "acc-456" });
 
-    // Strict-key validation rejects extra keys on either branch
+    // Strict-key validation rejects extra keys on either branch without leaking key names (INV-2, R6-F2)
     expect(() =>
       validateJobPayload(definition, {
         kind: "order",
         orderId: "ord-123",
         accountId: "acc-456",
       })
-    ).toThrowError(/accountId.*not declared/);
+    ).toThrowError(JobPayloadValidationError);
 
-    expect(() =>
+    try {
+      validateJobPayload(definition, {
+        kind: "order",
+        orderId: "ord-123",
+        accountId: "acc-456",
+      });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(JobPayloadValidationError);
+      const err = error as JobPayloadValidationError;
+      expect(err.issues).toEqual([{ path: [], code: "unrecognized_keys" }]);
+      expect(err.message).toContain("unrecognized_keys");
+      expect(err.message).not.toContain("accountId");
+      expect(err.message).not.toContain("acc-456");
+      expect(JSON.stringify(err)).not.toContain("accountId");
+    }
+
+    try {
       validateJobPayload(definition, {
         kind: "account",
         accountId: "acc-456",
         orderId: "ord-123",
-      })
-    ).toThrowError(/orderId.*not declared/);
+      });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(JobPayloadValidationError);
+      const err = error as JobPayloadValidationError;
+      expect(err.issues).toEqual([{ path: [], code: "unrecognized_keys" }]);
+      expect(err.message).toContain("unrecognized_keys");
+      expect(err.message).not.toContain("orderId");
+      expect(err.message).not.toContain("ord-123");
+      expect(JSON.stringify(err)).not.toContain("orderId");
+    }
 
-    expect(() =>
+    try {
       validateJobPayload(definition, {
         kind: "account",
         accountId: "acc-456",
         rxText: "SPH -2.25",
-      })
-    ).toThrowError(/rxText.*not declared/);
+      });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(JobPayloadValidationError);
+      const err = error as JobPayloadValidationError;
+      expect(err.issues).toEqual([{ path: [], code: "unrecognized_keys" }]);
+      expect(err.message).toContain("unrecognized_keys");
+      expect(err.message).not.toContain("rxText");
+      expect(err.message).not.toContain("SPH -2.25");
+      expect(JSON.stringify(err)).not.toContain("rxText");
+      expect(JSON.stringify(err)).not.toContain("SPH -2.25");
+    }
   });
 
   it("rejects job names ending in .dead (reserved for dead-letter queues) at registration (R4-F1)", () => {
@@ -505,5 +541,51 @@ describe("defineJob payload guard (INV-2)", () => {
     expect(err.cause).toBeUndefined();
     expect(err.stack).not.toContain("SPH -2.25");
     expect(JSON.stringify(err)).not.toContain("SPH -2.25");
+  });
+
+  it("rejects variadic tuple .rest() schemas at registration (R6-F1)", () => {
+    expect(() =>
+      defineJob({
+        name: "test.tuple-rest",
+        schema: z.object({
+          itemIds: z.tuple([z.string()]).rest(z.object({ rxText: z.string() })),
+        }),
+        handler: () => undefined,
+      })
+    ).toThrowError(/variadic tuple with \.rest\(\)/);
+  });
+
+  it("emits JobPayloadValidationError with safe parent path and issue code when an unexpected key is present, never leaking key name or value (R6-F2)", () => {
+    const definition = defineJob({
+      name: "test.extra-key",
+      schema: z.object({
+        orderId: z.string(),
+      }),
+      handler: () => undefined,
+    });
+
+    let caughtError: unknown;
+    try {
+      validateJobPayload(definition, {
+        orderId: "ord-123",
+        "SPH -2.25": "leak-value",
+      });
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toBeInstanceOf(JobPayloadValidationError);
+    const err = caughtError as JobPayloadValidationError;
+    expect(err.jobName).toBe("test.extra-key");
+    expect(err.issues).toEqual([{ path: [], code: "unrecognized_keys" }]);
+    expect(err.message).toContain("test.extra-key");
+    expect(err.message).toContain("payload: unrecognized_keys");
+    expect(err.message).not.toContain("SPH -2.25");
+    expect(err.message).not.toContain("leak-value");
+    expect(err.cause).toBeUndefined();
+    expect(err.stack).not.toContain("SPH -2.25");
+    expect(err.stack).not.toContain("leak-value");
+    expect(JSON.stringify(err)).not.toContain("SPH -2.25");
+    expect(JSON.stringify(err)).not.toContain("leak-value");
   });
 });

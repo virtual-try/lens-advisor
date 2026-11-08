@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { PgBoss } from "pg-boss";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { createPgBoss } from "../container/queue.server";
@@ -152,9 +153,18 @@ describe("Queue on a real Postgres", () => {
       });
       await queue.register(definition);
 
-      await expect(
-        queue.enqueue(name, { orderId: "order-4", rxText: "SPH -2.25" })
-      ).rejects.toThrowError(/rxText/);
+      let enqueueError: unknown;
+      try {
+        await queue.enqueue(name, { orderId: "order-4", rxText: "SPH -2.25" });
+      } catch (err) {
+        enqueueError = err;
+      }
+      expect(enqueueError).toBeInstanceOf(JobPayloadValidationError);
+      const err = enqueueError as JobPayloadValidationError;
+      expect(err.issues).toEqual([{ path: [], code: "unrecognized_keys" }]);
+      expect(err.message).toContain("unrecognized_keys");
+      expect(err.message).not.toContain("rxText");
+      expect(err.message).not.toContain("SPH -2.25");
       expect(await queue.findJobs(name)).toHaveLength(0);
     });
   });
@@ -419,6 +429,106 @@ describe("Queue on a real Postgres", () => {
       expect(handlerCalled).toBe(false);
       expect(deadLetter.data).toBeNull();
       expect(deadLetter.sourceName).toBe(name);
+    });
+  });
+
+  it("rejects a payload with an extra key 'SPH -2.25' on enqueue and receive without leaking the key or value (R6-F2)", async () => {
+    await withTestQueue(async (queue) => {
+      const name = jobName("extra-key-inv2");
+      let handlerCalled = false;
+      const definition = defineJob({
+        name,
+        schema: z.object({ orderId: z.string() }),
+        retry: { retryLimit: 0, retryDelay: 0 },
+        handler: () => {
+          handlerCalled = true;
+        },
+      });
+      await queue.register(definition);
+
+      // 1. Enqueue path:
+      // An extra key 'SPH -2.25' must be rejected with JobPayloadValidationError,
+      // and neither the key name nor the value may appear in the error or its serialization.
+      let enqueueError: unknown;
+      try {
+        await queue.enqueue(name, {
+          orderId: "ord-123",
+          "SPH -2.25": "secret-rx-value",
+        });
+      } catch (error) {
+        enqueueError = error;
+      }
+
+      expect(enqueueError).toBeInstanceOf(JobPayloadValidationError);
+      const enqErr = enqueueError as JobPayloadValidationError;
+      expect(enqErr.jobName).toBe(name);
+      expect(enqErr.issues).toEqual([{ path: [], code: "unrecognized_keys" }]);
+      expect(enqErr.message).toContain(name);
+      expect(enqErr.message).toContain("unrecognized_keys");
+      expect(enqErr.message).not.toContain("SPH -2.25");
+      expect(enqErr.message).not.toContain("secret-rx-value");
+      expect(enqErr.cause).toBeUndefined();
+      expect(enqErr.stack).not.toContain("SPH -2.25");
+      expect(enqErr.stack).not.toContain("secret-rx-value");
+      expect(JSON.stringify(enqErr)).not.toContain("SPH -2.25");
+      expect(JSON.stringify(enqErr)).not.toContain("secret-rx-value");
+      expect(await queue.findJobs(name)).toHaveLength(0);
+
+      // 2. Receive path:
+      // Insert raw job with extra key 'SPH -2.25' directly into pg-boss; worker validates on receive.
+      // The job fails and moves to <name>.dead, and the failure stored by pg-boss in pgboss.job output
+      // must never contain the key name or its value.
+      await queue.work(definition);
+      await enqueueTestRaw(
+        queue,
+        name,
+        { orderId: "ord-raw-1", "SPH -2.25": "secret-rx-value" },
+        { singletonKey: "raw-extra-key-1" }
+      );
+
+      const deadLetter = await waitFor(
+        async () => (await queue.findJobs(`${name}.dead`))[0],
+        () => true
+      );
+
+      expect(handlerCalled).toBe(false);
+      expect(deadLetter.sourceName).toBe(name);
+
+      const jobs = await queue.findJobs(name);
+      const failedJob = jobs.find((j) => j.state === "failed");
+      expect(failedJob).toBeDefined();
+      expect(failedJob?.output).toBeDefined();
+
+      const failureJson = JSON.stringify(failedJob?.output);
+      expect(failureJson).not.toContain("SPH -2.25");
+      expect(failureJson).not.toContain("secret-rx-value");
+      expect(failureJson).toContain(name);
+      expect(failureJson).toContain("unrecognized_keys");
+    });
+  });
+
+  it("rejects registration and worker startup over a pre-existing standard queue for a singleton job (R6-F3)", async () => {
+    await withTestQueue(async (queue) => {
+      const name = jobName("pre-existing-standard");
+      const definition = defineJob({
+        name,
+        schema: z.object({ orderId: z.string() }),
+        handler: () => undefined,
+      });
+
+      // Pre-create the queue directly in pg-boss with standard policy
+      const boss = (queue as unknown as { boss: PgBoss }).boss;
+      await boss.createQueue(name, { policy: "standard" });
+
+      // Registration over the mismatched queue must reject with a clear, data-free error naming the queue and both policies
+      await expect(queue.register(definition)).rejects.toThrowError(
+        new RegExp(`Queue "${name}" has policy "standard" but expected "exclusive"`)
+      );
+
+      // queue.work (worker startup) must also reject with the same error
+      await expect(queue.work(definition)).rejects.toThrowError(
+        new RegExp(`Queue "${name}" has policy "standard" but expected "exclusive"`)
+      );
     });
   });
 });

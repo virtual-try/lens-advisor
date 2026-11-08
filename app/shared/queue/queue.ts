@@ -99,10 +99,28 @@ export class Queue {
     }
 
     const deadLetter = deadLetterQueueName(definition.name);
+    const existingDeadLetter = await this.boss.getQueue(deadLetter);
+    const existingDeadLetterPolicy =
+      existingDeadLetter?.policy ?? (existingDeadLetter ? "standard" : undefined);
+    if (existingDeadLetter && existingDeadLetterPolicy !== "standard") {
+      throw new JobDefinitionError(
+        `Queue "${deadLetter}" has policy "${existingDeadLetterPolicy}" but expected "standard"`
+      );
+    }
     await this.boss.createQueue(deadLetter, { policy: "standard", retryLimit: 0 });
     await this.boss.updateQueue(deadLetter, { retryLimit: 0 });
+
+    const expectedPolicy = "exclusive";
+    const existing = await this.boss.getQueue(definition.name);
+    const existingPolicy = existing?.policy ?? (existing ? "standard" : undefined);
+    if (existing && existingPolicy !== expectedPolicy) {
+      throw new JobDefinitionError(
+        `Queue "${definition.name}" has policy "${existingPolicy}" but expected "${expectedPolicy}"`
+      );
+    }
+
     await this.boss.createQueue(definition.name, {
-      policy: "exclusive",
+      policy: expectedPolicy,
       deadLetter,
       retryLimit: definition.retry.retryLimit,
       retryDelay: definition.retry.retryDelay,
