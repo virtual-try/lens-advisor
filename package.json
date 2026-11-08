@@ -14,7 +14,7 @@
     "typecheck": "prisma generate && react-router typegen && tsc --noEmit && pnpm -r typecheck",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
-    "test:e2e": "node -e 'console.log(\"owned by spec 33\"); process.exit(1)'",
+    "test:e2e": "playwright test",
     "setup": "prisma generate && prisma migrate deploy",
     "docker-start": "npm run setup && npm run start"
   },
@@ -43,6 +43,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.21.0",
+    "@playwright/test": "^1.65.0",
     "@shopify/api-codegen-preset": "^2.0.0",
     "@shopify/polaris-types": "^1.0.1",
     "@testing-library/react": "^16.2.0",

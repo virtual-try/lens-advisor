@@ -194,6 +194,9 @@ async function unwrapResponse<T = Record<string, unknown>>(
   return { status: 200, data: result as T };
 }
 
+
+import { standaloneNumber } from "../../../e2e/helpers/standalone-number";
+
 describe("Spec 32 — Admin: lab orders list, resend and ticket download", () => {
   // Navigation test
   it("nav.ts exports 'Lab orders' with order 5", () => {
@@ -872,7 +875,7 @@ describe("Spec 32 — Admin: lab orders list, resend and ticket download", () =>
       const distinctivePlaintext = {
         sph: -2.25,
         cyl: -1.50,
-        axis: 90,
+        axis: 137,
         notes: "NOTE-XYZ",
       };
       const encryptedCipher = cipher.encrypt(
@@ -896,11 +899,11 @@ describe("Spec 32 — Admin: lab orders list, resend and ticket download", () =>
         where: { id: prescription.id },
       });
       expect(rawRow?.cipher).toBeDefined();
-      expect(rawRow!.cipher).not.toContain("-2.25");
-      expect(rawRow!.cipher).not.toContain("2.25");
-      expect(rawRow!.cipher).not.toContain("-1.50");
-      expect(rawRow!.cipher).not.toContain("1.50");
-      expect(rawRow!.cipher).not.toContain("90");
+      expect(rawRow!.cipher).not.toMatch(standaloneNumber("-2.25"));
+      expect(rawRow!.cipher).not.toMatch(standaloneNumber("2.25"));
+      expect(rawRow!.cipher).not.toMatch(standaloneNumber("-1.50"));
+      expect(rawRow!.cipher).not.toMatch(standaloneNumber("1.50"));
+      expect(rawRow!.cipher).not.toMatch(standaloneNumber("137"));
       expect(rawRow!.cipher).not.toContain("NOTE-XYZ");
 
       const order = await prisma.labOrder.create({
@@ -933,11 +936,13 @@ describe("Spec 32 — Admin: lab orders list, resend and ticket download", () =>
 
       // Assert loader JSON output lacks all distinctive plaintext
       const loaderJson = JSON.stringify(result);
-      expect(loaderJson).not.toContain("-2.25");
-      expect(loaderJson).not.toContain("2.25");
-      expect(loaderJson).not.toContain("-1.50");
-      expect(loaderJson).not.toContain("1.50");
-      expect(loaderJson).not.toContain("90");
+      expect(loaderJson).not.toMatch(standaloneNumber("-2.25"));
+      expect(loaderJson).not.toMatch(standaloneNumber("2.25"));
+      expect(loaderJson).not.toMatch(standaloneNumber("-1.50"));
+      expect(loaderJson).not.toMatch(standaloneNumber("1.50"));
+      expect(loaderJson).not.toMatch(standaloneNumber("1.5"));
+      expect(loaderJson).not.toMatch(standaloneNumber("-1.5"));
+      expect(loaderJson).not.toMatch(standaloneNumber("137"));
       expect(loaderJson).not.toContain("NOTE-XYZ");
 
       // Render the detail component
@@ -962,11 +967,13 @@ describe("Spec 32 — Admin: lab orders list, resend and ticket download", () =>
       expect(html).toContain("Prescription: on file (typed)");
 
       // Assert distinctive clinical values NEVER appear anywhere in HTML output
-      expect(html).not.toContain("-2.25");
-      expect(html).not.toContain("2.25");
-      expect(html).not.toContain("-1.50");
-      expect(html).not.toContain("1.50");
-      expect(html).not.toContain("90");
+      expect(html).not.toMatch(standaloneNumber("-2.25"));
+      expect(html).not.toMatch(standaloneNumber("2.25"));
+      expect(html).not.toMatch(standaloneNumber("-1.50"));
+      expect(html).not.toMatch(standaloneNumber("1.50"));
+      expect(html).not.toMatch(standaloneNumber("1.5"));
+      expect(html).not.toMatch(standaloneNumber("-1.5"));
+      expect(html).not.toMatch(standaloneNumber("137"));
       expect(html).not.toContain("NOTE-XYZ");
       expect(html).not.toContain("cipher");
     });
