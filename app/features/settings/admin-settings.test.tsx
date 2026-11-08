@@ -934,27 +934,66 @@ describe("Spec 20 — Admin Settings Component (UI)", () => {
     expect(mocks.toastShow).toHaveBeenLastCalledWith("Settings saved");
   });
 
-  it("privacy flow driven through toggle: toggle opens modal, cancel reverts toggle, confirm enables and submits (R1-F1, R1-F2)", () => {
-    vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue(defaultLoaderData);
+  it("privacy flow driven through toggle: toggle opens modal, cancel reverts toggle, confirm enables and submits (R1-F1, R1-F2, R2-F1)", async () => {
+    const shopDomain = "privacy-flow.myshopify.com";
+    const shopId = await createShop(shopDomain);
+    mocks.currentShop = shopDomain;
+
+    const requestSubmitSpy = vi.spyOn(HTMLFormElement.prototype, "requestSubmit");
+    const fetcherSubmitSpy = vi.fn();
+
+    vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+      ...defaultLoaderData,
+      settings: {
+        ...defaultLoaderData.settings,
+        storeRxInOrder: false,
+      },
+    });
     vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
       data: undefined,
       state: "idle",
       Form: ({
         children,
+        onSubmit,
         ...props
-      }: React.PropsWithChildren<Record<string, unknown>>) => (
-        <form {...props}>{children}</form>
+      }: React.PropsWithChildren<
+        React.FormHTMLAttributes<HTMLFormElement>
+      >) => (
+        <form
+          {...props}
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit?.(e);
+            const formData = new FormData(e.currentTarget);
+            fetcherSubmitSpy(formData);
+          }}
+        >
+          {children}
+        </form>
       ),
-      submit: vi.fn(),
+      submit: fetcherSubmitSpy,
       load: vi.fn(),
     } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
 
     const { container } = render(<SettingsRoute />);
 
-    const confirmModal = container.querySelector("#privacy-confirm-modal");
+    const confirmModal = container.querySelector(
+      "#privacy-confirm-modal",
+    ) as HTMLElement & {
+      showOverlay: ReturnType<typeof vi.fn>;
+      hideOverlay: ReturnType<typeof vi.fn>;
+    };
     expect(confirmModal).not.toBeNull();
-    // Modal starts closed
-    expect(confirmModal?.hasAttribute("open")).toBe(false);
+
+    const showOverlaySpy = vi.fn();
+    const hideOverlaySpy = vi.fn();
+    confirmModal.showOverlay = showOverlaySpy;
+    confirmModal.hideOverlay = hideOverlaySpy;
+
+    expect(showOverlaySpy).not.toHaveBeenCalled();
+    expect(hideOverlaySpy).not.toHaveBeenCalled();
+    expect(requestSubmitSpy).not.toHaveBeenCalled();
+    expect(fetcherSubmitSpy).not.toHaveBeenCalled();
 
     const hiddenStoreInput = container.querySelector(
       'input[name="storeRxInOrder"]',
@@ -972,36 +1011,73 @@ describe("Spec 20 — Admin Settings Component (UI)", () => {
     );
     expect(toggle).not.toBeNull();
 
-    // 1. User changes the checkbox to true -> modal MUST open
+    // 1. User changes the checkbox to true -> modal's showOverlay() MUST be called (not open attribute)
     fireEvent.input(toggle!, {
       target: { checked: true },
       currentTarget: { checked: true },
     });
-    expect(confirmModal?.hasAttribute("open")).toBe(true);
+    expect(showOverlaySpy).toHaveBeenCalledTimes(1);
+    expect(hideOverlaySpy).not.toHaveBeenCalled();
 
-    // 2. User clicks Cancel in the modal -> modal closes, toggle stays off, nothing confirmed
+    // 2. User clicks Cancel in the modal -> modal closes via hideOverlay(), toggle stays off, nothing confirmed
     const cancelBtn = screen.getByText("Cancel");
     expect(cancelBtn).not.toBeNull();
     fireEvent.click(cancelBtn);
 
-    expect(confirmModal?.hasAttribute("open")).toBe(false);
+    expect(hideOverlaySpy).toHaveBeenCalledTimes(1);
     expect(hiddenStoreInput?.value).toBe("false");
     expect(hiddenConfirmInput?.value).toBe("false");
 
-    // 3. User changes the checkbox to true again -> modal opens
+    // Cancel causes no submission and no write to database
+    expect(requestSubmitSpy).not.toHaveBeenCalled();
+    expect(fetcherSubmitSpy).not.toHaveBeenCalled();
+    const settingsAfterCancel = await getSettings(shopId, getTestPrisma());
+    expect(settingsAfterCancel.storeRxInOrder).toBe(false);
+
+    // 3. User changes the checkbox to true again -> modal's showOverlay() called again
     fireEvent.input(toggle!, {
       target: { checked: true },
       currentTarget: { checked: true },
     });
-    expect(confirmModal?.hasAttribute("open")).toBe(true);
+    expect(showOverlaySpy).toHaveBeenCalledTimes(2);
 
-    // 4. User clicks Confirm in the modal -> modal closes, toggle is on, confirm field is set
+    // 4. User clicks Confirm in the modal -> modal closes via hideOverlay(), toggle is on, confirm field is set
     const confirmBtn = screen.getByText("Confirm");
     expect(confirmBtn).not.toBeNull();
     fireEvent.click(confirmBtn);
 
-    expect(confirmModal?.hasAttribute("open")).toBe(false);
+    expect(hideOverlaySpy).toHaveBeenCalledTimes(2);
     expect(hiddenStoreInput?.value).toBe("true");
     expect(hiddenConfirmInput?.value).toBe("true");
+
+    // 5. User clicks Save -> triggers requestSubmit() and submits the form
+    const saveBtn = screen.getByText("Save");
+    expect(saveBtn).not.toBeNull();
+    fireEvent.click(saveBtn);
+
+    expect(requestSubmitSpy).toHaveBeenCalled();
+    expect(fetcherSubmitSpy).toHaveBeenCalledTimes(1);
+
+    const submittedFormData = fetcherSubmitSpy.mock.calls[0][0] as FormData;
+    expect(submittedFormData.get("storeRxInOrder")).toBe("true");
+    expect(submittedFormData.get("confirmStoreRxInOrder")).toBe("true");
+
+    // Pass the submitted form data to the action to prove it writes true to the database
+    const postRequest = new Request("https://app.test/app/settings", {
+      method: "POST",
+      body: submittedFormData,
+    });
+    const actionResult = await action(createActionArgs(postRequest));
+    const { status, data: result } = await unwrapResponse<{
+      ok: boolean;
+      settings?: { storeRxInOrder: boolean };
+    }>(actionResult);
+
+    expect(status).toBe(200);
+    expect(result.ok).toBe(true);
+    expect(result.settings?.storeRxInOrder).toBe(true);
+
+    const savedInDb = await getSettings(shopId, getTestPrisma());
+    expect(savedInDb.storeRxInOrder).toBe(true);
   });
 });

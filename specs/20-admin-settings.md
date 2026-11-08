@@ -96,7 +96,7 @@ Real, used now: 15, 09. Tests: `testConfig()` loader/action calls. Stubbed: none
   - `pnpm build` → exit 0
   - `rg 'style=|className=|<style' app/routes/app.settings.tsx` → exit 1 (0 matches, INV-7 clean)
   - `git diff --check` → exit 0 (clean, no trailing whitespace)
-- **2026-11-08** — Evidence (orchestro spec verify, tree 479ee671): install pass · typecheck pass · lint pass · build pass · test pass 361/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 4e333bf3): install pass · typecheck pass · lint pass · build pass · test pass 361/0/0
 - **2026-11-08** — Fix round R1 accepted findings addressed by coder agy-2:
   - R1-F1 [BLOCKER]: Driven privacy confirmation flow through the toggle (user event opens modal, cancel resets toggle, confirm enables and submits). Sabotage: emptied toggle's open handler -> test failed with `AssertionError: expected false to be true` on `confirmModal?.hasAttribute("open")`. Restored.
   - R1-F2 [BLOCKER]: Replaced all vacuous `toBeDefined()` assertions on `querySelector` results with presence assertions (`not.toBeNull()`, `toBeTruthy()`) plus attribute/text checks.
@@ -107,3 +107,5 @@ Real, used now: 15, 09. Tests: `testConfig()` loader/action calls. Stubbed: none
   - R1-F7 [MAJOR]: Moved `AT_LEAST_ONE_RX_INPUT` error banner inside the Prescription inputs `<s-section>` (instead of top-level page banner) and added assertion.
   - R1-F8 [MAJOR]: Keyed success toast on completed submission transition to idle with ok data; tested two successive successful saves emit two toasts.
   - R1-F9 [MAJOR]: Added UI component cases for default (empty) settings, submitting state (Save button loading), and field error responses.
+- **2026-11-08** — Fix round R2 accepted findings addressed by coder agy-2:
+  - R2-F1 [BLOCKER]: Fixed privacy confirmation UI test (`admin-settings.test.tsx`): spied on Polaris modal web component methods `showOverlay`/`hideOverlay` (removed unsupported `s-modal[open]`), asserted Cancel produces no submission and no database write, confirmed toggle and clicked Save, asserted `requestSubmit()` call and observed fetcher submission with `storeRxInOrder: "true"` and `confirmStoreRxInOrder: "true"`, and verified persistent write to database. Sabotages: (1) deleting `showOverlay()` turned test red (`AssertionError: expected "spy" to be called 1 times, but got 0 times`), restored; (2) deleting `requestSubmit()` turned test red (`AssertionError: expected "requestSubmit" to be called at least once`), restored.

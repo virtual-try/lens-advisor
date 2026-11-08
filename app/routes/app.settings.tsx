@@ -303,7 +303,6 @@ export default function SettingsRoute() {
   const [privacyConfirmed, setPrivacyConfirmed] = useState(
     initialSettings.storeRxInOrder,
   );
-  const [pendingPrivacyModal, setPendingPrivacyModal] = useState(false);
 
   const prevStateRef = useRef(fetcher.state);
   const lastToastDataRef = useRef<ActionData | null | undefined>(null);
@@ -356,12 +355,10 @@ export default function SettingsRoute() {
     ) || actionError?.code === "CONFIRMATION_REQUIRED";
 
   const showModal = () => {
-    setPendingPrivacyModal(true);
     modalRef.current?.showOverlay?.();
   };
 
   const hideModal = () => {
-    setPendingPrivacyModal(false);
     modalRef.current?.hideOverlay?.();
   };
 
@@ -559,7 +556,6 @@ export default function SettingsRoute() {
         id="privacy-confirm-modal"
         ref={modalRef}
         heading="Confirm saving prescription values in orders"
-        {...(pendingPrivacyModal ? { open: true } : {})}
       >
         <s-paragraph>
           Shopify order properties are visible to every staff account with order
