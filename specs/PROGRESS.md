@@ -35,7 +35,7 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | 26 | [Configurator steps 1–2: Rx type and prescription](./26-step-rx-type-and-prescription.md) | Done | 10, 16 | Standard | — | PR #67 |
 | 27 | [Configurator steps 3–4: lens group and lens, with Rx limits](./27-step-lens-selection.md) | Done | 11, 13, 16 | Standard | — | PR #66 |
 | 28 | [Configurator steps 5–6: options, add-ons and price summary](./28-step-options-addons.md) | Done | 13, 16 | Standard | — | PR #65 |
-| 29 | [Configurator step 7: review and add to cart (nested lines)](./29-step-review-add-to-cart.md) | Not started | 13, 16, 28 | Heavy | — |  |
+| 29 | [Configurator step 7: review and add to cart (nested lines)](./29-step-review-add-to-cart.md) | Done | 13, 16, 28 | Heavy | — | PR #71 |
 | 30 | [Lab order dispatch job (ticket → S3 → email)](./30-lab-order-dispatch.md) | Done | 05, 06, 07, 14, 15, 23, 24 | Heavy | — | PR #61 |
 | 31 | [Admin home and setup checklist](./31-admin-home-setup.md) | Done | 09, 14, 15 | Light | — | PR #52 |
 | 32 | [Admin: lab orders list, resend and ticket download](./32-admin-lab-orders.md) | Done | 06, 09, 30 | Standard | — | PR #70 |
@@ -93,3 +93,4 @@ Not started · In progress · Blocked · Done
 - **2026-11-08** — Spec 27 merged (PR #66).
 - **2026-11-08** — Spec 26 merged (PR #67).
 - **2026-11-08** — Spec 32 merged (PR #70).
+- **2026-11-08** — Spec 29 merged (PR #71).

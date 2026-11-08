@@ -29,6 +29,7 @@ export interface StepProps {
   api: ApiClient;
   mount?: HTMLElement | null;
   product?: ProductData | null;
+  steps?: StepDefinition[];
 }
 
 export interface StepModule {
