@@ -1324,12 +1324,12 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
       // dispatchJob has no production worker handler (R1-F2)
       expect(dispatchJob.handler).toBeUndefined();
 
-      // Discovering jobs does not register a no-op worker handler for dispatchJob (R1-F2)
+      // Discovering jobs registers spec 30's worker handler for dispatchJob
       const { discoverJobs } = await import("../../shared/queue/discovery.server");
       const discovered = await discoverJobs();
       const discoveredDispatch = discovered.find((d) => d.name === DISPATCH_JOB_NAME);
       expect(discoveredDispatch).toBeDefined();
-      expect(discoveredDispatch?.handler).toBeUndefined();
+      expect(typeof discoveredDispatch?.handler).toBe("function");
 
       const validIntakePayload = {
         shopDomain: "shop.myshopify.com",
@@ -1374,7 +1374,7 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
       expect(fieldNames.map((n) => n.toLowerCase())).not.toContain("rx");
 
       // 2. Structural regex check: no field matches /rx|sph|cyl|axis|add|pd|prism/i except allowed names
-      const allowedRxMatchingFields = new Set(["prescriptionId", "prescription", "rxOutOfLimits", "addOnIds"]);
+      const allowedRxMatchingFields = new Set(["prescriptionId", "prescription", "rxOutOfLimits", "addOnIds", "updatedAt"]);
       const rxRegex = /rx|sph|cyl|axis|add|pd|prism/i;
 
       for (const field of labOrderModel!.fields) {
@@ -1407,6 +1407,7 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
         "providerId",
         "sentAt",
         "createdAt",
+        "updatedAt",
       ];
       expect([...fieldNames].sort()).toEqual([...allowedLabOrderFields].sort());
     });
