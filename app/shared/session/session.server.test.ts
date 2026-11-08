@@ -2,13 +2,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createTestDb, seedShop, type TestDb } from "../../../test/db";
-import {
-  findSessionById,
-  updateSessionScopeInDb,
-} from "./session.repository.server";
+import { updateSessionScopeInDb } from "./session.repository.server";
 import {
   createSessionService,
-  getSession,
   updateSessionScope,
 } from "./session.service.server";
 
@@ -54,10 +50,11 @@ describe("Shared Session: repository and service (session.server.test.ts)", () =
   });
 
   describe("session.repository.server", () => {
-    it("updates session scope in database", async () => {
+    it("updates session scope in database with required shop", async () => {
       const result = await updateSessionScopeInDb(testDb.prisma, {
         sessionId: sessionAId,
         scope: "read_products,write_products,read_themes",
+        shop: shopA.domain,
       });
 
       expect(result.count).toBe(1);
@@ -110,15 +107,22 @@ describe("Shared Session: repository and service (session.server.test.ts)", () =
       expect(shopBStillUntouched?.scope).toBe("read_orders,write_orders");
     });
 
-    it("findSessionById retrieves session and respects shop scoping", async () => {
-      const foundA = await findSessionById(testDb.prisma, sessionAId, shopA.domain);
-      expect(foundA).not.toBeNull();
-      expect(foundA?.id).toBe(sessionAId);
-      expect(foundA?.shop).toBe(shopA.domain);
+    it("rejects update if shop is missing or empty (INV-1)", async () => {
+      await expect(
+        updateSessionScopeInDb(testDb.prisma, {
+          sessionId: sessionAId,
+          scope: "invalid_update",
+          shop: "",
+        }),
+      ).rejects.toThrow("shop is required to update session scope (INV-1)");
 
-      // Cross-shop lookup returns null
-      const crossLookup = await findSessionById(testDb.prisma, sessionAId, shopB.domain);
-      expect(crossLookup).toBeNull();
+      await expect(
+        // @ts-expect-error shop is required
+        updateSessionScopeInDb(testDb.prisma, {
+          sessionId: sessionAId,
+          scope: "invalid_update",
+        }),
+      ).rejects.toThrow("shop is required to update session scope (INV-1)");
     });
   });
 
@@ -149,6 +153,17 @@ describe("Shared Session: repository and service (session.server.test.ts)", () =
       expect(updated?.scope).toBe("read_all");
     });
 
+    it("updateSessionScope accepts shop string directly as options", async () => {
+      const service = createSessionService({ prisma: testDb.prisma });
+
+      await service.updateSessionScope(sessionAId, "read_themes", shopA.domain);
+
+      const updated = await testDb.prisma.session.findUnique({
+        where: { id: sessionAId },
+      });
+      expect(updated?.scope).toBe("read_themes");
+    });
+
     it("updateSessionScope handles empty scopes array", async () => {
       const service = createSessionService({ prisma: testDb.prisma });
 
@@ -162,13 +177,47 @@ describe("Shared Session: repository and service (session.server.test.ts)", () =
       expect(updated?.scope).toBe("");
     });
 
-    it("standalone functions updateSessionScope and getSession delegate to service", async () => {
-      await updateSessionScope(sessionBId, ["read_orders"], {
+    it("two-shop isolation: service update scoped to shopA cannot modify shopB session (INV-1)", async () => {
+      const service = createSessionService({ prisma: testDb.prisma });
+
+      // Attempt cross-shop update via service
+      const crossResult = await service.updateSessionScope(
+        sessionBId,
+        ["cross_shop_tamper"],
+        { shop: shopA.domain },
+      );
+      expect(crossResult.count).toBe(0);
+
+      // Verify shop B remains untouched
+      const shopBRecord = await testDb.prisma.session.findUnique({
+        where: { id: sessionBId },
+      });
+      expect(shopBRecord?.scope).toBe("read_orders,write_orders");
+    });
+
+    it("rejects service update if shop is missing or empty (INV-1)", async () => {
+      const service = createSessionService({ prisma: testDb.prisma });
+
+      await expect(
+        service.updateSessionScope(sessionAId, ["read_products"], { shop: "" }),
+      ).rejects.toThrow("shop is required to update session scope (INV-1)");
+
+      await expect(
+        // @ts-expect-error shop is required
+        service.updateSessionScope(sessionAId, ["read_products"], {}),
+      ).rejects.toThrow("shop is required to update session scope (INV-1)");
+    });
+
+    it("standalone function updateSessionScope delegates to service with shop", async () => {
+      const result = await updateSessionScope(sessionBId, ["read_orders"], {
         shop: shopB.domain,
         deps: { prisma: testDb.prisma },
       });
+      expect(result.count).toBe(1);
 
-      const session = await getSession(sessionBId, shopB.domain, { prisma: testDb.prisma });
+      const session = await testDb.prisma.session.findUnique({
+        where: { id: sessionBId },
+      });
       expect(session).not.toBeNull();
       expect(session?.id).toBe(sessionBId);
       expect(session?.scope).toBe("read_orders");
