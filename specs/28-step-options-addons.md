@@ -1,6 +1,6 @@
 # Spec 28 — Configurator steps 5–6: options, add-ons and price summary
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 13, Spec 16
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —
@@ -108,4 +108,4 @@ Real, used now: 16, 13. Tests: fixture catalog. Stubbed: none.
   - `pnpm lint`: exit 0 (`--max-warnings 0`).
   - `pnpm build`: exit 0 (`loader.js` 1314 B <= 10 KB limit, `configurator.js` 116588 B).
   - `git diff --check`: clean (exit 0).
-- **2026-11-08** — Evidence (orchestro spec verify, tree 7737a042): install pass · typecheck pass · lint pass · build pass · test pass 1014/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 6a13b464): install pass · typecheck pass · lint pass · build pass · test pass 1155/0/0
