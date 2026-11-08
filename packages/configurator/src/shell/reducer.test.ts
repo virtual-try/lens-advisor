@@ -131,6 +131,7 @@ describe("configuratorReducer", () => {
       name: "SET_PRESCRIPTION_REF",
       action: { type: "SET_PRESCRIPTION_REF", prescriptionRef: "rx-ref-1" },
     },
+    { name: "SET_LENS_GROUP", action: { type: "SET_LENS_GROUP", lensGroupId: "group-1" } },
     { name: "SET_LENS", action: { type: "SET_LENS", lensId: "lens-1" } },
     { name: "SET_OPTIONS", action: { type: "SET_OPTIONS", optionValueIds: ["opt-1"] } },
     { name: "TOGGLE_OPTION", action: { type: "TOGGLE_OPTION", optionValueId: "opt-2" } },
@@ -170,6 +171,7 @@ describe("configuratorReducer", () => {
           } else if (action.type === "CLOSE") {
             expect(nextState.isOpen).toBe(false);
             expect(nextState.status).toBe("idle");
+            expect(nextState.lensGroupId).toBeNull();
           } else if (action.type === "CATALOG_LOADING") {
             expect(nextState.status).toBe("loading");
           } else if (action.type === "CATALOG_LOADED") {
@@ -192,6 +194,8 @@ describe("configuratorReducer", () => {
           } else if (action.type === "SET_PRESCRIPTION_REF") {
             expect(nextState.prescriptionRef).toBe("rx-ref-1");
             expect(nextState.selection.prescriptionRef).toBe("rx-ref-1");
+          } else if (action.type === "SET_LENS_GROUP") {
+            expect(nextState.lensGroupId).toBe("group-1");
           } else if (action.type === "SET_LENS") {
             expect(nextState.selection.lensId).toBe("lens-1");
           } else if (action.type === "SET_OPTIONS") {
@@ -212,6 +216,7 @@ describe("configuratorReducer", () => {
             expect(nextState.status).toBe("idle");
             expect(nextState.isOpen).toBe(false);
             expect(nextState.stepIndex).toBe(0);
+            expect(nextState.lensGroupId).toBeNull();
           }
         });
       }
@@ -364,6 +369,116 @@ describe("configuratorReducer", () => {
       expect(nextState.status).toBe("error");
       expect(nextState.error?.code).toBe("RATE_LIMITED");
       expect(nextState.error?.message).toBe("Too many requests");
+    });
+  });
+
+  describe("lens group and navigation (spec 27 R1-F1, R1-F2, R1-F7)", () => {
+    it("SET_LENS_GROUP sets lensGroupId in shell state", () => {
+      const state = createInitialState();
+      const nextState = configuratorReducer(state, {
+        type: "SET_LENS_GROUP",
+        lensGroupId: "group-1",
+      });
+      expect(nextState.lensGroupId).toBe("group-1");
+    });
+
+    it("SET_LENS_GROUP clears selection.lensId if lens belonged to a different group", () => {
+      const catalog: CatalogResponse = {
+        lensGroups: [
+          {
+            id: "group-1",
+            name: "Group 1",
+            position: 0,
+            lenses: [
+              {
+                id: "lens-1",
+                groupId: "group-1",
+                name: "Lens 1",
+                price: { amountMinor: 1000, currency: "USD" },
+                limits: { sphMin: -600, sphMax: 400, cylMin: -200, cylMax: 0, rxTypes: ["SINGLE_VISION"] },
+                labCodeTemplate: "L1",
+                shopifyVariantId: "v1",
+                position: 0,
+              },
+            ],
+          },
+          {
+            id: "group-2",
+            name: "Group 2",
+            position: 1,
+            lenses: [
+              {
+                id: "lens-2",
+                groupId: "group-2",
+                name: "Lens 2",
+                price: { amountMinor: 2000, currency: "USD" },
+                limits: { sphMin: -600, sphMax: 400, cylMin: -200, cylMax: 0, rxTypes: ["SINGLE_VISION"] },
+                labCodeTemplate: "L2",
+                shopifyVariantId: "v2",
+                position: 0,
+              },
+            ],
+          },
+        ],
+        optionGroups: [],
+        addOns: [],
+        settings: { manualRxEnabled: true, rxUploadEnabled: true, storeRxInOrder: false },
+      };
+
+      const state: ConfiguratorState = {
+        ...createInitialState(),
+        catalog,
+        lensGroupId: "group-1",
+        selection: {
+          frameVariantId: "frame-1",
+          rxType: "SINGLE_VISION",
+          lensId: "lens-1",
+          optionValueIds: [],
+          addOnIds: [],
+        },
+      };
+
+      const nextState = configuratorReducer(state, {
+        type: "SET_LENS_GROUP",
+        lensGroupId: "group-2",
+      });
+
+      expect(nextState.lensGroupId).toBe("group-2");
+      expect(nextState.selection.lensId).toBeUndefined();
+    });
+
+    it("CLOSE clears lensGroupId (R1-F2: session outlive)", () => {
+      const state: ConfiguratorState = {
+        ...createInitialState("frame-1"),
+        isOpen: true,
+        status: "ready",
+        lensGroupId: "group-1",
+      };
+      const nextState = configuratorReducer(state, { type: "CLOSE" });
+      expect(nextState.isOpen).toBe(false);
+      expect(nextState.lensGroupId).toBeNull();
+    });
+
+    it("GO_TO_STEP looks up step index by stepId (R1-F7)", () => {
+      const steps = createMockSteps([
+        { id: "vision", isComplete: () => true, isApplicable: () => true },
+        { id: "prescription", isComplete: () => true, isApplicable: () => true },
+        { id: "lens-group", isComplete: () => true, isApplicable: () => true },
+        { id: "lens", isComplete: () => true, isApplicable: () => true },
+      ]);
+      const state: ConfiguratorState = {
+        ...createInitialState(),
+        status: "ready",
+        isOpen: true,
+        stepIndex: 3,
+      };
+
+      const nextState = configuratorReducer(
+        state,
+        { type: "GO_TO_STEP", stepId: "prescription" },
+        steps,
+      );
+      expect(nextState.stepIndex).toBe(1);
     });
   });
 });
