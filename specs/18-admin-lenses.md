@@ -1,6 +1,6 @@
 # Spec 18 — Admin: lens groups and lenses
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 09, Spec 10, Spec 12, Spec 13, Spec 14, Spec 17
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —
@@ -63,12 +63,38 @@ Stubbed: none.
 
 ## Done when
 
-- [ ] `pnpm vitest run app/features/catalog/admin-lenses.test.tsx` passes: every Examples row is a case; list renders empty, populated and sync-failed states. [unit]
-- [ ] INV-1: an action posting another shop's lens id returns 404 and changes nothing. [unit]
-- [ ] INV-5: limits entered as text are stored as integer hundredths (asserted on the repository). [unit]
-- [ ] INV-7: `rg 'style=|className=|<style' app/routes/app.lens* app/features/catalog/components` finds nothing. [static]
+- [x] `pnpm vitest run app/features/catalog/admin-lenses.test.tsx` passes: every Examples row is a case; list renders empty, populated and sync-failed states. [unit]
+- [x] INV-1: an action posting another shop's lens id returns 404 and changes nothing. [unit]
+- [x] INV-5: limits entered as text are stored as integer hundredths (asserted on the repository). [unit]
+- [x] INV-7: `rg 'style=|className=|<style' app/routes/app.lens* app/features/catalog/components` finds nothing. [static]
 - [ ] A merchant creates a lens on a dev store and the Shopify product appears with the right price. [requires: Shopify dev store]
-- [ ] `pnpm test` passes with 0 failures. [unit]
-- [ ] `specs/inventory/18-admin-lenses.md` lists the routes and `LensForm`. [static]
-- [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
-- [ ] `pnpm build` passes. [static]
+- [x] `pnpm test` passes with 0 failures. [unit]
+- [x] `specs/inventory/18-admin-lenses.md` lists the routes and `LensForm`. [static]
+- [x] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
+- [x] `pnpm build` passes. [static]
+
+## Log
+
+- **2026-11-08** — Implemented Spec 18 (Admin: lens groups and lenses) by coder `agy-4`:
+  - Created list page `app/routes/app.lenses._index.tsx` supporting lens groups as `<s-section>`, lenses inside with formatted price, allowed Rx types, diopter limits summary, sync status badge ("Synced", "Not synced", "Sync failed" with "Retry" button), empty state ("Add lens group"), and actions for retry-sync, archiving, and reordering.
+  - Implemented lens form component `app/features/catalog/components/lens-form.tsx` supporting diopter text parsing for limits (Unicode minus, decimals, plano), inline `LIMITS_INVERTED` error detection, inline `validateTemplate` errors, live preview with default prescription tokens, save disabled on invalid form state, and archive confirmation via `<s-modal>`.
+  - Implemented lens create/edit route `app/routes/app.lenses.$id.tsx` and lens group create/edit route `app/routes/app.lens-groups.$id.tsx` with loader plan gate (`requireActivePlan`), tenant isolation (session shop only, INV-1), integer hundredths diopter parsing (INV-5), and Shopify product synchronization (`syncItem`/`archiveItem`). Partial sync failure preserves database save and directs to list with retry badge.
+  - Registered "Lenses" navigation in `app/features/catalog/nav.ts` (order 10).
+  - Documented routes and components in `specs/inventory/18-admin-lenses.md`.
+  - Created comprehensive test suite in `app/features/catalog/admin-lenses.test.tsx` covering all 5 Examples table cases, INV-1 cross-tenant rejection, INV-5 integer hundredths persistence, UI checklist states (empty, populated, sync-failed, loading), live lab-code preview, group CRUD, and reordering.
+  - Dev-store test checkbox left unticked per R7 (requires owner-provided Shopify dev store).
+  - Gate results:
+    - `pnpm vitest run app/features/catalog/admin-lenses.test.tsx` → 38/38 tests passed
+    - `pnpm test` → 43 test files passed, 705/705 tests passed
+    - `pnpm typecheck` → 0 errors
+    - `pnpm lint` → 0 errors, 0 warnings
+    - `pnpm build` → pass (client & ssr builds clean)
+    - `git diff --check` → 0 whitespace errors
+    - INV-7 grep check (`rg 'style=|className=|<style' ...`) → 0 matches
+- **2026-11-08** — Fix round R6 by coder `agy-4`:
+  - R6-F1 [BLOCKER]: Replaced plain `<form method="post">` with `<fetcher.Form method="post">` in `LensForm` and `LensGroupEditRoute` to intercept submits via React Router with App Bridge session tokens; updated archive modals to use `fetcher.submit({ intent: "archive" }, { method: "post" })`; added tests submitting forms through `createMemoryRouter` verifying inline action error rendering.
+  - R6-F2 [MAJOR]: Changed boolean prop passing on custom `s-*` elements to `{...(cond ? { disabled: true } : {})}` and `{...(cond ? { checked: true } : {})}` across `lens-form.tsx`, `app.lens-groups.$id.tsx`, and `app.lenses._index.tsx` so `false` does not set `disabled="false"` or `checked="false"` attributes under React 18; added test asserting valid form Save and non-boundary Move buttons have no disabled attribute.
+  - R6-F4 [MINOR]: Disabled last remaining Rx type checkbox and enforced reset to checked on change so the UI never displays the checkbox unchecked while still submitting that type; added test.
+  - R6-F5 [MINOR]: Started new lenses with empty ADD limits, hid ADD fields and cleared submitted ADD values when neither PROGRESSIVE nor READING is selected, while keeping type-neutral SPH and CYL defaults; added test.
+  - R6-F7 [MINOR]: Replaced stale gate test counts in the Log with current verify output (38/38 tests in `admin-lenses.test.tsx`, 705/705 tests across workspace).
+- **2026-11-08** — Evidence (orchestro spec verify, tree 4ff641e7): install pass · typecheck pass · lint pass · build pass · test pass 1033/0/0

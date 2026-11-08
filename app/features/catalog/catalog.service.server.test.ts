@@ -4,7 +4,7 @@ import {
   type RxLimits,
 } from "../../../packages/rx-core/src/index.js";
 import { createTestDb, seedShop, type TestDb } from "../../../test/db";
-import { errorResponse, NotFoundError } from "../../shared/http/errors.server";
+import { ConflictError, errorResponse, NotFoundError } from "../../shared/http/errors.server";
 import {
   archiveAddOn,
   archiveLens,
@@ -245,6 +245,52 @@ describe("CatalogService (DB-backed)", { timeout: 60_000 }, () => {
 
       const checkA = await service.getLens(shopA, lensA.id);
       expect(checkA.groupId).toBe(originalGroupId);
+    });
+
+    it("createLens into an archived group throws NotFoundError (R5-F1)", async () => {
+      const group = await service.createLensGroup(shopA, { name: "Archived Group For Create R5F1" });
+      await service.deleteLensGroup(shopA, group.id);
+
+      await expect(
+        service.createLens(shopA, {
+          groupId: group.id,
+          name: "Lens in Archived Group",
+          priceMinor: 1000,
+          currency: "USD",
+          rxTypes: ["SINGLE_VISION"],
+          sphMin: -200,
+          sphMax: 200,
+          cylMin: -100,
+          cylMax: 0,
+        }),
+      ).rejects.toThrow(NotFoundError);
+    });
+
+    it("updateLens moving a lens into an archived group throws NotFoundError and leaves row unchanged (R5-F1)", async () => {
+      const activeGroup = await service.createLensGroup(shopA, { name: "Active Source Group R5F1" });
+      const archivedGroup = await service.createLensGroup(shopA, { name: "Archived Target Group R5F1" });
+      const lens = await service.createLens(shopA, {
+        groupId: activeGroup.id,
+        name: "Lens To Move R5F1",
+        priceMinor: 1000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -200,
+        sphMax: 200,
+        cylMin: -100,
+        cylMax: 0,
+      });
+
+      await service.deleteLensGroup(shopA, archivedGroup.id);
+
+      await expect(
+        service.updateLens(shopA, lens.id, {
+          groupId: archivedGroup.id,
+        }),
+      ).rejects.toThrow(NotFoundError);
+
+      const checkLens = await service.getLens(shopA, lens.id);
+      expect(checkLens.groupId).toBe(activeGroup.id);
     });
 
     it("updateOptionValue reassigning optionGroupId to another shop's group throws NotFoundError and leaves row unchanged", async () => {
@@ -967,6 +1013,26 @@ describe("CatalogService (DB-backed)", { timeout: 60_000 }, () => {
       const archived = await archiveLensGroup(shopA, created.id, { prisma: db.prisma });
       expect(archived.archivedAt).not.toBeNull();
       expect(archived.id).toBe(created.id);
+    });
+
+    it("archiveLensGroup rejects archiving group with active lenses with ConflictError GROUP_NOT_EMPTY (R4-F1)", async () => {
+      const createdGroup = await service.createLensGroup(shopA, { name: "Non-empty Group For Service" });
+      await service.createLens(shopA, {
+        groupId: createdGroup.id,
+        name: "Active Lens in Group",
+        priceMinor: 2000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -200,
+        sphMax: 200,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "PO-TEST",
+      });
+
+      await expect(
+        archiveLensGroup(shopA, createdGroup.id, { prisma: db.prisma }),
+      ).rejects.toThrowError(ConflictError);
     });
 
     it("archiveLens standalone function archives lens and returns DTO", async () => {
