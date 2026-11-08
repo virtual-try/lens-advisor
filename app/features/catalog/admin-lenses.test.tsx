@@ -16,7 +16,11 @@ import { testConfig } from "@shopify/shopify-app-react-router/test-helpers";
 import { createTestDb, type TestDb } from "../../../test/db";
 import { createCatalogRepository } from "./catalog.repository.server";
 import * as catalogService from "./catalog.service.server";
-import { createCatalogService } from "./catalog.service.server";
+import {
+  createCatalogService,
+  type CatalogLensDto,
+  type CatalogLensGroupDto,
+} from "./catalog.service.server";
 import {
   formatLimitsSummary,
   formatPriceDisplay,
@@ -2723,5 +2727,300 @@ describe("Spec 18 — Admin: lens groups and lenses", () => {
 
       cleanup();
     });
+  });
+
+  describe("Review Round 7 findings (R7-F1, R7-F2)", () => {
+    it("handles currency mismatch when a lens stored in USD is edited on a shop now in EUR (R7-F1)", async () => {
+      // 1. Component test: LensForm displays EUR label & details, shows warning banner, leaves price empty, disables Save
+      const usdLens: CatalogLensDto = {
+        id: "lens-usd-1",
+        groupId: "g1",
+        name: "Classic Bifocal",
+        description: "Old USD lens",
+        price: { amountMinor: 4999, currency: "USD" },
+        limits: {
+          rxTypes: ["SINGLE_VISION"],
+          sphMin: -400,
+          sphMax: 400,
+          cylMin: -200,
+          cylMax: 0,
+        },
+        labCodeTemplate: "PO-1",
+        shopifyProductId: null,
+        shopifyVariantId: null,
+        position: 0,
+        archivedAt: null,
+      };
+
+      const { container } = render(
+        <LensForm
+          lens={usdLens}
+          groups={[{ id: "g1", name: "Standard", position: 0, lenses: [], archivedAt: null }]}
+          shopCurrency="EUR"
+        />,
+      );
+
+      // Warning banner is rendered
+      const warningBanner = container.querySelector('s-banner[tone="warning"]');
+      expect(warningBanner).not.toBeNull();
+      expect(warningBanner?.getAttribute("heading")).toBe("Currency mismatch");
+      expect(warningBanner?.textContent).toContain("This lens was stored in USD");
+      expect(warningBanner?.textContent).toContain("your shop currency is now EUR");
+      expect(warningBanner?.textContent).toContain("The price will be saved in EUR");
+
+      // Price field uses EUR for label and details
+      const priceField = container.querySelector('s-text-field[name="priceField"]') as
+        | (HTMLElement & { value: string })
+        | null;
+      expect(priceField).not.toBeNull();
+      expect(priceField?.getAttribute("label")).toBe("Price (EUR)");
+      expect(priceField?.getAttribute("details")).toContain("EUR");
+      expect(priceField?.getAttribute("details")).not.toContain("USD");
+
+      // Price is empty: old amount was NOT reformatted silently
+      expect(priceField?.value).toBe("");
+
+      // Save button is disabled because price is required
+      const saveBtn = screen.getByText("Save").closest("s-button");
+      expect(saveBtn?.hasAttribute("disabled")).toBe(true);
+
+      // Entering a valid EUR price enables Save
+      priceField!.value = "45.00";
+      fireEvent(priceField!, new Event("input", { bubbles: true }));
+      fireEvent(priceField!, new Event("change", { bubbles: true }));
+      expect(saveBtn?.hasAttribute("disabled")).toBe(false);
+
+      cleanup();
+
+      // 2. Full action/loader roundtrip: lens stored in USD on a shop now in EUR saves with EUR and fresh price
+      const shopDomain = "eur-shop.myshopify.com";
+      const shopId = await createShop(shopDomain);
+      mocks.currentShop = shopDomain;
+
+      const originalAdminGraphql = mocks.adminGraphql.getMockImplementation();
+      mocks.adminGraphql.mockImplementation(async (query: string, vars?: Record<string, unknown>) => {
+        if (query.includes("ShopCurrency")) {
+          return new Response(JSON.stringify({ data: { shop: { currencyCode: "EUR" } } }), { status: 200 });
+        }
+        return originalAdminGraphql ? originalAdminGraphql(query, vars) : new Response("{}", { status: 200 });
+      });
+
+      try {
+        const repo = createCatalogRepository(getTestPrisma());
+        const group = await repo.createLensGroup(shopId, { name: "Europe Group" });
+        const initialLens = await repo.createLens(shopId, {
+          groupId: group.id,
+          name: "Old USD Lens",
+          priceMinor: 5000,
+          currency: "USD",
+          rxTypes: ["SINGLE_VISION"],
+          sphMin: -200,
+          sphMax: 200,
+          cylMin: -100,
+          cylMax: 0,
+        });
+
+        // Load lens with loader: shopCurrency is EUR, lens stored in USD
+        const loadReq = new Request(`https://app.test/app/lenses/${initialLens.id}`);
+        const loadRes = await lensLoader(createLoaderArgs(loadReq, { id: initialLens.id }));
+        const loadedData = (await unwrapResponse<{ lens: CatalogLensDto; shopCurrency: string }>(loadRes)).data;
+        expect(loadedData.shopCurrency).toBe("EUR");
+        expect(loadedData.lens.price.currency).toBe("USD");
+
+        // Submit edit form with fresh EUR price "45.00"
+        const editForm = new FormData();
+        editForm.append("intent", "save");
+        editForm.append("groupId", group.id);
+        editForm.append("name", "Updated EUR Lens");
+        editForm.append("price", "45.00");
+        editForm.append("currency", "EUR");
+        editForm.append("sphMin", "-2.00");
+        editForm.append("sphMax", "+2.00");
+        editForm.append("cylMin", "-1.00");
+        editForm.append("cylMax", "0.00");
+        editForm.append("rxTypes", "SINGLE_VISION");
+        editForm.append("labCodeTemplate", "PO-1");
+
+        const editReq = new Request(`https://app.test/app/lenses/${initialLens.id}`, {
+          method: "POST",
+          body: editForm,
+        });
+        const editRes = await lensAction(createActionArgs(editReq, { id: initialLens.id }));
+        const editUnwrapped = await unwrapResponse(editRes);
+        expect(editUnwrapped.status).toBe(302);
+
+        // Reload lens from database: currency is now EUR, priceMinor is 4500
+        const reloaded = await repo.getLens(shopId, initialLens.id);
+        expect(reloaded?.currency).toBe("EUR");
+        expect(reloaded?.priceMinor).toBe(4500);
+
+        // Render reloaded lens in form: no warning banner, price is 45.00, label is Price (EUR)
+        const reloadedRes = await lensLoader(createLoaderArgs(loadReq, { id: initialLens.id }));
+        const reloadedData = (await unwrapResponse<{ lens: CatalogLensDto; groups: CatalogLensGroupDto[]; shopCurrency: string }>(reloadedRes)).data;
+        expect(reloadedData.lens.price.currency).toBe("EUR");
+
+        const { container: reloadedContainer } = render(
+          <LensForm
+            lens={reloadedData.lens}
+            groups={reloadedData.groups}
+            shopCurrency={reloadedData.shopCurrency}
+          />,
+        );
+
+        expect(reloadedContainer.querySelector('s-banner[tone="warning"]')).toBeNull();
+        const reloadedPriceField = reloadedContainer.querySelector('s-text-field[name="priceField"]') as
+          | (HTMLElement & { value: string })
+          | null;
+        expect(reloadedPriceField?.value).toBe("45.00");
+        expect(reloadedPriceField?.getAttribute("label")).toBe("Price (EUR)");
+        cleanup();
+      } finally {
+        if (originalAdminGraphql) {
+          mocks.adminGraphql.mockImplementation(originalAdminGraphql);
+        }
+      }
+    }, DB_TIMEOUT_MS);
+
+    it("clearing ADD fields or removing PROGRESSIVE/READING saves addMin and addMax as null, and reload shows empty (R7-F2)", async () => {
+      const shopDomain = "r7-add-test.myshopify.com";
+      const shopId = await createShop(shopDomain);
+      mocks.currentShop = shopDomain;
+
+      const repo = createCatalogRepository(getTestPrisma());
+      const group = await repo.createLensGroup(shopId, { name: "Multifocal Group" });
+
+      // 1. Create a lens with ADD limits: +1.00 to +2.50
+      const initialLens = await repo.createLens(shopId, {
+        groupId: group.id,
+        name: "Progressive Plus",
+        priceMinor: 8000,
+        currency: "USD",
+        rxTypes: ["PROGRESSIVE"],
+        sphMin: -400,
+        sphMax: 400,
+        cylMin: -200,
+        cylMax: 0,
+        addMin: 100,
+        addMax: 250,
+      });
+
+      // Verify loader returns the initial ADD limits
+      const loadReq = new Request(`https://app.test/app/lenses/${initialLens.id}`);
+      const initialLoad = await lensLoader(createLoaderArgs(loadReq, { id: initialLens.id }));
+      const initialData = (await unwrapResponse<{ lens: CatalogLensDto }>(initialLoad)).data;
+      expect(initialData.lens.limits.addMin).toBe(100);
+      expect(initialData.lens.limits.addMax).toBe(250);
+
+      // 2. Edit lens and clear ADD fields (blank them out) while keeping PROGRESSIVE
+      const clearForm = new FormData();
+      clearForm.append("intent", "save");
+      clearForm.append("groupId", group.id);
+      clearForm.append("name", "Progressive Plus");
+      clearForm.append("price", "80.00");
+      clearForm.append("sphMin", "-4.00");
+      clearForm.append("sphMax", "+4.00");
+      clearForm.append("cylMin", "-2.00");
+      clearForm.append("cylMax", "0.00");
+      clearForm.append("addMin", "");
+      clearForm.append("addMax", "");
+      clearForm.append("rxTypes", "PROGRESSIVE");
+      clearForm.append("labCodeTemplate", "PO-1");
+
+      const clearReq = new Request(`https://app.test/app/lenses/${initialLens.id}`, {
+        method: "POST",
+        body: clearForm,
+      });
+      const clearRes = await lensAction(createActionArgs(clearReq, { id: initialLens.id }));
+      const clearUnwrapped = await unwrapResponse(clearRes);
+      expect(clearUnwrapped.status).toBe(302);
+
+      // Verify database row has addMin and addMax set to null
+      const rawAfterClear = await repo.getLens(shopId, initialLens.id);
+      expect(rawAfterClear?.addMin).toBeNull();
+      expect(rawAfterClear?.addMax).toBeNull();
+
+      // Reload via lensLoader: reload shows empty ADD limits
+      const reloadedRes = await lensLoader(createLoaderArgs(loadReq, { id: initialLens.id }));
+      const reloadedData = (await unwrapResponse<{ lens: CatalogLensDto; groups: CatalogLensGroupDto[]; shopCurrency: string }>(reloadedRes)).data;
+      expect(reloadedData.lens.limits.addMin).toBeUndefined();
+      expect(reloadedData.lens.limits.addMax).toBeUndefined();
+
+      // Render reloaded lens in LensForm: ADD fields are rendered (since PROGRESSIVE) and are empty
+      const { container } = render(
+        <LensForm
+          lens={reloadedData.lens}
+          groups={reloadedData.groups}
+          shopCurrency={reloadedData.shopCurrency}
+        />,
+      );
+
+      const addMinField = container.querySelector('s-text-field[name="addMinField"]') as
+        | (HTMLElement & { value: string })
+        | null;
+      const addMaxField = container.querySelector('s-text-field[name="addMaxField"]') as
+        | (HTMLElement & { value: string })
+        | null;
+      expect(addMinField?.value).toBe("");
+      expect(addMaxField?.value).toBe("");
+
+      cleanup();
+
+      // 3. Set ADD limits again, then switch rxTypes to SINGLE_VISION (no PROGRESSIVE/READING)
+      await repo.updateLens(shopId, initialLens.id, {
+        addMin: 125,
+        addMax: 200,
+        rxTypes: ["PROGRESSIVE"],
+      });
+
+      const singleVisionForm = new FormData();
+      singleVisionForm.append("intent", "save");
+      singleVisionForm.append("groupId", group.id);
+      singleVisionForm.append("name", "Now Single Vision");
+      singleVisionForm.append("price", "80.00");
+      singleVisionForm.append("sphMin", "-4.00");
+      singleVisionForm.append("sphMax", "+4.00");
+      singleVisionForm.append("cylMin", "-2.00");
+      singleVisionForm.append("cylMax", "0.00");
+      singleVisionForm.append("addMin", "");
+      singleVisionForm.append("addMax", "");
+      singleVisionForm.append("rxTypes", "SINGLE_VISION");
+      singleVisionForm.append("labCodeTemplate", "PO-1");
+
+      const svReq = new Request(`https://app.test/app/lenses/${initialLens.id}`, {
+        method: "POST",
+        body: singleVisionForm,
+      });
+      const svRes = await lensAction(createActionArgs(svReq, { id: initialLens.id }));
+      expect((await unwrapResponse(svRes)).status).toBe(302);
+
+      // Verify database row has addMin and addMax cleared to null
+      const rawAfterSv = await repo.getLens(shopId, initialLens.id);
+      expect(rawAfterSv?.addMin).toBeNull();
+      expect(rawAfterSv?.addMax).toBeNull();
+
+      // Reload via lensLoader: reload shows empty ADD limits and no ADD fields rendered
+      const svReloadRes = await lensLoader(createLoaderArgs(loadReq, { id: initialLens.id }));
+      const svReloadData = (await unwrapResponse<{ lens: CatalogLensDto; groups: CatalogLensGroupDto[]; shopCurrency: string }>(svReloadRes)).data;
+      expect(svReloadData.lens.limits.addMin).toBeUndefined();
+      expect(svReloadData.lens.limits.addMax).toBeUndefined();
+
+      const { container: svContainer } = render(
+        <LensForm
+          lens={svReloadData.lens}
+          groups={svReloadData.groups}
+          shopCurrency={svReloadData.shopCurrency}
+        />,
+      );
+
+      // When only SINGLE_VISION is chosen, ADD fields are not rendered and hidden inputs are empty
+      expect(svContainer.querySelector('s-text-field[name="addMinField"]')).toBeNull();
+      expect(svContainer.querySelector('s-text-field[name="addMaxField"]')).toBeNull();
+      const hiddenAddMin = svContainer.querySelector('input[name="addMin"]') as HTMLInputElement | null;
+      const hiddenAddMax = svContainer.querySelector('input[name="addMax"]') as HTMLInputElement | null;
+      expect(hiddenAddMin?.value).toBe("");
+      expect(hiddenAddMax?.value).toBe("");
+
+      cleanup();
+    }, DB_TIMEOUT_MS);
   });
 });

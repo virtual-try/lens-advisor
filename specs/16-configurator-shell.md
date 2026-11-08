@@ -1,6 +1,6 @@
 # Spec 16 — Configurator shell, state machine and API client
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 03, Spec 04
 **Model:** Heavy — `claude-opus-5-5` · `gpt-6-astra` · `gemini-3.1-pro-preview`
 **Issue:** —

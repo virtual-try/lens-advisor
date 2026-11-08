@@ -242,6 +242,35 @@ describe("CatalogRepository (DB-backed)", { timeout: 60_000 }, () => {
         expect(checkGroupB?.lenses.some((l) => l.id === lensA.id)).toBe(false);
       });
 
+      it("updateLens with null addMin and addMax clears existing persisted ADD limits (R7-F2)", async () => {
+        const lensesA = await repo.listLenses(shopA);
+        const lensA = lensesA[0];
+
+        // First set ADD limits
+        const updatedWithAdd = await repo.updateLens(shopA, lensA.id, {
+          addMin: 100,
+          addMax: 250,
+        });
+        expect(updatedWithAdd.addMin).toBe(100);
+        expect(updatedWithAdd.addMax).toBe(250);
+
+        const checkWithAdd = await repo.getLens(shopA, lensA.id);
+        expect(checkWithAdd?.addMin).toBe(100);
+        expect(checkWithAdd?.addMax).toBe(250);
+
+        // Now clear ADD limits by passing null
+        const cleared = await repo.updateLens(shopA, lensA.id, {
+          addMin: null,
+          addMax: null,
+        });
+        expect(cleared.addMin).toBeNull();
+        expect(cleared.addMax).toBeNull();
+
+        const checkCleared = await repo.getLens(shopA, lensA.id);
+        expect(checkCleared?.addMin).toBeNull();
+        expect(checkCleared?.addMax).toBeNull();
+      });
+
       it("deleteLens with another shop's ID throws NotFoundError and leaves row untouched", async () => {
         const lensesB = await repo.listLenses(shopB);
         const lensB = lensesB[0];

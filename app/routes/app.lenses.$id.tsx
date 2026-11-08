@@ -89,15 +89,17 @@ const saveLensActionSchema = z.object({
     invalid_type_error: "CYL max must be a string",
   }),
   addMin: z
-    .string({
-      invalid_type_error: "ADD min must be a string",
-    })
+    .union([
+      z.string({ invalid_type_error: "ADD min must be a string" }),
+      z.null(),
+    ])
     .optional()
     .default(""),
   addMax: z
-    .string({
-      invalid_type_error: "ADD max must be a string",
-    })
+    .union([
+      z.string({ invalid_type_error: "ADD max must be a string" }),
+      z.null(),
+    ])
     .optional()
     .default(""),
   labCodeTemplate: z
@@ -436,41 +438,55 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         );
       }
 
+      // Rx types are already validated by saveLensActionSchema
+      const validRxTypes = Array.from(new Set(lensData.rxTypes));
+      const supportsAdd =
+        validRxTypes.includes("PROGRESSIVE") ||
+        validRxTypes.includes("READING");
+
       // ADD Diopter validation
-      let addMinVal: number | undefined;
-      let addMaxVal: number | undefined;
-      if (lensData.addMin) {
-        const addMinRes = parseDiopterText(lensData.addMin, "add");
-        if (!addMinRes.ok) {
+      let addMinVal: number | null = null;
+      let addMaxVal: number | null = null;
+      if (supportsAdd) {
+        const rawAddMin =
+          typeof lensData.addMin === "string" ? lensData.addMin.trim() : "";
+        if (rawAddMin.length > 0) {
+          const addMinRes = parseDiopterText(rawAddMin, "add");
+          if (!addMinRes.ok) {
+            return errorResponse(
+              new BadRequestError("Invalid ADD min", addMinRes.error, [
+                { path: "addMin", code: addMinRes.error },
+              ]),
+            );
+          }
+          addMinVal = addMinRes.value;
+        }
+
+        const rawAddMax =
+          typeof lensData.addMax === "string" ? lensData.addMax.trim() : "";
+        if (rawAddMax.length > 0) {
+          const addMaxRes = parseDiopterText(rawAddMax, "add");
+          if (!addMaxRes.ok) {
+            return errorResponse(
+              new BadRequestError("Invalid ADD max", addMaxRes.error, [
+                { path: "addMax", code: addMaxRes.error },
+              ]),
+            );
+          }
+          addMaxVal = addMaxRes.value;
+        }
+
+        if (
+          addMinVal !== null &&
+          addMaxVal !== null &&
+          addMinVal > addMaxVal
+        ) {
           return errorResponse(
-            new BadRequestError("Invalid ADD min", addMinRes.error, [
-              { path: "addMin", code: addMinRes.error },
+            new BadRequestError("Limits inverted", "LIMITS_INVERTED", [
+              { path: "addMax", code: "LIMITS_INVERTED" },
             ]),
           );
         }
-        addMinVal = addMinRes.value;
-      }
-      if (lensData.addMax) {
-        const addMaxRes = parseDiopterText(lensData.addMax, "add");
-        if (!addMaxRes.ok) {
-          return errorResponse(
-            new BadRequestError("Invalid ADD max", addMaxRes.error, [
-              { path: "addMax", code: addMaxRes.error },
-            ]),
-          );
-        }
-        addMaxVal = addMaxRes.value;
-      }
-      if (
-        addMinVal !== undefined &&
-        addMaxVal !== undefined &&
-        addMinVal > addMaxVal
-      ) {
-        return errorResponse(
-          new BadRequestError("Limits inverted", "LIMITS_INVERTED", [
-            { path: "addMax", code: "LIMITS_INVERTED" },
-          ]),
-        );
       }
 
       // Lab code template validation
@@ -483,9 +499,6 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           ]),
         );
       }
-
-      // Rx types are already validated by saveLensActionSchema
-      const validRxTypes = Array.from(new Set(lensData.rxTypes));
 
       let savedLens;
       if (!id || id === "new") {

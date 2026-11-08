@@ -143,13 +143,15 @@ export function LensForm({
   const initialName = defaultValues?.name ?? (lens?.name ?? "");
   const initialDescription =
     defaultValues?.description ?? (lens?.description ?? "");
+  const isCurrencyMismatch = Boolean(
+    lens?.price?.currency && lens.price.currency !== shopCurrency,
+  );
   const initialPrice =
     defaultValues?.price ??
-    (lens
+    (lens && !isCurrencyMismatch
       ? toShopifyDecimal(lens.price.amountMinor, lens.price.currency)
       : "");
-  const initialCurrency =
-    defaultValues?.currency ?? (lens?.price.currency ?? shopCurrency);
+  const currency = shopCurrency;
   const initialRxTypes =
     lens?.limits.rxTypes && lens.limits.rxTypes.length > 0
       ? lens.limits.rxTypes
@@ -179,7 +181,6 @@ export function LensForm({
   const [name, setName] = useState(initialName);
   const [description, setDescription] = useState(initialDescription);
   const [price, setPrice] = useState(initialPrice);
-  const [currency] = useState(initialCurrency);
   const [rxTypes, setRxTypes] = useState<RxType[]>(initialRxTypes);
   const [sphMin, setSphMin] = useState(initialSphMin);
   const [sphMax, setSphMax] = useState(initialSphMax);
@@ -466,6 +467,16 @@ export function LensForm({
             </s-banner>
           )}
 
+          {isCurrencyMismatch && (
+            <s-banner tone="warning" heading="Currency mismatch">
+              <s-paragraph>
+                This lens was stored in {lens?.price?.currency}, but your shop
+                currency is now {shopCurrency}. The price will be saved in{" "}
+                {shopCurrency}.
+              </s-paragraph>
+            </s-banner>
+          )}
+
           <s-section heading="Basic details">
             <s-stack direction="block" gap="base">
               <s-select
@@ -516,7 +527,7 @@ export function LensForm({
 
               <s-text-field
                 ref={setPriceRef}
-                label="Price"
+                label={`Price (${currency})`}
                 name="priceField"
                 value={price}
                 error={priceError || serverFieldErrors.get("price")}

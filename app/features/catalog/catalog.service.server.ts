@@ -436,8 +436,19 @@ export class CatalogService {
       throw new ValidationError("LIMITS_INVERTED");
     }
 
-    const mergedAddMin = valid.addMin !== undefined ? valid.addMin : existing.addMin;
-    const mergedAddMax = valid.addMax !== undefined ? valid.addMax : existing.addMax;
+    const targetRxTypes = (valid.rxTypes ?? existing.rxTypes) as RxType[];
+    const supportsAdd =
+      targetRxTypes.includes("PROGRESSIVE") || targetRxTypes.includes("READING");
+
+    let addMinToSave = valid.addMin;
+    let addMaxToSave = valid.addMax;
+    if (!supportsAdd && valid.rxTypes !== undefined) {
+      if (addMinToSave === undefined) addMinToSave = null;
+      if (addMaxToSave === undefined) addMaxToSave = null;
+    }
+
+    const mergedAddMin = addMinToSave !== undefined ? addMinToSave : existing.addMin;
+    const mergedAddMax = addMaxToSave !== undefined ? addMaxToSave : existing.addMax;
     if (
       mergedAddMin !== null &&
       mergedAddMin !== undefined &&
@@ -465,8 +476,8 @@ export class CatalogService {
       sphMax: valid.sphMax,
       cylMin: valid.cylMin,
       cylMax: valid.cylMax,
-      addMin: valid.addMin,
-      addMax: valid.addMax,
+      addMin: addMinToSave,
+      addMax: addMaxToSave,
       labCodeTemplate: valid.labCodeTemplate,
       shopifyProductId: valid.shopifyProductId,
       shopifyVariantId: valid.shopifyVariantId,

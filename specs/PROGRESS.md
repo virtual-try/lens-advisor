@@ -22,7 +22,7 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | 13 | [Price calculation](./13-pricing.md) | Done | 03 | Standard | — | PR #30 |
 | 14 | [Catalog repository and service](./14-catalog-service.md) | Done | 02, 03 | Standard | — | PR #31 |
 | 15 | [Shop settings repository and service](./15-shop-settings-service.md) | Done | 02, 03 | Standard | — | PR #32 |
-| 16 | [Configurator shell, state machine and API client](./16-configurator-shell.md) | Not started | 03, 04 | Heavy | — |  |
+| 16 | [Configurator shell, state machine and API client](./16-configurator-shell.md) | Done | 03, 04 | Heavy | — | PR #43 |
 | 17 | [Shopify product sync for lenses, options and add-ons](./17-shopify-product-sync.md) | Done | 13, 14 | Standard | — | PR #46 |
 | 18 | [Admin: lens groups and lenses](./18-admin-lenses.md) | Not started | 09, 10, 12, 13, 14, 17 | Standard | — |  |
 | 19 | [Admin: lens options and add-ons](./19-admin-options-addons.md) | Not started | 09, 13, 14, 17 | Standard | — |  |
@@ -85,3 +85,4 @@ Not started · In progress · Blocked · Done
 - **2026-11-08** — Spec 25 merged (PR #50).
 - **2026-11-08** — Spec 31 merged (PR #52).
 - **2026-11-08** — Spec 23 merged (PR #58).
+- **2026-11-08** — Spec 16 merged (PR #43).
