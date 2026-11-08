@@ -1,7 +1,7 @@
 # Inventory fragment — Spec 33 (End-to-end suite)
 
 ### `e2e-shared-db`
-`e2e/helpers/shared-db.ts` — `getSharedTestDb()`, `resetSharedTestDb()`, `teardownSharedTestDb()`, and `getSchemaTrackingFile()`. Creates a single migrated PostgreSQL schema on `TEST_DATABASE_URL` tracked with a run-unique PID-based file and shared across the in-process server test run so Shopify PrismaSessionStorage references stay valid across sequential spec files, with `resetSharedTestDb()` providing per-test shop row cleanup.
+`e2e/helpers/shared-db.ts` — `getSharedTestDb()`, `resetSharedTestDb()`, `teardownSharedTestDb()`, `getSchemaTrackingFile()`, and `getPgbossSchemaTrackingFile()`. Creates a single migrated PostgreSQL schema on `TEST_DATABASE_URL` tracked with a run-unique PID-based file and shared across the in-process server test run so Shopify PrismaSessionStorage references stay valid across sequential spec files, with `resetSharedTestDb()` providing per-test shop row cleanup.
 **Use instead of:** recreating separate schemas per test file in Playwright test suites.
 **Added by:** spec 33.
 ### `e2e-shopify-auth-fixtures`
@@ -25,7 +25,7 @@
 **Use instead of:** hardcoded relative endpoints in `page.request` calls.
 **Added by:** spec 33.
 ### `e2e-queue-mock`
-`e2e/helpers/queue-mock.ts` — `createMockQueue()`, `setupQueueMock()`, `teardownQueueMock()`. Queue seam adapter capturing enqueued jobs across Node and Vite module runtimes while routing them to pg-boss on the test database.
+`e2e/helpers/queue-mock.ts` — `createMockQueue()`, `setupQueueMock()`, `teardownQueueMock()`. Queue seam adapter capturing enqueued jobs across Node and Vite module runtimes while routing them to pg-boss in a run-scoped schema on the test database. Filters out deduped singletons returning null (R5-F1).
 **Use instead of:** live pg-boss worker polling during server e2e tests.
 **Added by:** spec 33.
 ### `e2e-standalone-number`

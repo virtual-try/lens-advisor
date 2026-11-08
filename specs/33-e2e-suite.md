@@ -92,17 +92,13 @@ store — so the integrated paths are proven once, after every implementation sp
 - **Triage & App Bugs**:
   - Test bug fixed: Isolated `Session` table drops across test files by creating `e2e/helpers/shared-db.ts` to retain the migrated schema reference across sequential in-process server runs.
   - Test bug fixed: Fixed `LabOrder` creation and assertion fields from non-existent `retryCount` and `emailSentAt` to schema fields `attempts` and `sentAt`.
-  - App bug triaged: `app/shared/queue/web-definitions.server.ts` unconditionally calls `import.meta.glob`, which throws `TypeError: (intermediate value).glob is not a function` outside Vite bundler execution when routes invoke `getQueue()`. Per binding non-scope rules, app code was not edited; tests in `e2e/server/orders.spec.ts` are marked `fixme`, and fix spec 35 (`specs/35-fix-web-feature-jobs-glob.md`) was created and appended to `specs/README.md` and `specs/PROGRESS.md`.
+  - Harness execution resolved: Initial triage misattributed plain-Node harness failure on `import.meta.glob` in `app/shared/queue/web-definitions.server.ts` as an application bug (drafting spec 35). Resolving test execution via the in-process Vite runner (`e2e/helpers/vite.ts`) confirmed no application defect exists: native `import.meta.glob` functions as intended in Vite, draft spec 35 was deleted, and tests run cleanly without `fixme`.
 - **Runner Summaries**:
-  - `pnpm test:e2e --project=server`: `3 skipped, 16 passed (1.8s)`
+  - `pnpm test:e2e --project=server`: `25 passed (3.1s)` (0 skipped, 0 failed)
   - `pnpm test:e2e --project=storefront`: `5 skipped (0.9s)` (requires live Shopify dev store; env missing)
-  - `pnpm test:e2e`: `8 skipped, 16 passed (2.5s)`
-  - `pnpm typecheck`: `✔ Generated Prisma Client ... Done in 1.4s` (0 errors)
-  - `pnpm lint`: `eslint . --max-warnings 0` (0 errors, 0 warnings)
-  - `pnpm build`: `build/client ... build/server/index.js 523.30 kB ... Done in 762ms` (0 errors)
-  - `pnpm test`: `Test Files 72 passed (72), Tests 1307 passed (1307), Duration 14.29s`
+  - Gates (typecheck, lint, build, test): verified by tree-stamped `orchestro spec verify` evidence lines below.
 - **Inventory Fragment**: `specs/inventory/33-e2e-suite.md` recorded for `e2e-shared-db`, `e2e-shopify-auth-fixtures`, `e2e-shopify-mock`, `e2e-storage-mail-mock`, `e2e-seed-helpers`, `e2e-cart-url`, and `e2e-queue-mock`.
-- **2026-11-08** — Evidence (orchestro spec verify, tree e1e0ce27): install pass · typecheck pass · lint pass · build pass · test pass 1307/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree b2f46180): install pass · typecheck pass · lint pass · build pass · test pass 1307/0/0
 - **2026-11-08** — Review round R1 fixes applied by coder agy-3:
   - R1-F1: Added Spec 35 row to `specs/PROGRESS.md`, updated spec count to 36 (00–35), and recorded log entry.
   - R1-F2: Formatted `specs/35-fix-web-feature-jobs-glob.md` with full template (Explicit non-scope, Steps, Log), typed glob check (`typeof (import.meta as { glob?: unknown }).glob === "function"`), and explicit non-Vite fallback definition list.
@@ -143,3 +139,8 @@ store — so the integrated paths are proven once, after every implementation sp
   - R4-F5: In Flow 9 of `e2e/storefront/configurator.spec.ts`, replaced raw substring checks on property values with `standaloneNumber` helper scanning, preventing false positives on opaque IDs while detecting clinical Rx values.
   - R4-F6: In `e2e/helpers/shared-db.ts`, replaced global schema tracking file with run-unique file `lens-advisor-e2e-schema-${runId}.txt` (configured via `process.env.E2E_RUN_ID` in `playwright.config.ts`), dropped only owned schema, and unlinked in `globalTeardown`.
   - R4-F7: Removed extra terminal blank lines in `.gitignore`, `e2e/helpers/shopify-auth.ts`, and `e2e/helpers/shopify-mock.ts`. Verified `git diff --check origin/main` is clean.
+- **2026-11-09** — Review round R5 fixes applied by coder agy-3:
+  - R5-F1: Updated `e2e/helpers/queue-mock.ts` so `NodeQueue.prototype.enqueue` and `viteQueueModule.Queue.prototype.enqueue` capture jobs into `mockQueue.jobs` only when the real `enqueue` returns a non-null job ID (deduped singleton enqueues returning `null` are omitted from capture). Configured run-scoped pg-boss schema `pgboss_e2e_<runId>` via `process.env.PGBOSS_SCHEMA` in `playwright.config.ts`, created in `e2e/helpers/global-setup.ts`, loaded via Vite plugin in `e2e/helpers/vite.ts`, and dropped with CASCADE in `e2e/helpers/global-teardown.ts` (with temp tracking file). Added behavior tests in `e2e/helpers/queue-mock.spec.ts` asserting non-null capture, null dedupe rejection, and run-scoped schema name.
+  - R5-F2: Executed the server e2e suite at HEAD; verified exact summary: 25 passed, 0 skipped, 0 failed (3.1s). Recorded runner summary in Log.
+  - R5-F3: Struck stale manual gate claims (`pnpm typecheck`, `pnpm lint`, `pnpm build`, `pnpm test`) from Runner Summaries; all gate claims now reference tree-stamped `orchestro spec verify` evidence lines.
+  - R5-F4: Staged deletion of `specs/35-fix-web-feature-jobs-glob.md` confirmed (deleted on disk and from `specs/README.md`). Corrected line 95 triage log and related text to clarify that the glob issue was plain-Node execution in the harness rather than an application bug.

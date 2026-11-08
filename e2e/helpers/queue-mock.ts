@@ -2,10 +2,29 @@ import type { EnqueueOptions, Queue as QueueType } from "../../app/shared/queue/
 import { Queue as NodeQueue } from "../../app/shared/queue/queue";
 import { getViteServer } from "./vite";
 
+try {
+  // Hook pg-boss Attorney in Node so any direct pg-boss instances inherit run-scoped schema
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const Attorney = require("pg-boss/dist/attorney.js") as {
+    getConfig: (val: unknown) => { schema: string };
+  };
+  const origGetConfig = Attorney.getConfig;
+  Attorney.getConfig = function (value: unknown) {
+    const config = origGetConfig.call(this, value);
+    if (process.env.PGBOSS_SCHEMA && config.schema === "pgboss") {
+      config.schema = process.env.PGBOSS_SCHEMA;
+    }
+    return config;
+  };
+} catch {
+  // Ignore if Attorney is not directly requireable
+}
+
 export interface CapturedQueueJob {
   name: string;
   payload: unknown;
   options?: EnqueueOptions;
+  jobId?: string;
 }
 
 export interface MockQueue extends Pick<QueueType, "enqueue" | "registerAll" | "start" | "stop"> {
@@ -27,8 +46,9 @@ export function createMockQueue(): MockQueue {
   return {
     jobs,
     enqueue: async (name: string, payload: unknown, options?: EnqueueOptions) => {
-      jobs.push({ name, payload, options });
-      return `mock-job-${Date.now()}-${jobs.length}`;
+      const jobId = `mock-job-${Date.now()}-${jobs.length}`;
+      jobs.push({ name, payload, options, jobId });
+      return jobId;
     },
     registerAll: async () => {},
     start: async () => {},
@@ -45,6 +65,8 @@ export function createMockQueue(): MockQueue {
  * Installs the queue mock onto `globalThis.__queue` and intercepts enqueue calls
  * across both Node and Vite module runtimes to capture payloads and route them
  * to the real test database.
+ * Only enqueues that successfully return a job id (non-null) are recorded.
+ * Deduped singletons that return null are omitted from capture (R5-F1).
  */
 export async function setupQueueMock(): Promise<MockQueue> {
   if (activeTeardown) {
@@ -59,12 +81,15 @@ export async function setupQueueMock(): Promise<MockQueue> {
     payload: unknown,
     options?: EnqueueOptions
   ) {
-    mockQueue.jobs.push({ name, payload, options });
-    return origNodeEnqueue.apply(this, [name, payload, options] as [
+    const jobId = await origNodeEnqueue.apply(this, [name, payload, options] as [
       string,
       unknown,
       EnqueueOptions,
     ]);
+    if (jobId !== null) {
+      mockQueue.jobs.push({ name, payload, options, jobId });
+    }
+    return jobId;
   };
 
   const vite = await getViteServer();
@@ -77,12 +102,15 @@ export async function setupQueueMock(): Promise<MockQueue> {
     payload: unknown,
     options?: EnqueueOptions
   ) {
-    mockQueue.jobs.push({ name, payload, options });
-    return origViteEnqueue.apply(this, [name, payload, options] as [
+    const jobId = await origViteEnqueue.apply(this, [name, payload, options] as [
       string,
       unknown,
       EnqueueOptions,
     ]);
+    if (jobId !== null) {
+      mockQueue.jobs.push({ name, payload, options, jobId });
+    }
+    return jobId;
   };
 
   activeTeardown = () => {

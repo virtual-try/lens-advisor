@@ -13,6 +13,11 @@ export function getSchemaTrackingFile(): string {
   return path.join(tmpdir(), `lens-advisor-e2e-schema-${runId}.txt`);
 }
 
+export function getPgbossSchemaTrackingFile(): string {
+  const runId = process.env.E2E_RUN_ID || `pid-${process.pid}`;
+  return path.join(tmpdir(), `lens-advisor-e2e-pgboss-${runId}.txt`);
+}
+
 let sharedDb: TestDb | undefined;
 
 export async function getSharedTestDb(): Promise<TestDb> {
