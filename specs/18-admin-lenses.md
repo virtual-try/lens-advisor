@@ -1,6 +1,6 @@
 # Spec 18 — Admin: lens groups and lenses
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 09, Spec 10, Spec 12, Spec 13, Spec 14, Spec 17
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —

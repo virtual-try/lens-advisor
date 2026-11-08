@@ -1,0 +1,198 @@
+.la-options-step {
+  display: flex;
+  flex-direction: column;
+}
+
+.la-step-head {
+  margin-bottom: var(--la-space-5);
+}
+
+.la-step-head h2 {
+  font-size: var(--la-text-xl);
+  font-weight: var(--la-weight-medium);
+  color: var(--la-ink);
+  line-height: var(--la-leading-tight);
+  letter-spacing: var(--la-tracking-tight);
+  margin: 0 0 var(--la-space-2);
+}
+
+.la-step-head p {
+  font-size: var(--la-text-sm);
+  color: var(--la-muted);
+  line-height: var(--la-leading-body);
+  margin: 0;
+}
+
+.la-fieldset {
+  border: none;
+  padding: 0;
+  margin: 0 0 var(--la-space-5);
+}
+
+.la-section__title {
+  display: block;
+  font-size: var(--la-text-base);
+  font-weight: var(--la-weight-medium);
+  color: var(--la-ink);
+  line-height: var(--la-leading-tight);
+  margin: 0 0 var(--la-space-3);
+  padding: 0;
+}
+
+.la-choices {
+  display: grid;
+  gap: var(--la-space-3);
+}
+
+.la-choice {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--la-space-4);
+  min-height: var(--la-target);
+  padding: var(--la-space-4);
+  background: var(--la-surface);
+  border: var(--la-border-width) solid var(--la-hairline);
+  border-radius: var(--la-radius);
+  cursor: pointer;
+  transition: border-color var(--la-transition-duration) var(--la-ease),
+    background-color var(--la-transition-duration) var(--la-ease);
+}
+
+.la-choice:hover {
+  border-color: var(--la-hairline-2);
+}
+
+.la-choice input {
+  position: absolute;
+  opacity: 0;
+  width: var(--la-border-width);
+  height: var(--la-border-width);
+  pointer-events: none;
+}
+
+.la-choice--selected,
+.la-choice:has(input:checked) {
+  border-color: var(--la-ink);
+  box-shadow: inset 0 0 0 var(--la-border-width) var(--la-ink);
+}
+
+.la-choice:has(input:focus-visible) {
+  box-shadow: var(--la-focus-ring);
+  border-color: var(--la-accent);
+}
+
+.la-choice__body {
+  min-width: 0;
+}
+
+.la-choice__title {
+  display: block;
+  font-size: var(--la-text-base);
+  font-weight: var(--la-weight-medium);
+  color: var(--la-ink);
+  line-height: var(--la-leading-tight);
+}
+
+.la-choice__price {
+  font-size: var(--la-text-sm);
+  font-weight: var(--la-weight-medium);
+  color: var(--la-ink);
+  white-space: nowrap;
+  font-variant-numeric: var(--la-font-numeric);
+}
+
+.la-mark {
+  display: inline-grid;
+  place-items: center;
+  width: var(--la-mark);
+  height: var(--la-mark);
+  border: var(--la-border-width-strong) solid var(--la-hairline-2);
+  border-radius: var(--la-radius-pill);
+  background: var(--la-surface);
+  flex: none;
+}
+
+.la-choice--selected .la-mark,
+.la-choice:has(input:checked) .la-mark {
+  border-color: var(--la-accent);
+  background: var(--la-accent);
+}
+
+.la-mark::after {
+  content: "";
+  width: var(--la-space-2);
+  height: var(--la-space-2);
+  border-radius: inherit;
+  background: var(--la-on-accent);
+  opacity: 0;
+}
+
+.la-choice--selected .la-mark::after,
+.la-choice:has(input:checked) .la-mark::after {
+  opacity: 1;
+}
+
+.la-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--la-space-3);
+}
+
+.la-swatch {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: var(--la-space-1);
+  min-width: var(--la-target);
+  font-size: var(--la-text-xs);
+  color: var(--la-muted);
+  cursor: pointer;
+}
+
+.la-swatch input {
+  position: absolute;
+  opacity: 0;
+  width: var(--la-border-width);
+  height: var(--la-border-width);
+  pointer-events: none;
+}
+
+.la-swatch__chip {
+  width: var(--la-swatch);
+  height: var(--la-swatch);
+  border-radius: var(--la-radius-pill);
+  background: var(--la-swatch-color);
+  box-shadow: inset 0 0 0 var(--la-border-width) var(--la-swatch-edge);
+}
+
+.la-swatch--selected,
+.la-swatch:has(input:checked) {
+  color: var(--la-ink);
+  font-weight: var(--la-weight-medium);
+}
+
+.la-swatch--selected .la-swatch__chip,
+.la-swatch:has(input:checked) .la-swatch__chip {
+  box-shadow: 0 0 0 var(--la-border-width-strong) var(--la-bg),
+    0 0 0 calc(var(--la-border-width-strong) * 2) var(--la-ink);
+}
+
+.la-swatch:has(input:focus-visible) .la-swatch__chip {
+  box-shadow: 0 0 0 var(--la-border-width-strong) var(--la-bg),
+    0 0 0 calc(var(--la-space-1) + var(--la-border-width)) var(--la-accent-soft);
+}
+
+.la-swatch__name {
+  display: block;
+  text-align: center;
+}
+
+.la-swatch__price {
+  display: block;
+  font-size: var(--la-text-xs);
+  color: var(--la-muted);
+  font-variant-numeric: var(--la-font-numeric);
+  text-align: center;
+}
