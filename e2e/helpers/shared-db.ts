@@ -4,7 +4,14 @@ import path from "node:path";
 import { PrismaClient } from "@prisma/client";
 import { createTestDb, type TestDb } from "../../test/db";
 
-const SCHEMA_FILE = path.join(tmpdir(), "lens-advisor-e2e-schema.txt");
+if (!process.env.DATABASE_URL && process.env.TEST_DATABASE_URL) {
+  process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
+}
+
+export function getSchemaTrackingFile(): string {
+  const runId = process.env.E2E_RUN_ID || `pid-${process.pid}`;
+  return path.join(tmpdir(), `lens-advisor-e2e-schema-${runId}.txt`);
+}
 
 let sharedDb: TestDb | undefined;
 
@@ -14,13 +21,14 @@ export async function getSharedTestDb(): Promise<TestDb> {
     (globalThis as Record<string, unknown>).__prismaClient = sharedDb.prisma;
     process.env.DATABASE_URL = sharedDb.url;
     try {
-      writeFileSync(SCHEMA_FILE, sharedDb.schema, "utf8");
+      writeFileSync(getSchemaTrackingFile(), sharedDb.schema, "utf8");
     } catch {
       // Ignore write errors to temp directory
     }
   }
   return sharedDb;
 }
+
 
 export async function resetSharedTestDb(): Promise<void> {
   const db = await getSharedTestDb();
@@ -44,9 +52,10 @@ export async function teardownSharedTestDb(): Promise<void> {
     await dbToDrop.drop();
   }
 
-  if (existsSync(SCHEMA_FILE)) {
+  const trackingFile = getSchemaTrackingFile();
+  if (existsSync(trackingFile)) {
     try {
-      const schema = readFileSync(SCHEMA_FILE, "utf8").trim();
+      const schema = readFileSync(trackingFile, "utf8").trim();
       if (/^t_[0-9a-f]{16}$/.test(schema)) {
         const baseUrl = process.env.TEST_DATABASE_URL?.trim();
         if (baseUrl) {
@@ -64,10 +73,11 @@ export async function teardownSharedTestDb(): Promise<void> {
       console.warn("[e2e] Failed to drop schema from temp file:", err);
     } finally {
       try {
-        unlinkSync(SCHEMA_FILE);
+        unlinkSync(trackingFile);
       } catch {
         // Ignore deletion errors
       }
     }
   }
+
 }

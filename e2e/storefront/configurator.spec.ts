@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { buildCartUrl } from "../helpers/cart-url";
+import { standaloneNumber } from "../helpers/standalone-number";
 
 const STORE_REQUIREMENTS =
   "requires: Shopify dev store with app installed and block placed, E2E_STORE_URL/PASSWORD, running app URL";
@@ -110,7 +111,16 @@ test.describe("Storefront Configurator Flows (Spec 33 Flows 6–9)", () => {
     await expect(addToCartBtn).toBeVisible();
     await addToCartBtn.click();
 
-    // 9. Verify /cart.js response contains frame and nested child lines
+    // 9. Wait for cart responses and verify /cart.js response contains frame and nested child lines
+    await expect
+      .poll(async () => {
+        const res = await page.request.get(buildCartUrl(page.url()));
+        if (!res.ok()) return 0;
+        const json = await res.json();
+        return json.items?.length ?? 0;
+      })
+      .toBeGreaterThanOrEqual(4);
+
     const cartRes = await page.request.get(buildCartUrl(page.url()));
     expect(cartRes.ok()).toBe(true);
     const cartJson = await cartRes.json();
@@ -277,6 +287,18 @@ test.describe("Storefront Configurator Flows (Spec 33 Flows 6–9)", () => {
     await expect(addToCartBtn).toBeVisible();
     await addToCartBtn.click();
 
+    await expect
+      .poll(async () => {
+        const res = await page.request.get(buildCartUrl(page.url()));
+        if (!res.ok()) return false;
+        const json = await res.json();
+        return json.items?.some(
+          (item: { properties?: Record<string, string> }) =>
+            item.properties?._bundle_role === "lens" && item.properties?._rx_ref
+        );
+      })
+      .toBe(true);
+
     const cartRes = await page.request.get(buildCartUrl(page.url()));
     expect(cartRes.ok()).toBe(true);
     const cartJson = await cartRes.json();
@@ -364,6 +386,18 @@ test.describe("Storefront Configurator Flows (Spec 33 Flows 6–9)", () => {
 
     await page.getByRole("button", { name: /add to cart/i }).click();
 
+    await expect
+      .poll(async () => {
+        const res = await page.request.get(buildCartUrl(page.url()));
+        if (!res.ok()) return false;
+        const json = await res.json();
+        return json.items?.some(
+          (item: { properties?: Record<string, string> }) =>
+            item.properties?._bundle_role === "lens"
+        );
+      })
+      .toBe(true);
+
     // Verify /cart.js has no raw clinical prescription fields in properties
     const cartRes = await page.request.get(buildCartUrl(page.url()));
     expect(cartRes.ok()).toBe(true);
@@ -418,12 +452,12 @@ test.describe("Storefront Configurator Flows (Spec 33 Flows 6–9)", () => {
           ).not.toContain(form);
         }
 
-        // Substring check for normalized sphere/prescription values and internal PD 630
+        // Scan values with standalone-number helper for normalized sphere/prescription values and internal PD 630 (R4-F5)
         for (const form of ["-2.50", "-2.5", "-250", "63.0", "630"]) {
           expect(
             valStr,
             `Property ${key} contains forbidden Rx representation ${form}`
-          ).not.toContain(form);
+          ).not.toMatch(standaloneNumber(form));
         }
 
         // PD 63 / 63.0 / PD 63 checks

@@ -4,7 +4,10 @@ import { getSharedTestDb, resetSharedTestDb } from "../helpers/shared-db";
 import type { TestDb } from "../../test/db";
 import { action as optionValueAction } from "../../app/routes/app.options.$id";
 import { action as addOnAction } from "../../app/routes/app.add-ons.$id";
-import { loader as optionsIndexLoader } from "../../app/routes/app.options._index";
+import {
+  action as optionsIndexAction,
+  loader as optionsIndexLoader,
+} from "../../app/routes/app.options._index";
 import {
   createActionArgs,
   createAdminUrl,
@@ -17,7 +20,7 @@ import {
   setupShopifyMock,
   teardownShopifyMock,
 } from "../helpers/shopify-mock";
-import { seedShop, seedOptionGroup } from "../helpers/seed";
+import { seedShop } from "../helpers/seed";
 
 test.describe("Spec 33 Flow 3: Admin Options and Add-ons (admin-options)", () => {
   let db: TestDb;
@@ -41,13 +44,30 @@ test.describe("Spec 33 Flow 3: Admin Options and Add-ons (admin-options)", () =>
     expect(await db.prisma.shop.count()).toBe(0);
 
     const domain = "options-flow-shop.myshopify.com";
-    const { shopId } = await seedShop(db.prisma, domain);
+    await seedShop(db.prisma, domain);
 
-    // 1. Seed an option group through catalog service
-    const group = await seedOptionGroup(shopId, {
-      kind: "MATERIAL",
-      name: "Lens Material",
+    // 1. Create an option group via admin index action (R4-F3)
+    const groupReq = new Request(createAdminUrl("/app/options", domain), {
+      method: "POST",
+      headers: {
+        ...createAuthHeaders(domain),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        intent: "create_group",
+        name: "Lens Material",
+        kind: "MATERIAL",
+      }),
     });
+    const groupRes = await optionsIndexAction(createActionArgs(groupReq));
+    const groupData = await unwrapData<{
+      ok: boolean;
+      group: { id: string; name: string; kind: string };
+    }>(groupRes);
+    expect(groupData.ok).toBe(true);
+    expect(groupData.group.id).toBeTruthy();
+    expect(groupData.group.name).toBe("Lens Material");
+    const group = groupData.group;
 
     // 2. Create a priced option value (+35.00) via options action
     const pricedReq = new Request(createAdminUrl("/app/options/new", domain), {

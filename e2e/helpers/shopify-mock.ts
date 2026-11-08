@@ -293,4 +293,3 @@ export function teardownShopifyMock(): void {
 
 // Automatically setup mock on module import so globalThis.fetch is intercepted before any Shopify client initializes
 setupShopifyMock();
-

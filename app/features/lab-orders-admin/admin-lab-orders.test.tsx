@@ -195,12 +195,7 @@ async function unwrapResponse<T = Record<string, unknown>>(
 }
 
 
-// Matches a number only when it stands alone, so random ids or timestamps
-// (for example "...12.250Z" or a cuid containing "90") can't trip privacy checks.
-function standaloneNumber(value: string): RegExp {
-  const escaped = value.replace(/[.-]/g, (c) => `\\${c}`);
-  return new RegExp(`(?<![\\w.\\-])${escaped}(?![\\w.])`);
-}
+import { standaloneNumber } from "../../../e2e/helpers/standalone-number";
 
 describe("Spec 32 — Admin: lab orders list, resend and ticket download", () => {
   // Navigation test

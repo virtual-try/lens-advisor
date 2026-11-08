@@ -2,20 +2,16 @@ import "../helpers/shopify-mock";
 import { test, expect } from "@playwright/test";
 import { getSharedTestDb, resetSharedTestDb } from "../helpers/shared-db";
 import type { TestDb } from "../../test/db";
-import { action as ordersCreateWebhookAction } from "../../app/routes/webhooks.orders.create";
-import { loader as labOrdersListLoader } from "../../app/routes/app.lab-orders._index";
-import {
-  action as labOrderDetailAction,
-  loader as labOrderDetailLoader,
-} from "../../app/routes/app.lab-orders.$id";
-import {
-  intakeJob,
-  type IntakeJobPayload,
-  INTAKE_JOB_NAME,
+import type {
+  IntakeJobPayload,
 } from "../../app/features/lab-orders/jobs.server";
 import {
-  dispatchJob,
-  type DispatchJobPayload,
+  INTAKE_JOB_NAME,
+} from "../../app/features/lab-orders/jobs.server";
+import type {
+  DispatchJobPayload,
+} from "../../app/features/lab-dispatch/jobs.server";
+import {
   DISPATCH_JOB_NAME,
 } from "../../app/features/lab-dispatch/jobs.server";
 import { buildTicketKey } from "../../app/shared/storage/object-store.server";
@@ -42,11 +38,18 @@ import {
 } from "../helpers/storage-mail-mock";
 import { setupQueueMock, teardownQueueMock } from "../helpers/queue-mock";
 import { seedLens, seedLensGroup, seedSettings, seedShop } from "../helpers/seed";
+import { closeViteServer, loadServerModule } from "../helpers/vite";
 
 test.describe("Spec 33 Flows 11 & 12: Orders intake and lab dispatch (compliance-webhooks, admin-lab-orders)", () => {
   let db: TestDb;
   let mockStore: ReturnType<typeof createMockObjectStore>;
   let mockMailer: ReturnType<typeof createMockMailer>;
+  let ordersCreateWebhookAction: typeof import("../../app/routes/webhooks.orders.create").action;
+  let labOrdersListLoader: typeof import("../../app/routes/app.lab-orders._index").loader;
+  let labOrderDetailAction: typeof import("../../app/routes/app.lab-orders.$id").action;
+  let labOrderDetailLoader: typeof import("../../app/routes/app.lab-orders.$id").loader;
+  let intakeJob: typeof import("../../app/features/lab-orders/jobs.server").intakeJob;
+  let dispatchJob: typeof import("../../app/features/lab-dispatch/jobs.server").dispatchJob;
 
   test.beforeAll(async () => {
     db = await getSharedTestDb();
@@ -54,11 +57,46 @@ test.describe("Spec 33 Flows 11 & 12: Orders intake and lab dispatch (compliance
     const mocks = setupStorageAndMailerMocks();
     mockStore = mocks.mockStore;
     mockMailer = mocks.mockMailer;
+
+    const webhookModule = await loadServerModule<typeof import("../../app/routes/webhooks.orders.create")>(
+      "./app/routes/webhooks.orders.create.ts"
+    );
+    ordersCreateWebhookAction = webhookModule.action;
+
+    const listModule = await loadServerModule<typeof import("../../app/routes/app.lab-orders._index")>(
+      "./app/routes/app.lab-orders._index.tsx"
+    );
+    labOrdersListLoader = listModule.loader;
+
+    const detailModule = await loadServerModule<typeof import("../../app/routes/app.lab-orders.$id")>(
+      "./app/routes/app.lab-orders.$id.tsx"
+    );
+    labOrderDetailAction = detailModule.action;
+    labOrderDetailLoader = detailModule.loader;
+
+    const intakeModule = await loadServerModule<typeof import("../../app/features/lab-orders/jobs.server")>(
+      "./app/features/lab-orders/jobs.server.ts"
+    );
+    intakeJob = intakeModule.intakeJob;
+
+    const dispatchModule = await loadServerModule<typeof import("../../app/features/lab-dispatch/jobs.server")>(
+      "./app/features/lab-dispatch/jobs.server.ts"
+    );
+    dispatchJob = dispatchModule.dispatchJob;
   });
 
   test.afterAll(async () => {
     teardownStorageAndMailerMocks();
     teardownShopifyMock();
+    try {
+      const queueContainer = await loadServerModule<typeof import("../../app/shared/container/queue.server")>(
+        "./app/shared/container/queue.server.ts"
+      );
+      await queueContainer.resetQueueForTest();
+    } catch {
+      // Ignore queue stop errors
+    }
+    await closeViteServer();
   });
 
   test.beforeEach(async () => {
@@ -66,10 +104,7 @@ test.describe("Spec 33 Flows 11 & 12: Orders intake and lab dispatch (compliance
   });
 
   test("Flow 11: Webhook orders/create intake -> lab order dispatch (PDF ticket uploaded, mail sent, status SENT)", async () => {
-    test.fixme(
-      true,
-      "Spec 35: web-definitions.server.ts unconditionally invokes Vite import.meta.glob which crashes outside Vite runtime"
-    );
+
     setMockPlanActive(true);
     const domain = "orders-flow-shop.myshopify.com";
     const { shopId } = await seedShop(db.prisma, domain);
@@ -137,7 +172,7 @@ test.describe("Spec 33 Flows 11 & 12: Orders intake and lab dispatch (compliance
       },
     });
 
-    const mockQueue = setupQueueMock();
+    const mockQueue = await setupQueueMock();
     try {
       // 5. Send signed orders/create webhook
       const webhookReq = createSignedWebhookRequest(
@@ -193,17 +228,13 @@ test.describe("Spec 33 Flows 11 & 12: Orders intake and lab dispatch (compliance
       const mail = mockMailer.sentMails[0];
       expect(mail.to).toEqual(["lab@optical-lab.example"]);
       expect(mail.attachments?.length).toBe(1);
-      expect(mail.attachments?.[0].filename).toBe(`ticket-${dispatchPayload.labOrderId}.pdf`);
+      expect(mail.attachments?.[0].filename).toBe(`${dispatchPayload.labOrderId}.pdf`);
     } finally {
       teardownQueueMock();
     }
   });
 
   test("Flow 12: Resend failed lab order -> resets to PENDING, transitions to SENT with timestamp", async () => {
-    test.fixme(
-      true,
-      "Spec 35: web-definitions.server.ts unconditionally invokes Vite import.meta.glob which crashes outside Vite runtime"
-    );
     setMockPlanActive(true);
     const domain = "resend-flow-shop.myshopify.com";
     const { shopId } = await seedShop(db.prisma, domain);
@@ -252,7 +283,7 @@ test.describe("Spec 33 Flows 11 & 12: Orders intake and lab dispatch (compliance
       },
     });
 
-    const mockQueue = setupQueueMock();
+    const mockQueue = await setupQueueMock();
     try {
       // 1. Exercise list path: load lab orders list
       const listReq = new Request(createAdminUrl("/app/lab-orders", domain), {

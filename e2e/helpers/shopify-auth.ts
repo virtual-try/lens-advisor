@@ -178,7 +178,6 @@ export function createLoaderArgs(
     pattern: url.pathname,
   };
 }
-
 export function createActionArgs(
   request: Request,
   params: Record<string, string | undefined> = {}
@@ -192,4 +191,3 @@ export function createActionArgs(
     pattern: url.pathname,
   };
 }
-

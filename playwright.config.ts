@@ -1,5 +1,13 @@
 import { defineConfig, devices } from "@playwright/test";
 
+if (!process.env.DATABASE_URL && process.env.TEST_DATABASE_URL) {
+  process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
+}
+
+if (!process.env.E2E_RUN_ID) {
+  process.env.E2E_RUN_ID = `run-${process.pid}-${Date.now()}`;
+}
+
 export default defineConfig({
   testDir: "./e2e",
   globalTeardown: "./e2e/helpers/global-teardown.ts",
@@ -20,7 +28,7 @@ export default defineConfig({
     {
       name: "server",
       testDir: "./e2e",
-      testMatch: ["server/**/*.spec.ts", "helpers/cart-url.spec.ts"],
+      testMatch: ["server/**/*.spec.ts", "helpers/*.spec.ts"],
       use: {},
     },
     {

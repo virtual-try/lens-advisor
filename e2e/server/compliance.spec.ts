@@ -4,8 +4,6 @@ import { Prisma } from "@prisma/client";
 import { getSharedTestDb, resetSharedTestDb } from "../helpers/shared-db";
 import type { TestDb } from "../../test/db";
 import { runShopRedact } from "../../app/features/compliance/redact.server";
-import { action as complianceWebhookAction } from "../../app/routes/webhooks.compliance";
-import { shopRedactJob } from "../../app/features/compliance/jobs.server";
 import type { ShopRedactPayload } from "../../app/features/compliance/schema";
 import {
   createActionArgs,
@@ -27,11 +25,14 @@ import { seedShop, seedLensGroup, seedSettings } from "../helpers/seed";
 import type { ComplianceDeps } from "../../app/features/compliance/deps.server";
 import type { Queue } from "../../app/shared/queue/queue";
 import type { FieldCipher } from "../../app/shared/crypto/field-cipher.server";
+import { closeViteServer, loadServerModule } from "../helpers/vite";
 
 test.describe("Spec 33 Flow 13: Compliance shop/redact (compliance-webhooks)", () => {
   let db: TestDb;
   let mockStore: ReturnType<typeof createMockObjectStore>;
   let mockMailer: ReturnType<typeof createMockMailer>;
+  let complianceWebhookAction: typeof import("../../app/routes/webhooks.compliance").action;
+  let shopRedactJob: typeof import("../../app/features/compliance/jobs.server").shopRedactJob;
 
   test.beforeAll(async () => {
     db = await getSharedTestDb();
@@ -39,12 +40,32 @@ test.describe("Spec 33 Flow 13: Compliance shop/redact (compliance-webhooks)", (
     const mocks = setupStorageAndMailerMocks();
     mockStore = mocks.mockStore;
     mockMailer = mocks.mockMailer;
+
+    const complianceModule = await loadServerModule<typeof import("../../app/routes/webhooks.compliance")>(
+      "./app/routes/webhooks.compliance.ts"
+    );
+    complianceWebhookAction = complianceModule.action;
+
+    const redactJobModule = await loadServerModule<typeof import("../../app/features/compliance/jobs.server")>(
+      "./app/features/compliance/jobs.server.ts"
+    );
+    shopRedactJob = redactJobModule.shopRedactJob;
   });
 
   test.afterAll(async () => {
     teardownStorageAndMailerMocks();
     teardownShopifyMock();
+    try {
+      const queueContainer = await loadServerModule<typeof import("../../app/shared/container/queue.server")>(
+        "./app/shared/container/queue.server.ts"
+      );
+      await queueContainer.resetQueueForTest();
+    } catch {
+      // Ignore queue stop errors
+    }
+    await closeViteServer();
   });
+
 
   test.beforeEach(async () => {
     await resetSharedTestDb();
@@ -154,10 +175,6 @@ test.describe("Spec 33 Flow 13: Compliance shop/redact (compliance-webhooks)", (
   });
 
   test("Flow 13 (webhook route): Signed shop/redact webhook enqueues redact job -> consumes job and deletes shop A while preserving shop B", async () => {
-    test.fixme(
-      true,
-      "Spec 35: web-definitions.server.ts unconditionally invokes Vite import.meta.glob which crashes outside Vite runtime"
-    );
     setMockPlanActive(true);
     const domainA = "webhook-redact-shop-a.myshopify.com";
     const { shopId: shopIdA } = await seedShop(db.prisma, domainA);
@@ -183,7 +200,7 @@ test.describe("Spec 33 Flow 13: Compliance shop/redact (compliance-webhooks)", (
     mockStore.storedObjects.set(ticketKeyB, { body: Buffer.from("pdf-b"), contentType: "application/pdf" });
     mockStore.storedObjects.set(rxKeyB, { body: Buffer.from("png-b"), contentType: "image/png" });
 
-    const mockQueue = setupQueueMock();
+    const mockQueue = await setupQueueMock();
     try {
       // Send signed shop/redact webhook
       const webhookReq = createSignedWebhookRequest(
