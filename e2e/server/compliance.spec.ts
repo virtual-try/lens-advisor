@@ -1,7 +1,7 @@
 import "../helpers/shopify-mock";
 import { test, expect } from "@playwright/test";
 import { Prisma } from "@prisma/client";
-import { getSharedTestDb } from "../helpers/shared-db";
+import { getSharedTestDb, resetSharedTestDb } from "../helpers/shared-db";
 import type { TestDb } from "../../test/db";
 import { runShopRedact } from "../../app/features/compliance/redact.server";
 import { action as complianceWebhookAction } from "../../app/routes/webhooks.compliance";
@@ -46,8 +46,14 @@ test.describe("Spec 33 Flow 13: Compliance shop/redact (compliance-webhooks)", (
     teardownShopifyMock();
   });
 
+  test.beforeEach(async () => {
+    await resetSharedTestDb();
+  });
+
   test("Flow 13: Compliance shop/redact -> shop rows and S3 prefix gone while preserving other shops", async () => {
     setMockPlanActive(true);
+    expect(await db.prisma.shop.count()).toBe(0);
+
     // Seed shop A (target for redaction)
     const domainA = "redact-flow-shop-a.myshopify.com";
     const { shopId: shopIdA } = await seedShop(db.prisma, domainA);

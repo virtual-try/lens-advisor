@@ -1,7 +1,7 @@
 # Inventory fragment — Spec 33 (End-to-end suite)
 
 ### `e2e-shared-db`
-`e2e/helpers/shared-db.ts` — `getSharedTestDb()` and `teardownSharedTestDb()`. Creates a single migrated PostgreSQL schema on `TEST_DATABASE_URL` shared across the in-process server test run so Shopify PrismaSessionStorage references stay valid across sequential spec files.
+`e2e/helpers/shared-db.ts` — `getSharedTestDb()`, `resetSharedTestDb()`, and `teardownSharedTestDb()`. Creates a single migrated PostgreSQL schema on `TEST_DATABASE_URL` shared across the in-process server test run so Shopify PrismaSessionStorage references stay valid across sequential spec files, with `resetSharedTestDb()` providing per-test shop row cleanup.
 **Use instead of:** recreating separate schemas per test file in Playwright test suites.
 **Added by:** spec 33.
 

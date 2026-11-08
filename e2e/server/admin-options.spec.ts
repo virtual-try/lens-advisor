@@ -1,6 +1,6 @@
 import "../helpers/shopify-mock";
 import { test, expect } from "@playwright/test";
-import { getSharedTestDb } from "../helpers/shared-db";
+import { getSharedTestDb, resetSharedTestDb } from "../helpers/shared-db";
 import type { TestDb } from "../../test/db";
 import { action as optionValueAction } from "../../app/routes/app.options.$id";
 import { action as addOnAction } from "../../app/routes/app.add-ons.$id";
@@ -31,8 +31,15 @@ test.describe("Spec 33 Flow 3: Admin Options and Add-ons (admin-options)", () =>
     teardownShopifyMock();
   });
 
+  test.beforeEach(async () => {
+    await resetSharedTestDb();
+  });
+
   test("Flow 3: Create option group with a priced value and an add-on -> priced value gets a variant; zero-price does not", async () => {
     setMockPlanActive(true);
+    // Assert clean DB state before seeding (R3-F4 per-test isolation)
+    expect(await db.prisma.shop.count()).toBe(0);
+
     const domain = "options-flow-shop.myshopify.com";
     const { shopId } = await seedShop(db.prisma, domain);
 

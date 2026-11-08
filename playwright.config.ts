@@ -19,7 +19,8 @@ export default defineConfig({
   projects: [
     {
       name: "server",
-      testDir: "./e2e/server",
+      testDir: "./e2e",
+      testMatch: ["server/**/*.spec.ts", "helpers/cart-url.spec.ts"],
       use: {},
     },
     {

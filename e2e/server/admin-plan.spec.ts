@@ -1,6 +1,6 @@
 import "../helpers/shopify-mock";
 import { test, expect } from "@playwright/test";
-import { getSharedTestDb } from "../helpers/shared-db";
+import { getSharedTestDb, resetSharedTestDb } from "../helpers/shared-db";
 import type { TestDb } from "../../test/db";
 import { loader as homeLoader } from "../../app/routes/app._index";
 import {
@@ -27,9 +27,13 @@ test.describe("Spec 33 Flow 1: Shop with no plan opens admin (admin-plan)", () =
     teardownShopifyMock();
   });
 
+  test.beforeEach(async () => {
+    await resetSharedTestDb();
+  });
+
   test("Flow 1: Shop with no plan opens admin -> redirect to plan selection", async () => {
-    // 1. Ensure mock returns no active plan
     setMockPlanActive(false);
+    expect(await db.prisma.shop.count()).toBe(0);
 
     const domain = "no-plan-shop.myshopify.com";
     await seedShop(db.prisma, domain);

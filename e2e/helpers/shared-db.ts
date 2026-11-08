@@ -12,6 +12,7 @@ export async function getSharedTestDb(): Promise<TestDb> {
   if (!sharedDb) {
     sharedDb = await createTestDb();
     (globalThis as Record<string, unknown>).__prismaClient = sharedDb.prisma;
+    process.env.DATABASE_URL = sharedDb.url;
     try {
       writeFileSync(SCHEMA_FILE, sharedDb.schema, "utf8");
     } catch {
@@ -19,6 +20,21 @@ export async function getSharedTestDb(): Promise<TestDb> {
     }
   }
   return sharedDb;
+}
+
+export async function resetSharedTestDb(): Promise<void> {
+  const db = await getSharedTestDb();
+  await db.prisma.complianceRequest.deleteMany();
+  await db.prisma.labOrder.deleteMany();
+  await db.prisma.prescription.deleteMany();
+  await db.prisma.addOn.deleteMany();
+  await db.prisma.optionValue.deleteMany();
+  await db.prisma.optionGroup.deleteMany();
+  await db.prisma.lens.deleteMany();
+  await db.prisma.lensGroup.deleteMany();
+  await db.prisma.shopSettings.deleteMany();
+  await db.prisma.shop.deleteMany();
+  await db.prisma.session.deleteMany();
 }
 
 export async function teardownSharedTestDb(): Promise<void> {

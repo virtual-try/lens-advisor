@@ -1,6 +1,6 @@
 import "../helpers/shopify-mock";
 import { test, expect } from "@playwright/test";
-import { getSharedTestDb } from "../helpers/shared-db";
+import { getSharedTestDb, resetSharedTestDb } from "../helpers/shared-db";
 import type { TestDb } from "../../test/db";
 import { action as settingsAction, loader as settingsLoader } from "../../app/routes/app.settings";
 import {
@@ -29,12 +29,18 @@ test.describe("Spec 33 Flow 4: Admin Settings (admin-settings)", () => {
     teardownShopifyMock();
   });
 
+  test.beforeEach(async () => {
+    await resetSharedTestDb();
+  });
+
   test("Flow 4: Save settings with two lab emails, invalid email rejected -> values persist after reload; error shown", async () => {
     setMockPlanActive(true);
+    expect(await db.prisma.shop.count()).toBe(0);
+
     const domain = "settings-flow-shop.myshopify.com";
     await seedShop(db.prisma, domain);
 
-    // 1. Post invalid email: rejected with 400 and error code EMAIL
+    // 1. Post invalid email: rejected with 400 and error code EMAIL and field labEmail
     const invalidReq = new Request(createAdminUrl("/app/settings", domain), {
       method: "POST",
       headers: {
@@ -49,9 +55,17 @@ test.describe("Spec 33 Flow 4: Admin Settings (admin-settings)", () => {
     const invalidRes = (await settingsAction(createActionArgs(invalidReq))) as Response;
     expect(invalidRes.status).toBe(400);
     const invalidJson = (await invalidRes.json()) as {
-      error?: { code?: string; fields?: Array<{ path: string; code: string }> };
+      error?: {
+        code?: string;
+        message?: string;
+        fields?: Array<{ path: string; code: string }>;
+      };
     };
     expect(invalidJson.error?.code).toBe("EMAIL");
+    expect(invalidJson.error?.fields).toEqual([
+      { path: "labEmail.0", code: "EMAIL" },
+    ]);
+    expect(invalidJson.error?.message).toBe("Enter a valid lab email address.");
 
     // 2. Post two valid lab emails: saved successfully
     const validReq = new Request(createAdminUrl("/app/settings", domain), {

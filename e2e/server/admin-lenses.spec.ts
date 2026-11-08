@@ -1,6 +1,6 @@
 import "../helpers/shopify-mock";
 import { test, expect } from "@playwright/test";
-import { getSharedTestDb } from "../helpers/shared-db";
+import { getSharedTestDb, resetSharedTestDb } from "../helpers/shared-db";
 import type { TestDb } from "../../test/db";
 import { action as lensGroupAction } from "../../app/routes/app.lens-groups.$id";
 import { action as lensAction } from "../../app/routes/app.lenses.$id";
@@ -32,8 +32,15 @@ test.describe("Spec 33 Flow 2: Admin Lenses (admin-lenses)", () => {
     teardownShopifyMock();
   });
 
+  test.beforeEach(async () => {
+    await resetSharedTestDb();
+  });
+
   test("Flow 2: Create group + lens with limits, save -> lens listed, sync badge Synced, variant id stored", async () => {
     setMockPlanActive(true);
+    // Assert clean DB state before seeding (R3-F4 per-test isolation)
+    expect(await db.prisma.shop.count()).toBe(0);
+
     const domain = "lenses-flow-shop.myshopify.com";
     const { shopId } = await seedShop(db.prisma, domain);
 
@@ -124,9 +131,12 @@ test.describe("Spec 33 Flow 2: Admin Lenses (admin-lenses)", () => {
     const isFailed = loaderData.syncFailedId === loadedLens?.id;
     expect(isFailed).toBe(false);
 
+    // Sync status field: shopifyVariantId is set and holds the valid variant GID
+    expect(loadedLens?.shopifyVariantId).not.toBeNull();
+    expect(loadedLens?.shopifyVariantId).toMatch(/^gid:\/\/shopify\/ProductVariant\/\d+$/);
+
     // Synced condition: has shopifyVariantId and !isFailed -> true (renders <s-badge tone="success">Synced</s-badge>)
     const isSynced = Boolean(loadedLens?.shopifyVariantId) && !isFailed;
     expect(isSynced).toBe(true);
-    expect(loadedLens?.shopifyVariantId).toContain("gid://shopify/ProductVariant/");
   });
 });

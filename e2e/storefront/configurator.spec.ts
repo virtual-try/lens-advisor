@@ -377,7 +377,7 @@ test.describe("Storefront Configurator Flows (Spec 33 Flows 6–9)", () => {
     expect(lensItem.properties?.Prescription).toBe("Prescription on file");
     expect(lensItem.properties?._rx_ref).toBeTruthy();
 
-    const ALLOWED_UNDERSCORE_KEYS = new Set([
+    const ALLOWED_PROPERTY_KEYS = new Set([
       "_bundle_id",
       "_bundle_role",
       "_item_id",
@@ -385,21 +385,20 @@ test.describe("Storefront Configurator Flows (Spec 33 Flows 6–9)", () => {
       "_addon_ids",
       "_rx_ref",
       "_parent_id",
+      "Prescription",
     ]);
 
-    const rxNormalizedForms = ["-2.50", "-2.5", "2.50", "-250", "63.0"];
+    const rxForbiddenForms = ["-2.50", "-2.5", "-250", "63", "63.0", "630"];
 
     for (const item of cartJson.items) {
       const props = (item.properties || {}) as Record<string, unknown>;
 
-      // 1. Assert exact allowed set of _-prefixed property keys
+      // 1. Allowlist every cart property key (not just _-prefixed ones)
       for (const key of Object.keys(props)) {
-        if (key.startsWith("_")) {
-          expect(
-            ALLOWED_UNDERSCORE_KEYS.has(key),
-            `Unexpected _-prefixed property key: ${key}`
-          ).toBe(true);
-        }
+        expect(
+          ALLOWED_PROPERTY_KEYS.has(key),
+          `Unexpected property key: ${key}`
+        ).toBe(true);
       }
 
       // Explicitly assert that no raw clinical keys exist
@@ -407,12 +406,20 @@ test.describe("Storefront Configurator Flows (Spec 33 Flows 6–9)", () => {
       expect(props._rx_os).toBeUndefined();
       expect(props._rx_pd).toBeUndefined();
 
-      // 2. Scan every property value for each entered Rx value in all normalised forms
+      // 2. Scan every property key and value for display and internal-unit representations
       for (const [key, rawVal] of Object.entries(props)) {
         const valStr = String(rawVal);
 
-        // Substring check for normalized sphere/prescription values
-        for (const form of rxNormalizedForms) {
+        // Scan keys for all forbidden Rx forms (-2.50, -2.5, -250, 63, 63.0, 630)
+        for (const form of rxForbiddenForms) {
+          expect(
+            key,
+            `Property key ${key} contains forbidden Rx representation ${form}`
+          ).not.toContain(form);
+        }
+
+        // Substring check for normalized sphere/prescription values and internal PD 630
+        for (const form of ["-2.50", "-2.5", "-250", "63.0", "630"]) {
           expect(
             valStr,
             `Property ${key} contains forbidden Rx representation ${form}`
@@ -425,6 +432,7 @@ test.describe("Storefront Configurator Flows (Spec 33 Flows 6–9)", () => {
           `Property ${key} contains forbidden PD value`
         ).not.toMatch(/(?:^|[^\w])63(?:\.0)?(?:[^\w]|$)/);
         expect(valStr).not.toMatch(/PD\s*63/i);
+        expect(valStr).not.toMatch(/PD\s*630/i);
 
         // Clinical terminology scan
         expect(valStr.toLowerCase()).not.toContain("sphere");

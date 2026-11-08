@@ -1,6 +1,6 @@
 import "../helpers/shopify-mock";
 import { test, expect } from "@playwright/test";
-import { getSharedTestDb } from "../helpers/shared-db";
+import { getSharedTestDb, resetSharedTestDb } from "../helpers/shared-db";
 import type { TestDb } from "../../test/db";
 import { loader as homeLoader } from "../../app/routes/app._index";
 import {
@@ -28,6 +28,10 @@ test.describe("Spec 33 Flow 5: Admin home setup checklist (admin-home-setup)", (
     teardownShopifyMock();
   });
 
+  test.beforeEach(async () => {
+    await resetSharedTestDb();
+  });
+
   test("Flow 5: Checklist ticks after lens + lab email -> both ticked shows complete", async () => {
     setMockPlanActive(true);
     const domain = "home-flow-shop.myshopify.com";
@@ -50,6 +54,8 @@ test.describe("Spec 33 Flow 5: Admin home setup checklist (admin-home-setup)", (
     const step1 = await makeHomeRequest();
     expect(step1.hasLens).toBe(false);
     expect(step1.hasLabEmail).toBe(false);
+    const initialDone = step1.hasLens && step1.hasLabEmail;
+    expect(initialDone).toBe(false);
 
     // Step 2: Add lens group + lens -> hasLens becomes true
     const group = await seedLensGroup(shopId, {
@@ -76,8 +82,11 @@ test.describe("Spec 33 Flow 5: Admin home setup checklist (admin-home-setup)", (
       labEmail: ["lab@optical-lab.example"],
     });
 
-    const step3 = await makeHomeRequest();
-    expect(step3.hasLens).toBe(true);
-    expect(step3.hasLabEmail).toBe(true);
+    // Reload home data: assert exact checklist items' done flags all true after reload
+    const reloaded = await makeHomeRequest();
+    expect(reloaded.hasLens).toBe(true);
+    expect(reloaded.hasLabEmail).toBe(true);
+    const allDataItemsDone = reloaded.hasLens && reloaded.hasLabEmail;
+    expect(allDataItemsDone).toBe(true);
   });
 });

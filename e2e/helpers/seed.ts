@@ -1,10 +1,10 @@
 import type { PrismaClient } from "@prisma/client";
-import { getConfig } from "../../app/shared/config.server";
+import { Session, type AdminApiContext } from "@shopify/shopify-app-react-router/server";
+import { shopifyTestConfig } from "./shopify-auth";
 import * as catalogService from "../../app/features/catalog/catalog.service.server";
 import * as settingsService from "../../app/features/settings/settings.service.server";
 import type { SettingsPatch } from "../../app/features/settings/schema";
 import { syncItem } from "../../app/features/product-sync";
-import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 
 export interface SeededShopContext {
   shopId: string;
@@ -15,8 +15,6 @@ export async function seedShop(
   prisma: PrismaClient,
   domain: string
 ): Promise<SeededShopContext> {
-  const config = getConfig().shopify;
-
   let shop = await prisma.shop.findUnique({
     where: { domain },
   });
@@ -29,7 +27,20 @@ export async function seedShop(
     });
   }
 
-  // Create or update offline session for authenticate.admin
+  const scopeStr = shopifyTestConfig.scopes.join(",");
+
+  // Store in test session storage from testConfig()
+  const testSession = new Session({
+    id: `offline_${domain}`,
+    shop: domain,
+    state: "active",
+    isOnline: false,
+    accessToken: "test_offline_token",
+    scope: scopeStr,
+  });
+  await shopifyTestConfig.sessionStorage.storeSession(testSession);
+
+  // Create or update offline session for authenticate.admin in Prisma Session table
   await prisma.session.upsert({
     where: { id: `offline_${domain}` },
     create: {
@@ -38,12 +49,12 @@ export async function seedShop(
       state: "active",
       isOnline: false,
       accessToken: "test_offline_token",
-      scope: config.scopes.join(","),
+      scope: scopeStr,
     },
     update: {
       state: "active",
       accessToken: "test_offline_token",
-      scope: config.scopes.join(","),
+      scope: scopeStr,
     },
   });
 

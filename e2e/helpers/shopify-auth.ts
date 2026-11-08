@@ -1,15 +1,56 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import crypto from "node:crypto";
-import { getConfig } from "../../app/shared/config.server";
+import { testConfig } from "@shopify/shopify-app-react-router/test-helpers";
+import { resetConfigCache } from "../../app/shared/config.server";
+
+export const shopifyTestConfig = testConfig({
+  scopes: [
+    "read_products",
+    "write_products",
+    "read_orders",
+    "write_app_proxy",
+    "write_publications",
+  ],
+});
+
+// Configure dummy credentials from testConfig() so the harness works with only TEST_DATABASE_URL
+process.env.SHOPIFY_API_KEY = shopifyTestConfig.apiKey;
+process.env.SHOPIFY_API_SECRET = shopifyTestConfig.apiSecretKey;
+process.env.SHOPIFY_APP_URL = shopifyTestConfig.appUrl;
+process.env.SCOPES = shopifyTestConfig.scopes.join(",");
+
+if (!process.env.SHOPIFY_APP_HANDLE) {
+  process.env.SHOPIFY_APP_HANDLE = "lens-advisor";
+}
+if (!process.env.SHOPIFY_APP_GID) {
+  process.env.SHOPIFY_APP_GID = "gid://shopify/App/test";
+}
+if (!process.env.PARTNER_ORGANIZATION_ID) {
+  process.env.PARTNER_ORGANIZATION_ID = "test_partner_org_id";
+}
+if (!process.env.PARTNER_API_ACCESS_TOKEN) {
+  process.env.PARTNER_API_ACCESS_TOKEN = "test_partner_token";
+}
+if (!process.env.DATABASE_URL && process.env.TEST_DATABASE_URL) {
+  process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
+}
+if (!process.env.RX_ENCRYPTION_KEYS) {
+  process.env.RX_ENCRYPTION_KEYS = JSON.stringify({
+    primary: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  });
+}
+if (!process.env.RX_ENCRYPTION_ACTIVE_KEY_ID) {
+  process.env.RX_ENCRYPTION_ACTIVE_KEY_ID = "primary";
+}
+resetConfigCache();
 
 export function createSessionToken(shop: string): string {
-  const config = getConfig().shopify;
   const now = Math.floor(Date.now() / 1000);
   const header = { alg: "HS256", typ: "JWT" };
   const payload = {
     iss: `https://${shop}/admin`,
     dest: `https://${shop}`,
-    aud: config.apiKey,
+    aud: shopifyTestConfig.apiKey,
     sub: "user_e2e",
     exp: now + 3600,
     nbf: now - 60,
@@ -22,7 +63,7 @@ export function createSessionToken(shop: string): string {
     Buffer.from(JSON.stringify(obj)).toString("base64url");
   const unsigned = `${b64(header)}.${b64(payload)}`;
   const sig = crypto
-    .createHmac("sha256", config.apiSecretKey)
+    .createHmac("sha256", shopifyTestConfig.apiSecretKey)
     .update(unsigned)
     .digest("base64url");
   return `${unsigned}.${sig}`;
@@ -53,7 +94,6 @@ export function createSignedProxyRequest(
     headers?: Record<string, string>;
   } = {}
 ): Request {
-  const config = getConfig().shopify;
   const searchParams = new URLSearchParams({
     path_prefix: "/apps/lens-advisor",
     shop,
@@ -66,7 +106,7 @@ export function createSignedProxyRequest(
       a.localeCompare(b)
     );
     const queryString = entries.map(([k, v]) => `${k}=${v}`).join("");
-    const secret = options.forged ? "wrong_secret_key" : config.apiSecretKey;
+    const secret = options.forged ? "wrong_secret_key" : shopifyTestConfig.apiSecretKey;
     const signature = crypto
       .createHmac("sha256", secret)
       .update(queryString)
@@ -92,9 +132,8 @@ export function createSignedWebhookRequest(
     webhookId?: string;
   } = {}
 ): Request {
-  const config = getConfig().shopify;
   const rawBody = typeof payload === "string" ? payload : JSON.stringify(payload);
-  const secret = options.forged ? "wrong_secret" : config.apiSecretKey;
+  const secret = options.forged ? "wrong_secret" : shopifyTestConfig.apiSecretKey;
   const hmac = crypto
     .createHmac("sha256", secret)
     .update(rawBody, "utf8")

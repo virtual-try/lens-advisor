@@ -94,15 +94,15 @@ store — so the integrated paths are proven once, after every implementation sp
   - Test bug fixed: Fixed `LabOrder` creation and assertion fields from non-existent `retryCount` and `emailSentAt` to schema fields `attempts` and `sentAt`.
   - App bug triaged: `app/shared/queue/web-definitions.server.ts` unconditionally calls `import.meta.glob`, which throws `TypeError: (intermediate value).glob is not a function` outside Vite bundler execution when routes invoke `getQueue()`. Per binding non-scope rules, app code was not edited; tests in `e2e/server/orders.spec.ts` are marked `fixme`, and fix spec 35 (`specs/35-fix-web-feature-jobs-glob.md`) was created and appended to `specs/README.md` and `specs/PROGRESS.md`.
 - **Runner Summaries**:
-  - `pnpm test:e2e --project=server`: `3 skipped, 10 passed (1.7s)`
+  - `pnpm test:e2e --project=server`: `3 skipped, 16 passed (1.8s)`
   - `pnpm test:e2e --project=storefront`: `5 skipped (0.9s)` (requires live Shopify dev store; env missing)
-  - `pnpm test:e2e`: `8 skipped, 10 passed (2.5s)`
-  - `pnpm typecheck`: `✔ Generated Prisma Client ... Done in 1.3s` (0 errors)
+  - `pnpm test:e2e`: `8 skipped, 16 passed (2.5s)`
+  - `pnpm typecheck`: `✔ Generated Prisma Client ... Done in 1.4s` (0 errors)
   - `pnpm lint`: `eslint . --max-warnings 0` (0 errors, 0 warnings)
-  - `pnpm build`: `build/client ... build/server/index.js 523.30 kB ... Done in 745ms` (0 errors)
-  - `pnpm test`: `Test Files 73 passed (73), Tests 1312 passed (1312), Duration 14.35s`
+  - `pnpm build`: `build/client ... build/server/index.js 523.30 kB ... Done in 762ms` (0 errors)
+  - `pnpm test`: `Test Files 72 passed (72), Tests 1307 passed (1307), Duration 14.29s`
 - **Inventory Fragment**: `specs/inventory/33-e2e-suite.md` recorded for `e2e-shared-db`, `e2e-shopify-auth-fixtures`, `e2e-shopify-mock`, `e2e-storage-mail-mock`, `e2e-seed-helpers`, `e2e-cart-url`, and `e2e-queue-mock`.
-- **2026-11-08** — Evidence (orchestro spec verify, tree cf9f58dc): install pass · typecheck pass · lint pass · build pass · test pass 1312/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 77769a25): install pass · typecheck pass · lint pass · build pass · test pass 1307/0/0
 - **2026-11-08** — Review round R1 fixes applied by coder agy-3:
   - R1-F1: Added Spec 35 row to `specs/PROGRESS.md`, updated spec count to 36 (00–35), and recorded log entry.
   - R1-F2: Formatted `specs/35-fix-web-feature-jobs-glob.md` with full template (Explicit non-scope, Steps, Log), typed glob check (`typeof (import.meta as { glob?: unknown }).glob === "function"`), and explicit non-Vite fallback definition list.
@@ -123,3 +123,14 @@ store — so the integrated paths are proven once, after every implementation sp
   - R2-F7: In Flow 9 of `e2e/storefront/configurator.spec.ts`, strictly asserted the exact allowed set of `_`-prefixed property keys (`_bundle_id`, `_bundle_role`, `_item_id`, `_option_ids`, `_addon_ids`, `_rx_ref`, `_parent_id`), asserted that `_rx_od`, `_rx_os`, `_rx_pd` are undefined, and scanned every property value across all items for normalized Rx forms (`-2.50`, `-2.5`, `2.50`, `-250`, `63.0`, standalone `63`, `PD 63`).
   - R2-F8: In `e2e/storefront/health.spec.ts`, updated password form authentication to use web-first assertion `expect(passwordInput).not.toBeVisible()`, and required both a product-specific element and the Select lenses control to be visible.
   - R2-F10: Staged removal of tracked `test-results/.last-run.json` (`git rm --cached test-results/.last-run.json`), removed local artifact directory, and verified `git ls-files test-results` is empty.
+- **2026-11-09** — Review round R3 fixes applied by coder agy-3:
+  - R3-F1: Flow-table coverage proven at the loader/action data level for Flows 2, 4, and 5:
+    - Flow 2 (`e2e/server/admin-lenses.spec.ts`): asserted sync status field `shopifyVariantId` is truthy and matches `^gid:\/\/shopify\/ProductVariant\/\d+$` and `syncFailedId` is null (the exact conditions rendering `<s-badge tone="success">Synced</s-badge>` via `isSynced = Boolean(shopifyVariantId) && !isFailed`).
+    - Flow 4 (`e2e/server/admin-settings.spec.ts`): asserted the exact action field error: `error.code === "EMAIL"`, `error.fields === [{ path: "labEmail.0", code: "EMAIL" }]`, and message `"Enter a valid lab email address."`.
+    - Flow 5 (`e2e/server/admin-home.spec.ts`): asserted checklist items' done flags after reload: `hasLens === true` and `hasLabEmail === true` (and `hasLens && hasLabEmail === true`, rendering the checklist item `✓ Done` badges and the "You're live" banner).
+  - R3-F2: In Flow 9 of `e2e/storefront/configurator.spec.ts`, allowlisted every cart property key (not just `_`-prefixed ones: `_bundle_id`, `_bundle_role`, `_item_id`, `_option_ids`, `_addon_ids`, `_rx_ref`, `_parent_id`, `Prescription`), and scanned both property keys and values for display and internal-unit representations (`-2.50`, `-2.5`, `-250`, `63`, `63.0`, `630`) and clinical terminology (`sphere`, `cylinder`, `axis`).
+  - R3-F3: In `e2e/helpers/seed.ts` and `e2e/helpers/shopify-auth.ts`, wired `testConfig()` with test session storage (`shopifyTestConfig.sessionStorage.storeSession(...)`) and dummy credentials (`testApiSecretKey`, `testApiKey`), ensuring the server harness executes when only `TEST_DATABASE_URL` is set without real Shopify environment variables. Added passing test in `e2e/server/shopify-mock.spec.ts`.
+  - R3-F4: In `e2e/helpers/shared-db.ts`, added `resetSharedTestDb()` deleting all shop-owned rows and sessions via Prisma in foreign-key order (`ComplianceRequest`, `LabOrder`, `Prescription`, `AddOn`, `OptionValue`, `OptionGroup`, `Lens`, `LensGroup`, `ShopSettings`, `Shop`, `Session`). Added `test.beforeEach` in every server test file to guarantee per-test isolation and added assertions verifying initial shop count is 0.
+  - R3-F5: In `specs/35-fix-web-feature-jobs-glob.md`, updated Scope, Steps, and Done when to include un-annotating the compliance `shop/redact` webhook test at `e2e/server/compliance.spec.ts:151` from `test.fixme` and verifying it passes.
+  - R3-F6: Deleted `test/cart-url.test.ts` to respect unit test boundaries and lead new-file limit; moved helper tests to `e2e/helpers/cart-url.spec.ts` in the server project. Restored vitest count to 72 files and 1307 tests.
+- **2026-11-09** — Lead: the test gate was red on a flaky spec 32 test (INV-2 asserted the loader JSON lacks "90"/"2.25"; random cuid ids and ISO timestamps can contain those digits). The lead made its numeric checks match standalone numbers only (axis now 137, JSON -1.5 form added) in `app/features/lab-orders-admin/admin-lab-orders.test.tsx`. This is out of spec 33 scope but blocked its gate; the lead owns it. Verified with 5/5 runs of that file and a full gate run of 1307 tests.

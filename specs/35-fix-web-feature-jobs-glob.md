@@ -28,7 +28,7 @@ Fix both issues by:
 - In `app/shared/container/queue.server.ts`, provide a queue test seam:
   - Check for global test injection (e.g. `(globalThis as Record<string, unknown>).__queue`) or exported `setQueueForTest(queue: Queue | undefined)`.
   - When constructing `createPgBoss` in test/e2e environments (`NODE_ENV === "test"` or `process.env.TEST_DATABASE_URL`), point the connection string at `process.env.TEST_DATABASE_URL`, never `DATABASE_URL`, and use the appropriate test schema.
-- Un-annotate Flows 11 & 12 in `e2e/server/orders.spec.ts` from `test.fixme` and ensure they pass end-to-end.
+- Un-annotate Flows 11 & 12 in `e2e/server/orders.spec.ts` and the compliance `shop/redact` webhook test at `e2e/server/compliance.spec.ts:151` from `test.fixme` and ensure they pass end-to-end.
 
 ## Explicit non-scope
 
@@ -60,7 +60,7 @@ Fix both issues by:
 
 1. Update `app/shared/queue/web-definitions.server.ts` with typed check and explicit fallback definition list.
 2. Update `app/shared/container/queue.server.ts` with queue test seam and `TEST_DATABASE_URL` routing under test environment.
-3. Un-annotate Flows 11 and 12 in `e2e/server/orders.spec.ts`, verify full pass.
+3. Un-annotate Flows 11 and 12 in `e2e/server/orders.spec.ts` and the compliance `shop/redact` webhook test in `e2e/server/compliance.spec.ts:151`, verify full pass.
 4. Run static gates (`typecheck`, `lint`, `build`).
 
 ## Self-check
@@ -73,6 +73,7 @@ Fix both issues by:
 - [ ] `web-definitions.server.ts` executes in plain Node/Playwright without throwing `TypeError: (intermediate value).glob is not a function`. [unit]
 - [ ] `getQueue()` provides a test seam and uses `TEST_DATABASE_URL` in test environments, never touching dev `DATABASE_URL`. [unit]
 - [ ] Spec 33 Flows 11 & 12 in `e2e/server/orders.spec.ts` can be un-annotated from `fixme` and pass. [e2e]
+- [ ] Spec 33 compliance `shop/redact` webhook test at `e2e/server/compliance.spec.ts:151` can be un-annotated from `fixme` and pass. [e2e]
 - [ ] Flow 11 and 12 bodies consume captured queue jobs. [e2e]
 - [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
 - [ ] `pnpm build` passes. [static]
@@ -81,3 +82,4 @@ Fix both issues by:
 
 - **2026-11-08** — Spec 35 created to address app bug triaged during spec 33 e2e run (`import.meta.glob` failure outside Vite bundler).
 - **2026-11-08** — Expanded spec 35 with full template, typed glob check (no `any`), explicit non-Vite fallback list, queue test seam, and `TEST_DATABASE_URL` guarantee per Review R1 findings R1-F2 and R1-F3.
+- **2026-11-09** — Updated Scope, Steps, and Done when to include un-annotating compliance `shop/redact` webhook test in `e2e/server/compliance.spec.ts:151` per Review R3 finding R3-F5.

@@ -1,6 +1,6 @@
 import "../helpers/shopify-mock";
 import { test, expect } from "@playwright/test";
-import { getSharedTestDb } from "../helpers/shared-db";
+import { getSharedTestDb, resetSharedTestDb } from "../helpers/shared-db";
 import type { TestDb } from "../../test/db";
 import { loader as catalogLoader } from "../../app/routes/proxy.catalog";
 import { action as prescriptionsAction } from "../../app/routes/proxy.prescriptions";
@@ -28,8 +28,14 @@ test.describe("Spec 33 Flow 10: Proxy signature verification (proxy-catalog-endp
     teardownShopifyMock();
   });
 
+  test.beforeEach(async () => {
+    await resetSharedTestDb();
+  });
+
   test("Flow 10: Proxy call with bad signature (catalog or prescriptions) returns 401 Unauthorized", async () => {
     setMockPlanActive(true);
+    expect(await db.prisma.shop.count()).toBe(0);
+
     const domain = "proxy-flow-shop.myshopify.com";
     const { shopId } = await seedShop(db.prisma, domain);
 

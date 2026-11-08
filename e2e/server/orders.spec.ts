@@ -1,6 +1,6 @@
 import "../helpers/shopify-mock";
 import { test, expect } from "@playwright/test";
-import { getSharedTestDb } from "../helpers/shared-db";
+import { getSharedTestDb, resetSharedTestDb } from "../helpers/shared-db";
 import type { TestDb } from "../../test/db";
 import { action as ordersCreateWebhookAction } from "../../app/routes/webhooks.orders.create";
 import { loader as labOrdersListLoader } from "../../app/routes/app.lab-orders._index";
@@ -59,6 +59,10 @@ test.describe("Spec 33 Flows 11 & 12: Orders intake and lab dispatch (compliance
   test.afterAll(async () => {
     teardownStorageAndMailerMocks();
     teardownShopifyMock();
+  });
+
+  test.beforeEach(async () => {
+    await resetSharedTestDb();
   });
 
   test("Flow 11: Webhook orders/create intake -> lab order dispatch (PDF ticket uploaded, mail sent, status SENT)", async () => {
