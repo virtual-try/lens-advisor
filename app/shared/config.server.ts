@@ -13,6 +13,11 @@ export class ConfigError extends Error {
 export interface DatabaseConfig {
   databaseUrl: string;
   directUrl: string;
+  /**
+   * Local Postgres used by DB-backed unit tests. Optional so the app can boot
+   * without it; specs that need a real database fail loudly when it is absent.
+   */
+  testDatabaseUrl?: string;
 }
 
 export interface ShopifyConfig {
@@ -133,9 +138,29 @@ export function getDatabaseConfig(): DatabaseConfig {
   const config: DatabaseConfig = {
     databaseUrl: parsed.DATABASE_URL,
     directUrl: parsed.DIRECT_URL || parsed.DATABASE_URL,
+    testDatabaseUrl: parsed.TEST_DATABASE_URL,
   };
   cachedDatabase = config;
   return config;
+}
+
+const testDatabaseSchema = z.object({
+  TEST_DATABASE_URL: z
+    .string({ required_error: "TEST_DATABASE_URL is required" })
+    .trim()
+    .min(1, "TEST_DATABASE_URL is required")
+    .url("TEST_DATABASE_URL must be a valid URL"),
+});
+
+/**
+ * The local Postgres used by DB-backed unit tests. Kept separate from
+ * `getDatabaseConfig` so tests do not need the production DATABASE_URL set.
+ */
+export function getTestDatabaseUrl(): string {
+  const parsed = validateWithZod(testDatabaseSchema, {
+    TEST_DATABASE_URL: process.env.TEST_DATABASE_URL,
+  });
+  return parsed.TEST_DATABASE_URL;
 }
 
 const shopifySchema = z.object({
