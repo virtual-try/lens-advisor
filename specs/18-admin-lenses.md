@@ -1,6 +1,6 @@
 # Spec 18 — Admin: lens groups and lenses
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 09, Spec 10, Spec 12, Spec 13, Spec 14, Spec 17
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —
@@ -97,4 +97,4 @@ Stubbed: none.
   - R6-F4 [MINOR]: Disabled last remaining Rx type checkbox and enforced reset to checked on change so the UI never displays the checkbox unchecked while still submitting that type; added test.
   - R6-F5 [MINOR]: Started new lenses with empty ADD limits, hid ADD fields and cleared submitted ADD values when neither PROGRESSIVE nor READING is selected, while keeping type-neutral SPH and CYL defaults; added test.
   - R6-F7 [MINOR]: Replaced stale gate test counts in the Log with current verify output (38/38 tests in `admin-lenses.test.tsx`, 705/705 tests across workspace).
-- **2026-11-08** — Evidence (orchestro spec verify, tree 5f068d37): install pass · typecheck pass · lint pass · build pass · test pass 708/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 4ff641e7): install pass · typecheck pass · lint pass · build pass · test pass 1033/0/0
