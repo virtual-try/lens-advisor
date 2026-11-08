@@ -1,6 +1,7 @@
 export {
   getAddOns,
   getLabOrder,
+  getLabOrderShopId,
   getLens,
   getOptionValues,
   getPrescription,
@@ -8,7 +9,9 @@ export {
   markSent,
   resetLabOrderStatus,
   transitionToSending,
+  SENDING_STALE_TIMEOUT_MS,
   type LabDispatchDb,
+  type LabDispatchErrorCode,
   type MarkSentData,
 } from "./lab-dispatch.repository.server";
 export {
@@ -20,6 +23,8 @@ export {
   defaultDispatchLogger,
   processDispatch,
   resend,
+  UPLOAD_DOWNLOAD_TIMEOUT_MS,
+  UPLOAD_MAX_FILE_SIZE_BYTES,
   type DispatchLogger,
   type DispatchResult,
   type DispatchServiceDeps,

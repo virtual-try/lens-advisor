@@ -1,4 +1,4 @@
-import type { Prescription } from "../../../packages/rx-core/src/types/index.js";
+import { prescriptionSchema, type Prescription } from "../../../packages/rx-core/src/schemas/index.js";
 import { getCipher } from "../../shared/container/cipher.server";
 import { getPrisma } from "../../shared/container/prisma.server";
 import type { FieldCipher } from "../../shared/crypto/field-cipher.server";
@@ -83,7 +83,12 @@ export async function loadTicketData(
     }
 
     if (source === "MANUAL") {
-      prescriptionData = decrypted as Prescription;
+      const parsed = prescriptionSchema.safeParse(decrypted);
+      if (!parsed.success) {
+        // R1-F8: Validate decrypted payload; corrupt shape fails with data-free error
+        throw new RxDecryptError("Prescription payload validation failed");
+      }
+      prescriptionData = parsed.data;
     } else if (source === "UPLOAD") {
       prescriptionData = null;
       uploadFileNames = rxRow.uploadKeys.map((k) => k.split("/").pop() ?? k);

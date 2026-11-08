@@ -100,6 +100,19 @@ test DB). Stubbed: none.
   - Documented `load-ticket-data`, `dispatch-handler`, `dispatch-service`, and `lab-dispatch-repository`.
 - **2026-11-08** — Sabotage:
   - Bypassed `result.count === 0` in `transitionToSending` (`if (false && result.count === 0)`) -> Self-check 1 test went red (`expected true to be false` in "returns false when already SENDING or SENT"). Restored -> green.
+- **2026-11-08** — Review round R1 fixes (coder agy-3):
+  - Fixed R1-F1: Removed all `as any` casts and `eslint-disable-next-line` comments. Typed `queue` as `Pick<Queue, "enqueue">` in `DispatchServiceDeps` and test fakeQueue; typed `db` as `PrismaClient`. Gates restored without suppression.
+  - Fixed R1-F2: Wrapped all steps after `transitionToSending` in `processDispatch` in try/catch to record `FAILED` with accurate code before rethrow, preventing stuck `SENDING` rows. Added `updatedAt` to `LabOrder` in `prisma/schema.prisma` and `20261107120000_init/migration.sql`, and implemented stale lease reclamation (`SENDING_STALE_TIMEOUT_MS = 15 * 60 * 1000`) in `transitionToSending` reusing existing `attempts`. Added tests for `markSent` throwing and stale-SENDING reclaim.
+  - Fixed R1-F3: Extended INV-2 logger and console spies across `MAIL_FAILED` and `STORAGE_FAILED` failure rows where decrypted Rx resides in memory. Asserted zero clinical values (SPH/CYL/AXIS/PD/notes) leak in logger calls, `console.warn`/`console.error`, `err.message`, or `lastErrorCode`.
+  - Fixed R1-F4: Resolved owning shop by id through new repository function `getLabOrderShopId` as the single id-to-shop resolver, then scoped all subsequent calls by that `shopId` (INV-1). Reused `dispatchJobPayloadSchema` from `app/features/lab-orders/constants.ts` with `{ labOrderId }`. Added handler tests for production no-shopId path (found and not-found).
+  - Fixed R1-F5: Guarded `resend` to only allow transitions from `FAILED` or `SENT` to `PENDING`; refuses `PENDING` or `SENDING` with `ConflictError` (`code: "CONFLICT"`). Made `markSent` and `markFailed` conditional on `status = "SENDING"` so late workers cannot overwrite state. Added tests for resend during SENDING and late worker no-op.
+  - Fixed R1-F6: Recorded cross-owner edits to spec 08's `app/shared/queue/define-job.ts` (allowing handler-bearing definition to merge with handler-less definition) and spec 23's `app/features/lab-orders/intake.test.ts` (worker handler presence assertion on discovered dispatch job and `updatedAt` inclusion in `allowedLabOrderFields`). Added test cases in `define-job.test.ts` for both registration orders (producer-first and consumer-first).
+  - Fixed R1-F7: Added `LOAD_FAILED` (missing rows/DB errors) and `TICKET_RENDER_FAILED` (renderer errors) to `LabDispatchErrorCode` union, restricting `RX_DECRYPT_FAILED` strictly to decryption and integrity failures. Tested each.
+  - Fixed R1-F8: Validated decrypted Rx payload with rx-core's `prescriptionSchema.safeParse` in `loadTicketData`. On failure, throws `RxDecryptError("Prescription payload validation failed")`, recording data-free `RX_DECRYPT_FAILED` and sending no email. Tested with corrupt Rx payload.
+  - Fixed R1-F9: Changed `transitionToSending` to atomic single-statement `$queryRaw` executing `UPDATE ... RETURNING attempts`, eliminating race conditions between update and query.
+  - Fixed R1-F10: Extended Self-check 3 test to archive an option value and an add-on in addition to the lens, asserting all archived labels appear in `ticketData`.
+  - Fixed R1-F11: Asserted `dispatchJob.retry` options (`retryLimit: 5`, `retryBackoff: true`) and added fail-then-succeed test run ending `SENT` with attempts 2 and distinct idempotency key.
+  - Fixed R1-F12: Dropped `getObject` duck-typing in upload file reading. Added `UPLOAD_DOWNLOAD_TIMEOUT_MS` (15s) and `UPLOAD_MAX_FILE_SIZE_BYTES` (10MB) bounds. Tested presign-and-fetch path with injected `fetch` (HTTP 200 success, HTTP 403 failure).
 - **2026-11-08** — Gates verified:
   - `pnpm vitest run app/features/lab-dispatch`: 1 test file, 16/16 passed.
   - `pnpm test`: 52 test files, 832/832 passed, 0 failures.
@@ -107,4 +120,4 @@ test DB). Stubbed: none.
   - `pnpm lint`: exit 0 (0 errors, 0 warnings).
   - `pnpm build`: exit 0.
   - `git diff --check`: clean.
-- **2026-11-08** — Evidence (orchestro spec verify, tree ed831229): install pass · typecheck pass · lint pass · build pass · test pass 832/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree bb76ed40): install pass · typecheck pass · lint pass · build pass · test pass 841/0/0

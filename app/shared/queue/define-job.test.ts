@@ -742,7 +742,7 @@ describe("defineJob payload guard (INV-2)", () => {
   });
 
   describe("handler-less job definitions and registry replacement (R2-F3)", () => {
-    it("allows registering a handler-less definition and replaces it with a handler-bearing definition", () => {
+    it("allows registering a handler-less definition and replaces it with a handler-bearing definition (producer-first)", () => {
       const name = "test.producer-consumer-replace";
       const producerDef = defineJob({
         name,
@@ -760,8 +760,33 @@ describe("defineJob payload guard (INV-2)", () => {
         },
       });
       expect(handled).toBe(false);
+      expect(handled).toBe(false);
       expect(consumerDef.handler).toBeDefined();
       expect(getJobDefinition(name)).toBe(consumerDef);
+    });
+
+    it("preserves handler-bearing definition when followed by a handler-less definition (consumer-first, R1-F6)", () => {
+      const name = "test.consumer-producer-preserve";
+      let handled = false;
+      const consumerDef = defineJob({
+        name,
+        schema: z.object({ orderId: z.string() }),
+        handler: () => {
+          handled = true;
+        },
+      });
+      expect(handled).toBe(false);
+      expect(consumerDef.handler).toBeDefined();
+      expect(getJobDefinition(name)).toBe(consumerDef);
+
+      // Registering handler-less definition second should succeed and preserve consumerDef
+      const producerDef = defineJob({
+        name,
+        schema: z.object({ orderId: z.string() }),
+      });
+      expect(producerDef.handler).toBeUndefined();
+      expect(getJobDefinition(name)).toBe(consumerDef);
+      expect(getJobDefinition(name)?.handler).toBeDefined();
     });
 
     it("throws Duplicate job definition when registering two handler-bearing definitions", () => {

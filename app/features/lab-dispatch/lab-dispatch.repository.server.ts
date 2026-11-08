@@ -9,13 +9,42 @@ import type {
   PrismaClient,
 } from "@prisma/client";
 import { getPrisma } from "../../shared/container/prisma.server";
+import { ConflictError } from "../../shared/http/errors.server";
 
 export type LabDispatchDb = PrismaClient | Prisma.TransactionClient;
+
+export type LabDispatchErrorCode =
+  | "NO_LAB_EMAIL"
+  | "RX_DECRYPT_FAILED"
+  | "LOAD_FAILED"
+  | "TICKET_RENDER_FAILED"
+  | "STORAGE_FAILED"
+  | "MAIL_FAILED";
+
+export const SENDING_STALE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes lease timeout (R1-F2)
 
 export interface MarkSentData {
   providerId: string;
   ticketKeys: string[];
   sentAt?: Date;
+}
+
+/**
+ * Resolves the owning shopId for a labOrderId (R1-F4).
+ * This is the only unscoped id-to-shop resolver, used for internal job processing
+ * where the job queue payload contains only { labOrderId } without shopId.
+ * All subsequent repository calls must be strictly scoped to the resolved shopId (INV-1).
+ */
+export async function getLabOrderShopId(
+  labOrderId: string,
+  db?: LabDispatchDb,
+): Promise<string | null> {
+  const client = db ?? getPrisma();
+  const order = await client.labOrder.findUnique({
+    where: { id: labOrderId },
+    select: { shopId: true },
+  });
+  return order?.shopId ?? null;
 }
 
 /**
@@ -33,43 +62,50 @@ export async function getLabOrder(
 }
 
 /**
- * Transitions LabOrder to SENDING status via a single conditional UPDATE
- * WHERE status IN ('PENDING', 'FAILED') and increments attempts (Self-check 1).
- * Checks the returned update count: a second worker loses and receives transitioned: false.
+ * Transitions LabOrder to SENDING status via a single atomic UPDATE ... RETURNING (R1-F2, R1-F9).
+ * - Transitions from PENDING or FAILED with attempts incremented by 1.
+ * - Reclaims a stale SENDING row (updatedAt older than staleTimeoutMs) reusing the same attempts value.
+ * - Single conditional UPDATE returning attempts atomically prevents race conditions (INV-8, R1-F9).
+ * - Returns { transitioned: false, attempts: 0 } if another worker holds an active lease or order is SENT.
  */
 export async function transitionToSending(
   shopId: string,
   labOrderId: string,
   db?: LabDispatchDb,
+  staleTimeoutMs = SENDING_STALE_TIMEOUT_MS,
 ): Promise<{ transitioned: boolean; attempts: number }> {
   const client = db ?? getPrisma();
-  const result = await client.labOrder.updateMany({
-    where: {
-      shopId,
-      id: labOrderId,
-      status: { in: ["PENDING", "FAILED"] },
-    },
-    data: {
-      status: "SENDING",
-      attempts: { increment: 1 },
-    },
-  });
+  const staleCutoff = new Date(Date.now() - staleTimeoutMs);
 
-  if (result.count === 0) {
+  const rows = await client.$queryRaw<Array<{ attempts: number }>>`
+    UPDATE "LabOrder"
+    SET
+      "status" = 'SENDING'::"LabOrderStatus",
+      "attempts" = CASE
+        WHEN "status" = 'SENDING'::"LabOrderStatus" THEN "attempts"
+        ELSE "attempts" + 1
+      END,
+      "updatedAt" = NOW()
+    WHERE "shopId" = ${shopId}
+      AND "id" = ${labOrderId}
+      AND (
+        "status" IN ('PENDING'::"LabOrderStatus", 'FAILED'::"LabOrderStatus")
+        OR ("status" = 'SENDING'::"LabOrderStatus" AND "updatedAt" <= ${staleCutoff})
+      )
+    RETURNING "attempts"
+  `;
+
+  if (!rows || rows.length === 0) {
     return { transitioned: false, attempts: 0 };
   }
 
-  const updated = await client.labOrder.findFirst({
-    where: { shopId, id: labOrderId },
-    select: { attempts: true },
-  });
-
-  return { transitioned: true, attempts: updated?.attempts ?? 1 };
+  return { transitioned: true, attempts: rows[0].attempts };
 }
 
 /**
  * Marks a LabOrder as SENT, updating providerId, ticketKeys, sentAt, and clearing lastErrorCode.
- * Strictly scoped to shopId (INV-1).
+ * Strictly scoped to shopId (INV-1) and guarded with status = 'SENDING' (R1-F5).
+ * Late workers cannot overwrite a row they no longer own.
  */
 export async function markSent(
   shopId: string,
@@ -79,7 +115,11 @@ export async function markSent(
 ): Promise<LabOrder | null> {
   const client = db ?? getPrisma();
   const updated = await client.labOrder.updateMany({
-    where: { shopId, id: labOrderId },
+    where: {
+      shopId,
+      id: labOrderId,
+      status: "SENDING",
+    },
     data: {
       status: "SENT",
       providerId: data.providerId,
@@ -98,17 +138,22 @@ export async function markSent(
 
 /**
  * Marks a LabOrder as FAILED, recording lastErrorCode.
- * Strictly scoped to shopId (INV-1).
+ * Strictly scoped to shopId (INV-1) and guarded with status = 'SENDING' (R1-F5).
+ * Late workers cannot overwrite a row they no longer own.
  */
 export async function markFailed(
   shopId: string,
   labOrderId: string,
-  errorCode: string,
+  errorCode: LabDispatchErrorCode,
   db?: LabDispatchDb,
 ): Promise<LabOrder | null> {
   const client = db ?? getPrisma();
   const updated = await client.labOrder.updateMany({
-    where: { shopId, id: labOrderId },
+    where: {
+      shopId,
+      id: labOrderId,
+      status: "SENDING",
+    },
     data: {
       status: "FAILED",
       lastErrorCode: errorCode,
@@ -123,8 +168,9 @@ export async function markFailed(
 }
 
 /**
- * Resets a LabOrder status (e.g. to PENDING for resend) and clears lastErrorCode.
+ * Resets a LabOrder status to PENDING for resend and clears lastErrorCode.
  * Strictly scoped to shopId (INV-1).
+ * Conditional update: only moves FAILED or SENT to PENDING; refuses PENDING or SENDING with ConflictError (R1-F5).
  */
 export async function resetLabOrderStatus(
   shopId: string,
@@ -133,8 +179,29 @@ export async function resetLabOrderStatus(
   db?: LabDispatchDb,
 ): Promise<LabOrder | null> {
   const client = db ?? getPrisma();
-  const updated = await client.labOrder.updateMany({
+
+  const existing = await client.labOrder.findFirst({
     where: { shopId, id: labOrderId },
+    select: { id: true, status: true },
+  });
+
+  if (!existing) {
+    return null;
+  }
+
+  if (existing.status === "PENDING" || existing.status === "SENDING") {
+    throw new ConflictError(
+      `Cannot resend lab order in ${existing.status} status`,
+      "CONFLICT",
+    );
+  }
+
+  const updated = await client.labOrder.updateMany({
+    where: {
+      shopId,
+      id: labOrderId,
+      status: { in: ["FAILED", "SENT"] },
+    },
     data: {
       status,
       lastErrorCode: null,

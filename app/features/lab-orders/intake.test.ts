@@ -1374,7 +1374,7 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
       expect(fieldNames.map((n) => n.toLowerCase())).not.toContain("rx");
 
       // 2. Structural regex check: no field matches /rx|sph|cyl|axis|add|pd|prism/i except allowed names
-      const allowedRxMatchingFields = new Set(["prescriptionId", "prescription", "rxOutOfLimits", "addOnIds"]);
+      const allowedRxMatchingFields = new Set(["prescriptionId", "prescription", "rxOutOfLimits", "addOnIds", "updatedAt"]);
       const rxRegex = /rx|sph|cyl|axis|add|pd|prism/i;
 
       for (const field of labOrderModel!.fields) {
@@ -1407,6 +1407,7 @@ describe("Spec 23: orders/create webhook → lab orders", () => {
         "providerId",
         "sentAt",
         "createdAt",
+        "updatedAt",
       ];
       expect([...fieldNames].sort()).toEqual([...allowedLabOrderFields].sort());
     });
