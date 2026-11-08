@@ -1,6 +1,6 @@
 # Spec 25 — Compliance and uninstall webhooks
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 02, Spec 06, Spec 07, Spec 08
 **Model:** Heavy — `claude-opus-5-5` · `gpt-6-astra` · `gemini-3.1-pro-preview`
 **Issue:** —
@@ -92,4 +92,4 @@ Real, used now: 02, 06, 07, 08. Tests: fake object store and mailer; real DB and
   - `pnpm vitest run app/features/compliance` → `Test Files  1 passed (1)` / `Tests  11 passed (11)`
   - `pnpm test` → `Test Files  39 passed (39)` / `Tests  571 passed (571)`
   - `pnpm build` exit 0
-- **2026-11-08** — Evidence (orchestro spec verify, tree affc31f9): install pass · typecheck pass · lint pass · build pass · test pass 576/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree eca10444): install pass · typecheck pass · lint pass · build pass · test pass 768/0/0
