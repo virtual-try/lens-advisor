@@ -14,7 +14,7 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | 05 | [Field encryption for prescription data](./05-field-encryption.md) | Done | 01 | Heavy | — | PR #24 |
 | 06 | [S3 storage adapter](./06-s3-storage.md) | Done | 01 | Standard | — | PR #9 |
 | 07 | [Mailer adapter (Resend)](./07-mailer.md) | Done | 01 | Light | — | PR #35 |
-| 08 | [Job queue and worker process (pg-boss)](./08-job-queue.md) | Not started | 01 | Standard | — |  |
+| 08 | [Job queue and worker process (pg-boss)](./08-job-queue.md) | Done | 01 | Standard | — | PR #17 |
 | 09 | [Plan gate (Shopify managed pricing)](./09-plan-gate.md) | Done | 01 | Standard | — | PR #15 |
 | 10 | [Rx parser and validation](./10-rx-parser-validation.md) | Done | 03 | Standard | — | PR #19 |
 | 11 | [Rx limits engine](./11-rx-limits-engine.md) | Done | 03 | Standard | — | PR #23 |
@@ -76,3 +76,4 @@ Not started · In progress · Blocked · Done
 - **2026-11-08** — Spec 12 merged (PR #28).
 - **2026-11-08** — Spec 04 merged (PR #22, merged by the owner on GitHub after the commit-author refusal).
 - **2026-11-08** — Spec 14 merged (PR #31).
+- **2026-11-08** — Spec 08 merged (PR #17).
