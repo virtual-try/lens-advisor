@@ -148,6 +148,9 @@ export class Queue {
    * older deploy fails the job loudly instead of reaching the handler.
    */
   async work(definition: AnyJobDefinition): Promise<string> {
+    if (!definition.handler) {
+      throw new JobDefinitionError(`Cannot work job "${definition.name}" without a handler`);
+    }
     await this.register(definition);
 
     return this.boss.work(

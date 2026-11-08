@@ -27,17 +27,30 @@ export interface JobDefinition<
   readonly __jobDefinition: true;
   readonly name: string;
   readonly schema: TSchema;
-  readonly handler: JobHandler<TPayload>;
+  readonly handler?: JobHandler<TPayload>;
   readonly retry: Readonly<Required<Pick<RetryOptions, "retryLimit" | "retryDelay" | "retryBackoff">>>;
   readonly allowStringFields: readonly string[];
 }
 
+export interface JobDefinitionWithHandler<
+  TSchema extends z.ZodTypeAny = z.ZodTypeAny,
+  TPayload = z.infer<TSchema>,
+> extends JobDefinition<TSchema, TPayload> {
+  readonly handler: JobHandler<TPayload>;
+}
+
+export interface JobDefinitionWithoutHandler<
+  TSchema extends z.ZodTypeAny = z.ZodTypeAny,
+  TPayload = z.infer<TSchema>,
+> extends JobDefinition<TSchema, TPayload> {
+  readonly handler?: undefined;
+}
+
 export type AnyJobDefinition = JobDefinition<z.ZodTypeAny, never>;
 
-export interface DefineJobOptions<TSchema extends z.ZodTypeAny> {
+export interface DefineJobOptionsBase<TSchema extends z.ZodTypeAny> {
   name: string;
   schema: TSchema;
-  handler: JobHandler<z.infer<TSchema>>;
   retry?: RetryOptions;
   /**
    * Field names that may hold strings or numbers even though they do not end in Id/Ids/Key/Keys.
@@ -45,6 +58,20 @@ export interface DefineJobOptions<TSchema extends z.ZodTypeAny> {
    */
   allowStringFields?: readonly string[];
 }
+
+export interface DefineJobOptionsWithHandler<TSchema extends z.ZodTypeAny>
+  extends DefineJobOptionsBase<TSchema> {
+  handler: JobHandler<z.infer<TSchema>>;
+}
+
+export interface DefineJobOptionsWithoutHandler<TSchema extends z.ZodTypeAny>
+  extends DefineJobOptionsBase<TSchema> {
+  handler?: undefined;
+}
+
+export type DefineJobOptions<TSchema extends z.ZodTypeAny> =
+  | DefineJobOptionsWithHandler<TSchema>
+  | DefineJobOptionsWithoutHandler<TSchema>;
 
 export class JobDefinitionError extends Error {
   constructor(message: string) {
@@ -363,11 +390,24 @@ export function registerJob(definition: AnyJobDefinition): void {
   }
   const existing = registry.get(definition.name);
   if (existing && existing !== definition) {
+    if (!existing.handler && definition.handler) {
+      registry.set(definition.name, definition);
+      return;
+    }
     throw new JobDefinitionError(`Duplicate job definition for "${definition.name}"`);
   }
   registry.set(definition.name, definition);
 }
 
+export function defineJob<TSchema extends z.ZodTypeAny>(
+  options: DefineJobOptionsWithHandler<TSchema>
+): JobDefinitionWithHandler<TSchema>;
+export function defineJob<TSchema extends z.ZodTypeAny>(
+  options: DefineJobOptionsWithoutHandler<TSchema>
+): JobDefinitionWithoutHandler<TSchema>;
+export function defineJob<TSchema extends z.ZodTypeAny>(
+  options: DefineJobOptions<TSchema>
+): JobDefinition<TSchema>;
 export function defineJob<TSchema extends z.ZodTypeAny>(
   options: DefineJobOptions<TSchema>
 ): JobDefinition<TSchema> {
