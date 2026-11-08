@@ -1312,6 +1312,196 @@ describe("Spec 18 — Admin: lens groups and lenses", () => {
       expect(lenses.length).toBe(1);
       expect(lenses[0].rxTypes).toEqual(["NON_PRESCRIPTION"]);
     }, DB_TIMEOUT_MS);
+
+    it("leaves lens active and retryable when Shopify drafting fails during archive in both routes (R3-F1)", async () => {
+      const shopDomain = "archive-failure-r3f1.myshopify.com";
+      const shopId = await createShop(shopDomain);
+      mocks.currentShop = shopDomain;
+
+      const repo = createCatalogRepository(getTestPrisma());
+      const service = createCatalogService({ prisma: getTestPrisma() });
+      const group = await repo.createLensGroup(shopId, { name: "R3-F1 Group" });
+
+      const lens1 = await repo.createLens(shopId, {
+        groupId: group.id,
+        name: "List Route Failure Lens",
+        priceMinor: 5000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -200,
+        sphMax: 200,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "PO-F1-01",
+        shopifyProductId: "gid://shopify/Product/101",
+        shopifyVariantId: "gid://shopify/ProductVariant/201",
+      });
+
+      const lens2 = await repo.createLens(shopId, {
+        groupId: group.id,
+        name: "Edit Route Failure Lens",
+        priceMinor: 6000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -200,
+        sphMax: 200,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "PO-F1-02",
+        shopifyProductId: "gid://shopify/Product/102",
+        shopifyVariantId: "gid://shopify/ProductVariant/202",
+      });
+
+      // Mock admin GraphQL: productUpdate fails
+      const originalAdminGraphql = mocks.adminGraphql.getMockImplementation();
+      mocks.adminGraphql.mockImplementation(async (query: string, vars?: Record<string, unknown>) => {
+        if (query.includes("productUpdate")) {
+          return new Response(
+            JSON.stringify({
+              data: {
+                productUpdate: {
+                  product: null,
+                  userErrors: [{ message: "Shopify drafting failed", field: ["status"] }],
+                },
+              },
+            }),
+            { status: 200 },
+          );
+        }
+        return originalAdminGraphql?.(query, vars);
+      });
+
+      // 1. Test failure path in listAction (app/routes/app.lenses._index.tsx)
+      const listReq = new Request("https://app.test/app/lenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: "archive-lens", lensId: lens1.id }),
+      });
+      const listRes = await listAction(createActionArgs(listReq));
+      const listUnwrapped = await unwrapResponse<{ error: { code: string; message: string } }>(listRes);
+      expect(listUnwrapped.status).toBe(400);
+
+      // Verify DB row has no archivedAt set (still active)
+      const rawLens1 = await repo.getLens(shopId, lens1.id);
+      expect(rawLens1?.archivedAt).toBeNull();
+
+      // Verify lens1 is still listed in active groups
+      const groupsAfterListFail = await service.listLensGroups(shopId, { includeArchived: false });
+      expect(groupsAfterListFail[0].lenses.some((l) => l.id === lens1.id)).toBe(true);
+
+      // Verify retryable (retry does not return 404)
+      const retryListRes = await listAction(createActionArgs(listReq));
+      const retryListUnwrapped = await unwrapResponse<{ error: { code: string; message: string } }>(retryListRes);
+      expect(retryListUnwrapped.status).toBe(400); // Fails with sync error, NOT 404 NotFound
+
+      // 2. Test failure path in lensAction (app/routes/app.lenses.$id.tsx)
+      const editReq = new Request(`https://app.test/app/lenses/${lens2.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: "archive" }),
+      });
+      const editRes = await lensAction(createActionArgs(editReq, { id: lens2.id }));
+      const editUnwrapped = await unwrapResponse<{ error: { code: string; message: string } }>(editRes);
+      expect(editUnwrapped.status).toBe(400);
+
+      // Verify DB row has no archivedAt set (still active)
+      const rawLens2 = await repo.getLens(shopId, lens2.id);
+      expect(rawLens2?.archivedAt).toBeNull();
+
+      // Verify lens2 is still listed in active groups
+      const groupsAfterEditFail = await service.listLensGroups(shopId, { includeArchived: false });
+      expect(groupsAfterEditFail[0].lenses.some((l) => l.id === lens2.id)).toBe(true);
+
+      // Verify retryable (retry does not return 404)
+      const retryEditRes = await lensAction(createActionArgs(editReq, { id: lens2.id }));
+      const retryEditUnwrapped = await unwrapResponse<{ error: { code: string; message: string } }>(retryEditRes);
+      expect(retryEditUnwrapped.status).toBe(400); // Fails with sync error, NOT 404 NotFound
+
+      if (originalAdminGraphql) {
+        mocks.adminGraphql.mockImplementation(originalAdminGraphql);
+      }
+    }, DB_TIMEOUT_MS);
+
+    it("archives lens from edit action independently of failing shop currency query (R3-F2)", async () => {
+      const shopDomain = "archive-currency-fail-r3f2.myshopify.com";
+      const shopId = await createShop(shopDomain);
+      mocks.currentShop = shopDomain;
+
+      const repo = createCatalogRepository(getTestPrisma());
+      const service = createCatalogService({ prisma: getTestPrisma() });
+      const group = await repo.createLensGroup(shopId, { name: "R3-F2 Group" });
+
+      const lens = await repo.createLens(shopId, {
+        groupId: group.id,
+        name: "Currency Independent Lens",
+        priceMinor: 4500,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -100,
+        sphMax: 100,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "PO-F2-01",
+        shopifyProductId: "gid://shopify/Product/103",
+        shopifyVariantId: "gid://shopify/ProductVariant/203",
+      });
+
+      // Mock ShopCurrency GraphQL to fail
+      const originalAdminGraphql = mocks.adminGraphql.getMockImplementation();
+      mocks.adminGraphql.mockImplementation(async (query: string, vars?: Record<string, unknown>) => {
+        if (query.includes("ShopCurrency")) {
+          return new Response(
+            JSON.stringify({ errors: [{ message: "Currency query service down" }] }),
+            { status: 200 },
+          );
+        }
+        return originalAdminGraphql?.(query, vars);
+      });
+
+      // 1. Archiving from edit page should succeed (does not require currency)
+      const archiveReq = new Request(`https://app.test/app/lenses/${lens.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: "archive" }),
+      });
+      const archiveRes = await lensAction(createActionArgs(archiveReq, { id: lens.id }));
+      const unwrappedArchive = await unwrapResponse(archiveRes);
+      expect(unwrappedArchive.status).toBe(302);
+
+      // Verify lens was archived in DB
+      const rawLens = await repo.getLens(shopId, lens.id);
+      expect(rawLens?.archivedAt).not.toBeNull();
+
+      // Verify lens is removed from active catalog
+      const activeGroups = await service.listLensGroups(shopId, { includeArchived: false });
+      expect(activeGroups[0].lenses.some((l) => l.id === lens.id)).toBe(false);
+
+      // 2. Saving on edit page still requires currency and fails with CURRENCY_FETCH_FAILED
+      const saveReq = new Request("https://app.test/app/lenses/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent: "save",
+          groupId: group.id,
+          name: "New Lens With Failing Currency",
+          price: "50.00",
+          sphMin: "-2.00",
+          sphMax: "+2.00",
+          cylMin: "0.00",
+          cylMax: "0.00",
+          rxTypes: ["SINGLE_VISION"],
+          labCodeTemplate: "PO-TEST",
+        }),
+      });
+      const saveRes = await lensAction(createActionArgs(saveReq, { id: "new" }));
+      const unwrappedSave = await unwrapResponse<{ error: { code: string } }>(saveRes);
+      expect(unwrappedSave.status).toBe(400);
+      expect(unwrappedSave.data.error.code).toBe("CURRENCY_FETCH_FAILED");
+
+      if (originalAdminGraphql) {
+        mocks.adminGraphql.mockImplementation(originalAdminGraphql);
+      }
+    }, DB_TIMEOUT_MS);
   });
 
   describe("UI Checklist & List States", () => {

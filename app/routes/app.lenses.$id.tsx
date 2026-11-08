@@ -254,34 +254,6 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
   }
 
-  // Derive currency server-side from shop's currency; never trust form data (R2-F2)
-  let shopCurrency: string | undefined;
-  try {
-    const currencyRes = await admin.graphql(SHOP_CURRENCY_QUERY);
-    if (currencyRes.ok) {
-      const currencyJson = (await currencyRes.json()) as {
-        data?: { shop?: { currencyCode?: string } };
-        errors?: unknown[];
-      };
-      const code = currencyJson?.data?.shop?.currencyCode;
-      if (!currencyJson.errors?.length && typeof code === "string" && code.trim().length === 3) {
-        shopCurrency = code.trim().toUpperCase();
-      }
-    }
-  } catch {
-    // network or admin api failure
-  }
-
-  if (!shopCurrency) {
-    return errorResponse(
-      new BadRequestError(
-        "Failed to retrieve shop currency from Shopify",
-        "CURRENCY_FETCH_FAILED",
-        [{ path: "currency", code: "CURRENCY_FETCH_FAILED" }],
-      ),
-    );
-  }
-
   const intent = typeof rawData.intent === "string" ? rawData.intent : "save";
   const id = params.id;
 
@@ -309,8 +281,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         return errorResponse(new NotFoundError("Lens not found"));
       }
 
-      await archiveLens(shop.id, id);
       await archiveItem(admin, shop.id, "lens", id);
+      await archiveLens(shop.id, id);
       return redirect("/app/lenses");
     }
 
@@ -362,6 +334,34 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       const targetGroup = await getLensGroup(shop.id, lensData.groupId);
       if (!targetGroup || targetGroup.archivedAt) {
         return errorResponse(new NotFoundError("Lens group not found"));
+      }
+
+      // Derive currency server-side from shop's currency; never trust form data (R2-F2, R3-F2)
+      let shopCurrency: string | undefined;
+      try {
+        const currencyRes = await admin.graphql(SHOP_CURRENCY_QUERY);
+        if (currencyRes.ok) {
+          const currencyJson = (await currencyRes.json()) as {
+            data?: { shop?: { currencyCode?: string } };
+            errors?: unknown[];
+          };
+          const code = currencyJson?.data?.shop?.currencyCode;
+          if (!currencyJson.errors?.length && typeof code === "string" && code.trim().length === 3) {
+            shopCurrency = code.trim().toUpperCase();
+          }
+        }
+      } catch {
+        // network or admin api failure
+      }
+
+      if (!shopCurrency) {
+        return errorResponse(
+          new BadRequestError(
+            "Failed to retrieve shop currency from Shopify",
+            "CURRENCY_FETCH_FAILED",
+            [{ path: "currency", code: "CURRENCY_FETCH_FAILED" }],
+          ),
+        );
       }
 
       const name = lensData.name.trim();
@@ -565,7 +565,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     if (error instanceof AppError) {
       return errorResponse(error);
     }
-    throw error;
+    return errorResponse(error);
   }
 };
 

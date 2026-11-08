@@ -274,8 +274,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return errorResponse(new NotFoundError("Lens not found"));
       }
 
-      await archiveLens(shop.id, lensId);
       await archiveItem(admin, shop.id, "lens", lensId);
+      await archiveLens(shop.id, lensId);
       return data({ ok: true, archivedLensId: lensId });
     }
 
@@ -412,7 +412,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (error instanceof AppError) {
       return errorResponse(error);
     }
-    throw error;
+    return errorResponse(error);
   }
 };
 
