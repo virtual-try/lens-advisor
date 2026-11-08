@@ -1,6 +1,6 @@
 # Spec 29 — Configurator step 7: review and add to cart (nested lines)
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 13, Spec 16, Spec 28
 **Model:** Heavy — `claude-opus-5-5` · `gpt-6-astra` · `gemini-3.1-pro-preview`
 **Issue:** —
