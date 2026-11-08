@@ -1,0 +1,1103 @@
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { createTestDb, seedShop, type TestDb } from "../../../test/db";
+import { BadRequestError, NotFoundError } from "../../shared/http/errors.server";
+import {
+  createCatalogService,
+  type CatalogService,
+} from "../catalog/catalog.service.server";
+import { SyncError } from "./errors";
+import { archiveItem, syncItem } from "./product-sync.server";
+import type { ProductSyncAdminClient, SyncEntity } from "./types";
+
+interface ProductCreateVariables {
+  product?: {
+    title?: string;
+    vendor?: string;
+    tags?: string[];
+    status?: string;
+    metafields?: Array<{
+      namespace: string;
+      key: string;
+      value: string;
+      type: string;
+    }>;
+  };
+}
+
+interface ProductVariantsBulkUpdateVariables {
+  productId?: string;
+  variants?: Array<{
+    id?: string;
+    price?: string;
+    inventoryItem?: {
+      tracked?: boolean;
+    };
+  }>;
+}
+
+interface ProductUpdateVariables {
+  product?: {
+    id?: string;
+    status?: string;
+  };
+}
+
+interface FakeAdminOptions {
+  shopCurrency?: string;
+  createProductUserErrors?: Array<{ field?: string[]; message: string }>;
+  variantBulkUpdateUserErrors?: Array<{ field?: string[]; message: string }>;
+  publishUserErrors?: Array<{ field?: string[]; message: string }>;
+  productUpdateUserErrors?: Array<{ field?: string[]; message: string }>;
+  topLevelErrors?: Array<{ message: string }>;
+  customHandler?: (
+    query: string,
+    variables?: Record<string, unknown>,
+  ) => Response | undefined;
+}
+
+function createFakeAdminClient(options: FakeAdminOptions = {}) {
+  const calls: Array<{ query: string; variables?: Record<string, unknown> }> = [];
+  const shopCurrency = options.shopCurrency ?? "USD";
+
+  let createdProductCounter = 1;
+  let createdVariantCounter = 10;
+
+  const graphql = vi.fn(async (query: string, init?: { variables?: Record<string, unknown> }) => {
+    calls.push({ query, variables: init?.variables });
+
+    if (options.customHandler) {
+      const customRes = options.customHandler(query, init?.variables);
+      if (customRes) return customRes;
+    }
+
+    if (options.topLevelErrors && options.topLevelErrors.length > 0) {
+      return new Response(
+        JSON.stringify({
+          errors: options.topLevelErrors,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // 1. Shop currency
+    if (query.includes("ShopCurrency")) {
+      return new Response(
+        JSON.stringify({
+          data: {
+            shop: {
+              currencyCode: shopCurrency,
+            },
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // 2. Publications
+    if (query.includes("GetPublications")) {
+      return new Response(
+        JSON.stringify({
+          data: {
+            publications: {
+              nodes: [
+                {
+                  id: "gid://shopify/Publication/999",
+                  name: "Online Store",
+                },
+              ],
+            },
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // 3. Variant product lookup
+    if (query.includes("GetVariantProduct")) {
+      const variantId = (init?.variables?.id as string) ?? "gid://shopify/ProductVariant/unknown";
+      return new Response(
+        JSON.stringify({
+          data: {
+            productVariant: {
+              id: variantId,
+              product: {
+                id: "gid://shopify/Product/derived-from-variant",
+              },
+            },
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // 4. Product create
+    if (query.includes("ProductCreate")) {
+      if (options.createProductUserErrors && options.createProductUserErrors.length > 0) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              productCreate: {
+                product: null,
+                userErrors: options.createProductUserErrors,
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const pId = `gid://shopify/Product/${createdProductCounter++}`;
+      const vId = `gid://shopify/ProductVariant/${createdVariantCounter++}`;
+      const vars = (init?.variables ?? {}) as ProductCreateVariables;
+      return new Response(
+        JSON.stringify({
+          data: {
+            productCreate: {
+              product: {
+                id: pId,
+                title: vars.product?.title ?? "Test Title",
+                status: "ACTIVE",
+                variants: {
+                  nodes: [{ id: vId, price: "0.00" }],
+                },
+              },
+              userErrors: [],
+            },
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // 5. Product variants bulk update
+    if (query.includes("ProductVariantsBulkUpdate")) {
+      if (options.variantBulkUpdateUserErrors && options.variantBulkUpdateUserErrors.length > 0) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              productVariantsBulkUpdate: {
+                productVariants: [],
+                userErrors: options.variantBulkUpdateUserErrors,
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const vars = (init?.variables ?? {}) as ProductVariantsBulkUpdateVariables;
+      const variants = vars.variants ?? [];
+      return new Response(
+        JSON.stringify({
+          data: {
+            productVariantsBulkUpdate: {
+              productVariants: variants.map((v) => ({
+                id: v.id ?? "gid://shopify/ProductVariant/unknown",
+                price: v.price ?? "0.00",
+              })),
+              userErrors: [],
+            },
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // 6. Publishable publish
+    if (query.includes("PublishablePublish")) {
+      if (options.publishUserErrors && options.publishUserErrors.length > 0) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              publishablePublish: {
+                userErrors: options.publishUserErrors,
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          data: {
+            publishablePublish: {
+              publishable: {
+                availablePublicationsCount: { count: 1 },
+              },
+              userErrors: [],
+            },
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // 7. Product update (archive to draft)
+    if (query.includes("ProductUpdate")) {
+      if (options.productUpdateUserErrors && options.productUpdateUserErrors.length > 0) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              productUpdate: {
+                product: null,
+                userErrors: options.productUpdateUserErrors,
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const vars = (init?.variables ?? {}) as ProductUpdateVariables;
+      return new Response(
+        JSON.stringify({
+          data: {
+            productUpdate: {
+              product: {
+                id: vars.product?.id ?? "gid://shopify/Product/1",
+                status: vars.product?.status ?? "DRAFT",
+              },
+              userErrors: [],
+            },
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    throw new Error(`Unhandled GraphQL query: ${query}`);
+  });
+
+  const admin = { graphql } as unknown as ProductSyncAdminClient;
+
+  return {
+    admin,
+    graphql,
+    calls,
+    countCalls(keyword: string) {
+      return calls.filter((c) => c.query.includes(keyword)).length;
+    },
+    findCall(keyword: string) {
+      return calls.find((c) => c.query.includes(keyword));
+    },
+  };
+}
+
+describe("Shopify Product Sync (DB-backed)", { timeout: 60_000 }, () => {
+  let db: TestDb;
+  let service: CatalogService;
+  let shopA: string;
+  let shopB: string;
+
+  beforeAll(async () => {
+    db = await createTestDb();
+    service = createCatalogService({ prisma: db.prisma });
+
+    const sA = await seedShop(db.prisma, "sync-shop-a.myshopify.com");
+    const sB = await seedShop(db.prisma, "sync-shop-b.myshopify.com");
+    shopA = sA.shopId;
+    shopB = sB.shopId;
+  });
+
+  afterAll(async () => {
+    await db.drop();
+  });
+
+  // =========================================================================
+  // Spec 17 Examples Table Rows
+  // =========================================================================
+
+  describe("Spec 17 Examples Table", () => {
+    it("Example 1: new lens, price 8000 USD -> productCreate + variant price '80.00', markSynced called", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const groupId = groups[0].id;
+
+      const lens = await service.createLens(shopA, {
+        groupId,
+        name: "Standard SV 1.50",
+        priceMinor: 8000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -600,
+        sphMax: 400,
+        cylMin: -200,
+        cylMax: 0,
+        labCodeTemplate: "SV-150",
+      });
+
+      const fake = createFakeAdminClient({ shopCurrency: "USD" });
+
+      const result = await syncItem(fake.admin, shopA, "lens", lens.id, {
+        catalogService: service,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.created).toBe(true);
+      expect(result.productId).toBeDefined();
+      expect(result.variantId).toBeDefined();
+
+      // productCreate called with title, vendor, tags, seo.hidden metafield
+      expect(fake.countCalls("ProductCreate")).toBe(1);
+      const createCall = fake.findCall("ProductCreate");
+      const vars = (createCall?.variables ?? {}) as ProductCreateVariables;
+      const productInput = vars.product;
+      expect(productInput?.title).toBe("Lens: Standard SV 1.50");
+      expect(productInput?.vendor).toBe("Lens Advisor");
+      expect(productInput?.tags).toEqual(["lens-advisor-item"]);
+      expect(productInput?.status).toBe("ACTIVE");
+      expect(productInput?.metafields).toEqual([
+        {
+          namespace: "seo",
+          key: "hidden",
+          value: "1",
+          type: "integer",
+        },
+      ]);
+
+      // variant update called with variant price "80.00" and inventory not tracked
+      expect(fake.countCalls("ProductVariantsBulkUpdate")).toBe(1);
+      const updateCall = fake.findCall("ProductVariantsBulkUpdate");
+      const updateVars = (updateCall?.variables ?? {}) as ProductVariantsBulkUpdateVariables;
+      const variantsInput = updateVars.variants;
+      expect(variantsInput).toEqual([
+        {
+          id: result.variantId,
+          price: "80.00",
+          inventoryItem: {
+            tracked: false,
+          },
+        },
+      ]);
+
+      // published to Online Store channel
+      expect(fake.countCalls("PublishablePublish")).toBe(1);
+
+      // markSynced called -> verify DB row has shopifyVariantId and shopifyProductId
+      const updatedLens = await service.getLens(shopA, lens.id);
+      expect(updatedLens.shopifyVariantId).toBe(result.variantId);
+      expect(updatedLens.shopifyProductId).toBe(result.productId);
+    });
+
+    it("Example 2: same lens saved again with 9000 -> variant update only, no create (idempotent)", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const groupId = groups[0].id;
+
+      // 1. Initial creation and sync
+      const lens = await service.createLens(shopA, {
+        groupId,
+        name: "Premium Progressive 1.67",
+        priceMinor: 8000,
+        currency: "USD",
+        rxTypes: ["PROGRESSIVE"],
+        sphMin: -800,
+        sphMax: 600,
+        cylMin: -400,
+        cylMax: 0,
+        labCodeTemplate: "PROG-167",
+      });
+
+      const fake1 = createFakeAdminClient({ shopCurrency: "USD" });
+      const firstSync = await syncItem(fake1.admin, shopA, "lens", lens.id, {
+        catalogService: service,
+      });
+      expect(firstSync.created).toBe(true);
+
+      // 2. Lens price updated to 9000 in DB
+      await service.updateLens(shopA, lens.id, {
+        priceMinor: 9000,
+      });
+
+      // 3. Sync again
+      const fake2 = createFakeAdminClient({ shopCurrency: "USD" });
+      const secondSync = await syncItem(fake2.admin, shopA, "lens", lens.id, {
+        catalogService: service,
+      });
+
+      expect(secondSync.ok).toBe(true);
+      expect(secondSync.updated).toBe(true);
+      expect(secondSync.created).toBeFalsy();
+
+      // No productCreate on second sync!
+      expect(fake2.countCalls("ProductCreate")).toBe(0);
+
+      // Variant update only, with new price "90.00"
+      expect(fake2.countCalls("ProductVariantsBulkUpdate")).toBe(1);
+      const updateCall = fake2.findCall("ProductVariantsBulkUpdate");
+      const updateVars = (updateCall?.variables ?? {}) as ProductVariantsBulkUpdateVariables;
+      const variantsInput = updateVars.variants;
+      expect(variantsInput).toEqual([
+        {
+          id: firstSync.variantId,
+          price: "90.00",
+          inventoryItem: {
+            tracked: false,
+          },
+        },
+      ]);
+    });
+
+    it("Example 3: option value delta 0 -> no product; no variant id (zero price)", async () => {
+      const optGroup = await service.createOptionGroup(shopA, {
+        name: "Lens Material",
+        kind: "MATERIAL",
+      });
+
+      const optVal = await service.createOptionValue(shopA, {
+        optionGroupId: optGroup.id,
+        label: "CR-39 Standard Plastic",
+        priceDeltaMinor: 0,
+        currency: "USD",
+        tokenKey: "material",
+        tokenValue: "CR39",
+      });
+
+      const fake = createFakeAdminClient({ shopCurrency: "USD" });
+      const result = await syncItem(fake.admin, shopA, "optionValue", optVal.id, {
+        catalogService: service,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.skipped).toBe(true);
+      expect(fake.calls.length).toBe(0);
+
+      // In DB: no variant id assigned
+      const checkVal = await service.getOptionValue(shopA, optVal.id);
+      expect(checkVal.shopifyVariantId).toBeNull();
+    });
+
+    it("Example 4: option delta 0 -> 1500 -> product created (becomes priced)", async () => {
+      const optGroup = await service.createOptionGroup(shopA, {
+        name: "Coating",
+        kind: "MATERIAL",
+      });
+
+      const optVal = await service.createOptionValue(shopA, {
+        optionGroupId: optGroup.id,
+        label: "Anti-Reflective Coating",
+        priceDeltaMinor: 0,
+        currency: "USD",
+        tokenKey: "coating",
+        tokenValue: "AR",
+      });
+
+      // Becomes priced to 1500 USD
+      await service.updateOptionValue(shopA, optVal.id, {
+        priceDeltaMinor: 1500,
+      });
+
+      const fake = createFakeAdminClient({ shopCurrency: "USD" });
+      const result = await syncItem(fake.admin, shopA, "optionValue", optVal.id, {
+        catalogService: service,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.created).toBe(true);
+      expect(result.variantId).toBeDefined();
+
+      // Product created with "Option: Anti-Reflective Coating"
+      expect(fake.countCalls("ProductCreate")).toBe(1);
+      const createCall = fake.findCall("ProductCreate");
+      const vars = (createCall?.variables ?? {}) as ProductCreateVariables;
+      expect(vars.product?.title).toBe("Option: Anti-Reflective Coating");
+
+      // Variant price set to "15.00"
+      expect(fake.countCalls("ProductVariantsBulkUpdate")).toBe(1);
+      const updateCall = fake.findCall("ProductVariantsBulkUpdate");
+      const updateVars = (updateCall?.variables ?? {}) as ProductVariantsBulkUpdateVariables;
+      expect(updateVars.variants?.[0]?.price).toBe("15.00");
+
+      // In DB: variant id saved
+      const updatedVal = await service.getOptionValue(shopA, optVal.id);
+      expect(updatedVal.shopifyVariantId).toBe(result.variantId);
+    });
+
+    it("Example 5: archived lens -> product set to DRAFT", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const groupId = groups[0].id;
+
+      // Create and sync lens
+      const lens = await service.createLens(shopA, {
+        groupId,
+        name: "Lens To Archive",
+        priceMinor: 5000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -400,
+        sphMax: 200,
+        cylMin: -200,
+        cylMax: 0,
+        labCodeTemplate: "ARCH-1",
+      });
+
+      const fake1 = createFakeAdminClient({ shopCurrency: "USD" });
+      const syncRes = await syncItem(fake1.admin, shopA, "lens", lens.id, {
+        catalogService: service,
+      });
+
+      // Archive in DB
+      await service.archiveLens(shopA, lens.id);
+
+      // Now call archiveItem
+      const fake2 = createFakeAdminClient({ shopCurrency: "USD" });
+      const archiveRes = await archiveItem(fake2.admin, shopA, "lens", lens.id, {
+        catalogService: service,
+      });
+
+      expect(archiveRes.ok).toBe(true);
+      expect(archiveRes.archived).toBe(true);
+      expect(archiveRes.status).toBe("DRAFT");
+      expect(archiveRes.productId).toBe(syncRes.productId);
+
+      // ProductUpdate called with status DRAFT
+      expect(fake2.countCalls("ProductUpdate")).toBe(1);
+      const updateCall = fake2.findCall("ProductUpdate");
+      const updateVars = (updateCall?.variables ?? {}) as ProductUpdateVariables;
+      expect(updateVars.product).toEqual({
+        id: syncRes.productId,
+        status: "DRAFT",
+      });
+    });
+
+    it("Example 6: GraphQL userErrors -> SyncError with the Shopify message; catalog row unchanged", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const groupId = groups[0].id;
+
+      const lens = await service.createLens(shopA, {
+        groupId,
+        name: "Lens With Failing Sync",
+        priceMinor: 6000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -400,
+        sphMax: 200,
+        cylMin: -200,
+        cylMax: 0,
+        labCodeTemplate: "FAIL-1",
+      });
+
+      const fake = createFakeAdminClient({
+        shopCurrency: "USD",
+        createProductUserErrors: [
+          {
+            field: ["title"],
+            message: "Title exceeds maximum length of 255 characters",
+          },
+        ],
+      });
+
+      await expect(
+        syncItem(fake.admin, shopA, "lens", lens.id, {
+          catalogService: service,
+        }),
+      ).rejects.toThrow(
+        new SyncError("Title exceeds maximum length of 255 characters"),
+      );
+
+      // DB row unchanged! shopifyVariantId and shopifyProductId must still be null
+      const row = await service.getLens(shopA, lens.id);
+      expect(row.shopifyVariantId).toBeNull();
+      expect(row.shopifyProductId).toBeNull();
+    });
+  });
+
+  // =========================================================================
+  // Invariant INV-1: Multi-shop tenant isolation
+  // =========================================================================
+
+  describe("INV-1: Shop isolation", () => {
+    it("sync for shop B with shop A's lens throws NotFoundError and leaves row untouched", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const lensA = await service.createLens(shopA, {
+        groupId: groups[0].id,
+        name: "Shop A Private Lens",
+        priceMinor: 7500,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -300,
+        sphMax: 300,
+        cylMin: -100,
+        cylMax: 0,
+        labCodeTemplate: "SHOP-A",
+      });
+
+      const fake = createFakeAdminClient({ shopCurrency: "USD" });
+
+      // Shop B attempts to sync Shop A's lens
+      await expect(
+        syncItem(fake.admin, shopB, "lens", lensA.id, {
+          catalogService: service,
+        }),
+      ).rejects.toThrow(NotFoundError);
+
+      // Fake client recorded zero Shopify mutations
+      expect(fake.countCalls("ProductCreate")).toBe(0);
+
+      // Shop A row remains untouched
+      const checkLens = await service.getLens(shopA, lensA.id);
+      expect(checkLens.shopifyVariantId).toBeNull();
+      expect(checkLens.shopifyProductId).toBeNull();
+    });
+
+    it("sync for shop B with shop A's option value throws NotFoundError and leaves row untouched", async () => {
+      const groupA = await service.createOptionGroup(shopA, {
+        name: "Shop A Tint Group",
+        kind: "TINT_TYPE",
+      });
+      const valA = await service.createOptionValue(shopA, {
+        optionGroupId: groupA.id,
+        label: "Shop A Polarized Grey",
+        priceDeltaMinor: 2000,
+        currency: "USD",
+      });
+
+      const fake = createFakeAdminClient({ shopCurrency: "USD" });
+
+      await expect(
+        syncItem(fake.admin, shopB, "optionValue", valA.id, {
+          catalogService: service,
+        }),
+      ).rejects.toThrow(NotFoundError);
+
+      expect(fake.calls.length).toBe(0);
+
+      const checkVal = await service.getOptionValue(shopA, valA.id);
+      expect(checkVal.shopifyVariantId).toBeNull();
+    });
+
+    it("sync for shop B with shop A's add-on throws NotFoundError and leaves row untouched", async () => {
+      const addOnA = await service.createAddOn(shopA, {
+        name: "Shop A Cleaning Cloth",
+        priceMinor: 500,
+        currency: "USD",
+      });
+
+      const fake = createFakeAdminClient({ shopCurrency: "USD" });
+
+      await expect(
+        syncItem(fake.admin, shopB, "addOn", addOnA.id, {
+          catalogService: service,
+        }),
+      ).rejects.toThrow(NotFoundError);
+
+      expect(fake.calls.length).toBe(0);
+
+      const checkAddOn = await service.getAddOn(shopA, addOnA.id);
+      expect(checkAddOn.shopifyVariantId).toBeNull();
+      expect(checkAddOn.shopifyProductId).toBeNull();
+    });
+
+    it("archiveItem for shop B with shop A's lens throws NotFoundError and leaves row untouched", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const lensA = await service.createLens(shopA, {
+        groupId: groups[0].id,
+        name: "Shop A Archiving Lens",
+        priceMinor: 4000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -200,
+        sphMax: 200,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "ARCH-A",
+      });
+
+      const fake = createFakeAdminClient({ shopCurrency: "USD" });
+
+      await expect(
+        archiveItem(fake.admin, shopB, "lens", lensA.id, {
+          catalogService: service,
+        }),
+      ).rejects.toThrow(NotFoundError);
+
+      expect(fake.countCalls("ProductUpdate")).toBe(0);
+    });
+  });
+
+  // =========================================================================
+  // Invariant INV-4 & Currency Handling (JPY, KWD, USD, EUR)
+  // =========================================================================
+
+  describe("INV-4: Currencies and integer decimal conversion", () => {
+    it("handles 0-decimal currency JPY: 1500 JPY -> '1500'", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const lens = await service.createLens(shopA, {
+        groupId: groups[0].id,
+        name: "Tokyo SV 1.56",
+        priceMinor: 1500,
+        currency: "JPY",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -600,
+        sphMax: 400,
+        cylMin: -200,
+        cylMax: 0,
+        labCodeTemplate: "TYO-156",
+      });
+
+      const fake = createFakeAdminClient({ shopCurrency: "JPY" });
+      const result = await syncItem(fake.admin, shopA, "lens", lens.id, {
+        catalogService: service,
+      });
+
+      expect(result.ok).toBe(true);
+      const updateCall = fake.findCall("ProductVariantsBulkUpdate");
+      const updateVars = (updateCall?.variables ?? {}) as ProductVariantsBulkUpdateVariables;
+      const variantPrice = updateVars.variants?.[0]?.price;
+      expect(variantPrice).toBe("1500");
+    });
+
+    it("handles 3-decimal currency KWD: 1500 KWD -> '1.500'", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const lens = await service.createLens(shopA, {
+        groupId: groups[0].id,
+        name: "Kuwait Hi-Index 1.74",
+        priceMinor: 1500,
+        currency: "KWD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -800,
+        sphMax: 600,
+        cylMin: -400,
+        cylMax: 0,
+        labCodeTemplate: "KWD-174",
+      });
+
+      const fake = createFakeAdminClient({ shopCurrency: "KWD" });
+      const result = await syncItem(fake.admin, shopA, "lens", lens.id, {
+        catalogService: service,
+      });
+
+      expect(result.ok).toBe(true);
+      const updateCall = fake.findCall("ProductVariantsBulkUpdate");
+      const updateVars = (updateCall?.variables ?? {}) as ProductVariantsBulkUpdateVariables;
+      const variantPrice = updateVars.variants?.[0]?.price;
+      expect(variantPrice).toBe("1.500");
+    });
+
+    it("throws CURRENCY_MISMATCH when item currency does not match shop currency", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const lens = await service.createLens(shopA, {
+        groupId: groups[0].id,
+        name: "Euro Lens in USD Store",
+        priceMinor: 5000,
+        currency: "EUR",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -200,
+        sphMax: 200,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "EUR-1",
+      });
+
+      const fake = createFakeAdminClient({ shopCurrency: "USD" });
+
+      const err = await syncItem(fake.admin, shopA, "lens", lens.id, {
+        catalogService: service,
+      }).catch((e) => e);
+
+      expect(err).toBeInstanceOf(SyncError);
+      expect((err as SyncError).code).toBe("CURRENCY_MISMATCH");
+
+      // No product created and row unchanged
+      expect(fake.countCalls("ProductCreate")).toBe(0);
+      const checkLens = await service.getLens(shopA, lens.id);
+      expect(checkLens.shopifyVariantId).toBeNull();
+    });
+  });
+
+  // =========================================================================
+  // Add-Ons & Option Values & Edge Cases
+  // =========================================================================
+
+  describe("Add-ons and Option Values Syncing", () => {
+    it("syncs an add-on item: creates product, variant, publishes, markSynced", async () => {
+      const addOn = await service.createAddOn(shopA, {
+        name: "Microfiber Cleaning Kit",
+        priceMinor: 2500,
+        currency: "USD",
+      });
+
+      const fake = createFakeAdminClient({ shopCurrency: "USD" });
+      const result = await syncItem(fake.admin, shopA, "addOn", addOn.id, {
+        catalogService: service,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.created).toBe(true);
+      expect(result.productId).toBeDefined();
+      expect(result.variantId).toBeDefined();
+
+      const createCall = fake.findCall("ProductCreate");
+      const createVars = (createCall?.variables ?? {}) as ProductCreateVariables;
+      expect(createVars.product?.title).toBe("Add-on: Microfiber Cleaning Kit");
+
+      const updateCall = fake.findCall("ProductVariantsBulkUpdate");
+      const updateVars = (updateCall?.variables ?? {}) as ProductVariantsBulkUpdateVariables;
+      expect(updateVars.variants?.[0]?.price).toBe("25.00");
+
+      const checkAddOn = await service.getAddOn(shopA, addOn.id);
+      expect(checkAddOn.shopifyVariantId).toBe(result.variantId);
+      expect(checkAddOn.shopifyProductId).toBe(result.productId);
+    });
+
+    it("saving an add-on again updates variant only, no product create", async () => {
+      const addOn = await service.createAddOn(shopA, {
+        name: "Luxury Case",
+        priceMinor: 3000,
+        currency: "USD",
+      });
+
+      const fake1 = createFakeAdminClient({ shopCurrency: "USD" });
+      await syncItem(fake1.admin, shopA, "addOn", addOn.id, {
+        catalogService: service,
+      });
+
+      // Update price in DB
+      await service.updateAddOn(shopA, addOn.id, {
+        priceMinor: 3500,
+      });
+
+      const fake2 = createFakeAdminClient({ shopCurrency: "USD" });
+      const res2 = await syncItem(fake2.admin, shopA, "addOn", addOn.id, {
+        catalogService: service,
+      });
+
+      expect(res2.ok).toBe(true);
+      expect(res2.updated).toBe(true);
+      expect(fake2.countCalls("ProductCreate")).toBe(0);
+      expect(fake2.countCalls("ProductVariantsBulkUpdate")).toBe(1);
+
+      const updateCall = fake2.findCall("ProductVariantsBulkUpdate");
+      const updateVars = (updateCall?.variables ?? {}) as ProductVariantsBulkUpdateVariables;
+      expect(updateVars.variants?.[0]?.price).toBe("35.00");
+    });
+
+    it("updating option value price delta updates variant price via derived productId", async () => {
+      const group = await service.createOptionGroup(shopA, {
+        name: "Photochromic",
+        kind: "COLOR",
+      });
+
+      const optVal = await service.createOptionValue(shopA, {
+        optionGroupId: group.id,
+        label: "Transitions Brown",
+        priceDeltaMinor: 4000,
+        currency: "USD",
+      });
+
+      const fake1 = createFakeAdminClient({ shopCurrency: "USD" });
+      await syncItem(fake1.admin, shopA, "optionValue", optVal.id, {
+        catalogService: service,
+      });
+
+      // Update delta to 4500
+      await service.updateOptionValue(shopA, optVal.id, {
+        priceDeltaMinor: 4500,
+      });
+
+      const fake2 = createFakeAdminClient({ shopCurrency: "USD" });
+      const res2 = await syncItem(fake2.admin, shopA, "optionValue", optVal.id, {
+        catalogService: service,
+      });
+
+      expect(res2.ok).toBe(true);
+      expect(res2.updated).toBe(true);
+      expect(fake2.countCalls("ProductCreate")).toBe(0);
+      // Fetched variant product to get productId
+      expect(fake2.countCalls("GetVariantProduct")).toBe(1);
+      expect(fake2.countCalls("ProductVariantsBulkUpdate")).toBe(1);
+      const updateCall = fake2.findCall("ProductVariantsBulkUpdate");
+      const updateVars = (updateCall?.variables ?? {}) as ProductVariantsBulkUpdateVariables;
+      expect(updateVars.variants?.[0]?.price).toBe("45.00");
+    });
+
+    it("archiveItem sets add-on product to DRAFT", async () => {
+      const addOn = await service.createAddOn(shopA, {
+        name: "Add-on To Archive",
+        priceMinor: 1000,
+        currency: "USD",
+      });
+
+      const fake1 = createFakeAdminClient({ shopCurrency: "USD" });
+      await syncItem(fake1.admin, shopA, "addOn", addOn.id, {
+        catalogService: service,
+      });
+
+      const fake2 = createFakeAdminClient({ shopCurrency: "USD" });
+      const archiveRes = await archiveItem(fake2.admin, shopA, "addOn", addOn.id, {
+        catalogService: service,
+      });
+
+      expect(archiveRes.ok).toBe(true);
+      expect(archiveRes.archived).toBe(true);
+      expect(archiveRes.status).toBe("DRAFT");
+      expect(fake2.countCalls("ProductUpdate")).toBe(1);
+    });
+
+    it("archiveItem on unsynced item returns NOT_SYNCED and makes no Shopify calls", async () => {
+      const addOn = await service.createAddOn(shopA, {
+        name: "Never Synced Add-on",
+        priceMinor: 1000,
+        currency: "USD",
+      });
+
+      const fake = createFakeAdminClient({ shopCurrency: "USD" });
+      const archiveRes = await archiveItem(fake.admin, shopA, "addOn", addOn.id, {
+        catalogService: service,
+      });
+
+      expect(archiveRes.ok).toBe(true);
+      expect(archiveRes.archived).toBe(false);
+      expect(archiveRes.reason).toBe("NOT_SYNCED");
+      expect(fake.calls.length).toBe(0);
+    });
+
+    it("rejects unknown entity type with BadRequestError", async () => {
+      const fake = createFakeAdminClient();
+      await expect(
+        syncItem(fake.admin, shopA, "unknownEntity" as SyncEntity, "some-id", {
+          catalogService: service,
+        }),
+      ).rejects.toThrow(BadRequestError);
+
+      await expect(
+        archiveItem(fake.admin, shopA, "unknownEntity" as SyncEntity, "some-id", {
+          catalogService: service,
+        }),
+      ).rejects.toThrow(BadRequestError);
+    });
+
+    it("handles GraphQL top-level errors by throwing SyncError", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const lens = await service.createLens(shopA, {
+        groupId: groups[0].id,
+        name: "Top Level Error Lens",
+        priceMinor: 4000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -100,
+        sphMax: 100,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "ERR-1",
+      });
+
+      const fake = createFakeAdminClient({
+        shopCurrency: "USD",
+        topLevelErrors: [{ message: "Throttled: API rate limit exceeded" }],
+      });
+
+      await expect(
+        syncItem(fake.admin, shopA, "lens", lens.id, {
+          catalogService: service,
+        }),
+      ).rejects.toThrow(new SyncError("Throttled: API rate limit exceeded"));
+    });
+
+    it("handles userErrors in variant bulk update: throws and leaves catalog unchanged", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const lens = await service.createLens(shopA, {
+        groupId: groups[0].id,
+        name: "Variant Update Error Lens",
+        priceMinor: 4000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -100,
+        sphMax: 100,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "ERR-2",
+      });
+
+      const fake = createFakeAdminClient({
+        shopCurrency: "USD",
+        variantBulkUpdateUserErrors: [{ message: "Invalid variant price" }],
+      });
+
+      await expect(
+        syncItem(fake.admin, shopA, "lens", lens.id, {
+          catalogService: service,
+        }),
+      ).rejects.toThrow(new SyncError("Invalid variant price"));
+
+      const check = await service.getLens(shopA, lens.id);
+      expect(check.shopifyVariantId).toBeNull();
+    });
+
+    it("handles userErrors in publish: throws and leaves catalog unchanged", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const lens = await service.createLens(shopA, {
+        groupId: groups[0].id,
+        name: "Publish Error Lens",
+        priceMinor: 4000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -100,
+        sphMax: 100,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "ERR-3",
+      });
+
+      const fake = createFakeAdminClient({
+        shopCurrency: "USD",
+        publishUserErrors: [{ message: "Publication access denied" }],
+      });
+
+      await expect(
+        syncItem(fake.admin, shopA, "lens", lens.id, {
+          catalogService: service,
+        }),
+      ).rejects.toThrow(new SyncError("Publication access denied"));
+
+      const check = await service.getLens(shopA, lens.id);
+      expect(check.shopifyVariantId).toBeNull();
+    });
+
+    it("Self-check 2: Never creates a duplicate product on retry (look up by stored id first)", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const lens = await service.createLens(shopA, {
+        groupId: groups[0].id,
+        name: "Retry Proof Lens",
+        priceMinor: 4000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -100,
+        sphMax: 100,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "RETRY-1",
+      });
+
+      const fake = createFakeAdminClient({ shopCurrency: "USD" });
+
+      // Run 1: initial sync creates the product
+      const run1 = await syncItem(fake.admin, shopA, "lens", lens.id, {
+        catalogService: service,
+      });
+      expect(run1.created).toBe(true);
+      expect(fake.countCalls("ProductCreate")).toBe(1);
+
+      // Run 2: retry on the exact same item
+      const run2 = await syncItem(fake.admin, shopA, "lens", lens.id, {
+        catalogService: service,
+      });
+      expect(run2.updated).toBe(true);
+      // ProductCreate call count is STILL 1!
+      expect(fake.countCalls("ProductCreate")).toBe(1);
+
+      // Run 3: third retry
+      const run3 = await syncItem(fake.admin, shopA, "lens", lens.id, {
+        catalogService: service,
+      });
+      expect(run3.updated).toBe(true);
+      // ProductCreate call count is STILL 1!
+      expect(fake.countCalls("ProductCreate")).toBe(1);
+
+      // Product and variant IDs are preserved
+      expect(run2.productId).toBe(run1.productId);
+      expect(run2.variantId).toBe(run1.variantId);
+      expect(run3.productId).toBe(run1.productId);
+      expect(run3.variantId).toBe(run1.variantId);
+    });
+  });
+});

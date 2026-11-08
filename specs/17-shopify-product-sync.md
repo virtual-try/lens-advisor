@@ -62,11 +62,48 @@ Real, used now: Admin GraphQL. Tests: fake admin client recording mutations. Stu
 
 ## Done when
 
-- [ ] `pnpm vitest run app/features/product-sync` passes: every Examples row is a case; JPY 1500 → "1500". [unit]
-- [ ] INV-1: sync for shop B never reads or marks shop A's catalog rows (test with two shops). [unit]
-- [ ] INV-4: conversion is integer-based (`rg 'toFixed|parseFloat' app/features/product-sync` finds nothing). [static]
+- [x] `pnpm vitest run app/features/product-sync` passes: every Examples row is a case; JPY 1500 → "1500". [unit]
+- [x] INV-1: sync for shop B never reads or marks shop A's catalog rows (test with two shops). [unit]
+- [x] INV-4: conversion is integer-based (`rg 'toFixed|parseFloat' app/features/product-sync` finds nothing). [static]
 - [ ] Synced lens products are purchasable via `/cart/add.js` and do not appear in storefront search. [requires: Shopify dev store]
-- [ ] `pnpm test` passes with 0 failures. [unit]
-- [ ] `specs/inventory/17-shopify-product-sync.md` lists `syncItem`, `archiveItem`. [static]
-- [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
-- [ ] `pnpm build` passes. [static]
+- [x] `pnpm test` passes with 0 failures. [unit]
+- [x] `specs/inventory/17-shopify-product-sync.md` lists `syncItem`, `archiveItem`. [static]
+- [x] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
+- [x] `pnpm build` passes. [static]
+
+## Log
+
+- **2026-11-08** — Spec 17 implemented by agy-1 in worktree `spec-17` (branch `spec/17-shopify-product-sync`). No git writes (lead commits).
+  - Module `app/features/product-sync/`:
+    - `types.ts`: `ProductSyncAdminClient`, `SyncEntity`, `ProductSyncDeps`, `SyncItemResult`, `ArchiveItemResult`.
+    - `errors.ts`: `SyncError` extending `AppError` (HTTP 400) with code `SYNC_FAILED` / `CURRENCY_MISMATCH`.
+    - `graphql.ts`: `SHOP_CURRENCY_QUERY`, `GET_PUBLICATIONS_QUERY`, `GET_VARIANT_PRODUCT_QUERY`, `PRODUCT_CREATE_MUTATION`, `PRODUCT_VARIANTS_BULK_UPDATE_MUTATION`, `PUBLISHABLE_PUBLISH_MUTATION`, `PRODUCT_UPDATE_MUTATION`.
+    - `product-sync.server.ts`: Implemented `syncItem` and `archiveItem` functions.
+    - `index.ts`: Barrel export of all functions, types, and errors.
+    - `product-sync.server.test.ts`: 23 DB-backed unit and integration tests with fake Admin GraphQL client recording mutations.
+  - Inventory fragment: `specs/inventory/17-shopify-product-sync.md` created, documenting `syncItem`, `archiveItem`, and `SyncError`.
+  - Decisions:
+    1. Titles: `"Lens: " + lens.name`, `"Option: " + optionValue.label`, `"Add-on: " + addOn.name`.
+    2. Tags: `["lens-advisor-item"]`, vendor `"Lens Advisor"`, status `"ACTIVE"`, and metafield `{ namespace: "seo", key: "hidden", value: "1", type: "integer" }` so synced items remain hidden from search and sitemaps.
+    3. Decimal string conversion: Uses `toShopifyDecimal` from spec 13 (INV-4) with zero float math. Taxable is left unchanged (not taxable-changed); inventory is set to untracked (`inventoryItem: { tracked: false }`).
+    4. Currency check: Queries `shop { currencyCode }` from Shopify; if item currency differs, throws `SyncError` with code `CURRENCY_MISMATCH` before creating any product.
+    5. Option delta 0: Skips product creation (`{ ok: true, skipped: true }`) without calling Shopify Admin or assigning a variant ID.
+    6. Idempotent retry: Checks stored `shopifyVariantId` on the item first; if present, updates variant price via `productVariantsBulkUpdate`, never recreating the product.
+    7. Publishing: Queries publications for `"Online Store"` and publishes via `publishablePublish`.
+    8. Archiving: `archiveItem` sets product status to `"DRAFT"` via `productUpdate`. If item was never synced, returns `{ ok: true, archived: false, reason: "NOT_SYNCED" }`.
+    9. Tenant isolation (INV-1): All catalog reads and writes filter by `shopId` through `catalogService`. Cross-shop access throws `NotFoundError` and executes no mutations.
+    10. Owner-gated box `[requires: Shopify dev store]` left unticked per R7 and AGENT-GUIDE.md; owner/lead verifies on a dev store.
+  - Self-check 1: checked, holds. JPY 1500 formats as `"1500"` (0 fraction digits) and KWD 1500 formats as `"1.500"` (3 fraction digits) using integer arithmetic. Static check `rg 'toFixed|parseFloat' app/features/product-sync` exits 1 with no output.
+  - Self-check 2: checked, holds. Look up by stored `shopifyVariantId` prevents duplicate product creation on retry; test asserts `ProductCreate` call count is 1 after multiple successive sync calls on the same item.
+  - Self-check 3: integration checklist holds. Real Admin GraphQL client from `authenticate.admin` supported; fake client in tests records queries and verifies variables. GraphQL userErrors and top-level errors throw `SyncError`. No `process.env` in owned files.
+  - Sabotage 1 (retry idempotency): Disabled stored variant ID check (`if (false && storedVariantId)`) -> 4 tests failed in `app/features/product-sync/product-sync.server.test.ts` (`AssertionError: expected undefined to be true` on `secondSync.updated` and duplicate create assertions); restored, green.
+  - Sabotage 2 (decimal conversion): Appended `"99"` to `decimalPrice` -> 8 tests failed (`AssertionError: expected '150099' to be '1500'`, `expected '1.50099' to be '1.500'`); restored, green.
+  - Sabotage 3 (tenant isolation): Bypassed `shopId` scoping in `syncItem` -> 7 tests failed (`AssertionError: expected 1 to be +0` on `fake.countCalls("ProductCreate")` for cross-shop call, plus currency mismatches); restored, green.
+  - Gates after the last change:
+    - `pnpm vitest run app/features/product-sync` -> `Test Files  1 passed (1)` / `Tests  23 passed (23)`
+    - `pnpm test` -> `Test Files  33 passed (33)` / `Tests  530 passed (530)`
+    - `pnpm typecheck` -> exit 0
+    - `pnpm lint` (`eslint . --max-warnings 0`) -> exit 0
+    - `pnpm build` -> exit 0
+    - `git diff --check` -> exit 0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 398dc041): install pass · typecheck pass · lint pass · build pass · test pass 530/0/0
