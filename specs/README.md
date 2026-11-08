@@ -76,7 +76,7 @@ and run once, in spec 33. `Model` is the tier; per-provider ids are on each spec
 | 34 | [Verification pass](./34-verification-pass.md) | 9 | Heavy | Final gate: clean build, both suites, every done-when re-checked, duplication sweep. |
 | 35 | [Configurator design token fix](./35-tokens-css.md) | 10 | Light | Replace invalid token --la-radius-full with --la-radius-pill in prescription.css |
 | 36 | [Storage test process.env isolation](./36-storage-test-env.md) | 10 | Light | Replace literal process.env in object-store.server.test.ts with vi.stubEnv |
-| 37 | [Lab order dispatch tenancy scoping](./37-lab-order-tenancy.md) | 10 | Standard | Scope getLabOrderShopId or document/test trusted internal queue boundary (INV-1) |
+| 37 | [Lab order dispatch tenancy scoping](./37-lab-order-tenancy.md) | 10 | Standard | Require `{ shopId, labOrderId }` in dispatch job and scope getLabOrderShopId by `{ id, shopId }` (INV-1) |
 | 38 | [Webhook payload validation and route persistence decoupling](./38-webhook-hardening.md) | 10 | Standard | Zod-validate webhook payloads, log IDs only (INV-6), and move route persistence behind service |
 
 ## Waves

@@ -204,7 +204,7 @@ every place it was not. This spec observes and reports; anything found becomes a
 | **Total** | **Specs 00–33 (34 specs)** | **267** | **252** | **14** | **1** |
 
 - **2026-11-09** — Invariants verification by ID:
-  - `INV-1` (Tenancy): Not fully holding. Repository function `getLabOrderShopId` in `app/features/lab-dispatch/lab-dispatch.repository.server.ts` performs an unscoped lookup (`findUnique({ where: { id: labOrderId } })`) without `shopId` filtering to resolve the owning shop from a `{ labOrderId }` queue payload. Follow-up Spec 37 filed to scope the lookup with owning `shopId` or document and test the trusted internal queue boundary.
+  - `INV-1` (Tenancy): Not fully holding. Repository function `getLabOrderShopId` in `app/features/lab-dispatch/lab-dispatch.repository.server.ts` performs an unscoped lookup (`findUnique({ where: { id: labOrderId } })`) without `shopId` filtering to resolve the owning shop from a `{ labOrderId }` queue payload. Follow-up Spec 37 filed to require `{ shopId, labOrderId }` in the job payload and scope `getLabOrderShopId` by `{ id, shopId }` with two-shop isolation tests (R3-F2).
   - `INV-2` (Encryption & Logging): AES-256-GCM cipher with per-record AAD; S3 SSE-KMS storage; 0 logger statements pass Rx data; error envelopes redact data.
   - `INV-3` (Shopify Rx Leak Prevention): `storeRxInOrder` defaults false; only `_rx_ref` and human summary in cart line item properties; 0 plaintext Rx strings in cart properties.
   - `INV-4` (Integer Money): Minor units int + currency; `parseFloat`/`toFixed` grep finds 0 occurrences on money fields across `app/` and `packages/`.
@@ -272,7 +272,7 @@ every place it was not. This spec observes and reports; anything found becomes a
   - Split findings into separate uniquely numbered follow-up specs (Specs 35–38), each with the full template and a Log:
     - Spec 35 (`specs/35-tokens-css.md`): Replace invalid token `--la-radius-full` with `--la-radius-pill` in `packages/configurator/src/steps/02-prescription/prescription.css:408`.
     - Spec 36 (`specs/36-storage-test-env.md`): Replace direct `process.env` mutations with `vi.stubEnv` in `app/shared/storage/object-store.server.test.ts:577-608` (15 hits violating Spec 01 gate).
-    - Spec 37 (`specs/37-lab-order-tenancy.md`): Scope `getLabOrderShopId` in `app/features/lab-dispatch/lab-dispatch.repository.server.ts` or document/test trusted internal queue boundary (INV-1).
+    - Spec 37 (`specs/37-lab-order-tenancy.md`): Require `{ shopId, labOrderId }` in job payload and scope `getLabOrderShopId` by `{ id, shopId }` with two-shop isolation tests in `app/features/lab-dispatch/` (INV-1, R3-F2).
     - Spec 38 (`specs/38-webhook-hardening.md`): Add Zod schema validation to `webhooks.app.scopes_update.tsx` and `webhooks.products.update.tsx` (log IDs only) (INV-6), and decouple `webhooks.app.scopes_update.tsx` from direct `db.server` persistence (Structural Invariant 1).
   - Updated `specs/README.md` spec list, wave count (11 waves), critical path, and dependency table.
-- **2026-11-08** — Evidence (orchestro spec verify, tree 8435e2da): install pass · typecheck pass · lint pass · build pass · test pass 1307/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 77f8304d): install pass · typecheck pass · lint pass · build pass · test pass 1307/0/0

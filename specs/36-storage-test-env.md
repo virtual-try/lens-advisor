@@ -7,7 +7,7 @@
 **Owns:** `app/shared/storage/object-store.server.test.ts`
 **Reuses:** `ARCHITECTURE.md` (structural invariant 2), `specs/01-scaffold.md`
 **Kind:** bugfix
-**Invariants:** INV-2
+**Invariants:** —
 
 ## Goal
 
@@ -60,4 +60,5 @@ Real, used now: unit test suite. In tests: stubbed env variables. Stubbed: none.
 
 ## Log
 
+- **2026-11-09** — Corrected invariant header to `—` (removing false INV-2 claim) while retaining ARCHITECTURE structural invariant 2 reference (R3-F3).
 - **2026-11-09** — Spec created to address Spec 01 process.env gate violation in storage tests (R2-F1, R2-F6).
