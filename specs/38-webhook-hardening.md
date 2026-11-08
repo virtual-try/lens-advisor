@@ -65,13 +65,35 @@ Real, used now: `app/routes/webhooks.app.scopes_update.tsx`, `app/routes/webhook
 
 ## Done when
 
-- [ ] `app/routes/webhooks.app.scopes_update.tsx` validates payload using a Zod schema and returns 400 on invalid payloads. [unit]
-- [ ] `app/routes/webhooks.app.scopes_update.tsx` calls a service instead of directly importing `db.server` or executing Prisma queries (structural invariant 1). [static]
-- [ ] `app/routes/webhooks.products.update.tsx` validates payload using a Zod schema, logs product IDs only, and returns 400 on invalid payloads. [unit]
-- [ ] Unit tests verify both webhooks accept valid payloads and reject malformed payloads with 400. [unit]
-- [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
-- [ ] `pnpm test` passes with 0 failures. [suite]
+- [x] `app/routes/webhooks.app.scopes_update.tsx` validates payload using a Zod schema and returns 400 on invalid payloads. [unit]
+- [x] `app/routes/webhooks.app.scopes_update.tsx` calls a service instead of directly importing `db.server` or executing Prisma queries (structural invariant 1). [static]
+- [x] `app/routes/webhooks.products.update.tsx` validates payload using a Zod schema, logs product IDs only, and returns 400 on invalid payloads. [unit]
+- [x] Unit tests verify both webhooks accept valid payloads and reject malformed payloads with 400. [unit]
+- [x] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
+- [x] `pnpm test` passes with 0 failures. [suite]
 
 ## Log
 
 - **2026-11-09** — Spec created to address webhook payload validation (INV-6) and route persistence decoupling (Structural Invariant 1) from R2-F3, R2-F4, R2-F6.
+- **2026-11-09** — Webhook hardening completed:
+  - Created `app/shared/session/session.repository.server.ts` and `session.service.server.ts` providing `updateSessionScope` and `getSession` with shop-scoped queries (INV-1) and factory `createSessionService` (Structural Invariant 1).
+  - Refactored `app/routes/webhooks.app.scopes_update.tsx`:
+    - Defined `scopesUpdateWebhookPayloadSchema` validating `current: z.array(z.string())`.
+    - Removed direct `import db from "../db.server"` and Prisma calls; delegated session scope updates to `updateSessionScope`.
+    - Added 400 Bad Request response on invalid payloads without executing database writes.
+  - Refactored `app/routes/webhooks.products.update.tsx`:
+    - Defined `productUpdateWebhookPayloadSchema` validating `id: z.union([z.number().int().positive(), z.string().min(1)])`.
+    - Removed raw `console.log(JSON.stringify(payload, null, 2))`; replaced with safe identifier logging (`shop`, `topic`, `payload.id`).
+    - Added 400 Bad Request response on invalid payloads.
+  - Added unit test suites:
+    - `app/shared/session/session.server.test.ts` (7 tests): DB-backed repository and service tests proving persistence, array scope joining, and two-shop isolation (INV-1).
+    - `app/routes/webhooks.app.scopes_update.test.ts` (15 tests): schema validation, 401 on auth failure, 400 on malformed payloads without writes, 200 on success, and static check asserting 0 references to `db.server`.
+    - `app/routes/webhooks.products.update.test.ts` (16 tests): schema validation, 401 on auth failure, 400 on malformed payloads, safe identifier logging, and anti-dumping static check.
+  - Verification gates:
+    - `rg 'db.server' app/routes/` returns 0 hits.
+    - `pnpm typecheck`: 0 errors.
+    - `pnpm lint`: 0 errors, 0 warnings.
+    - `pnpm test`: 75 test files passed, 1345 tests passed, 0 failures.
+    - `pnpm test:e2e --project=server`: 30 passed, 0 failures.
+    - `pnpm build`: passed.
+- **2026-11-08** — Evidence (orchestro spec verify, tree 77bc9020): install pass · typecheck pass · lint pass · build pass · test pass 1345/0/0
