@@ -115,7 +115,7 @@ Stubbed: none.
   - `pnpm lint`: exit 0 (`eslint . --max-warnings 0`).
   - `pnpm build`: exit 0 (`loader.js` 1314 B <= 10 KB limit, `configurator.js` 135788 B, `loader.css` 3319 B).
   - `git diff --check`: clean (exit 0).
-- **2026-11-08** — Evidence (orchestro spec verify, tree cfe24951): install pass · typecheck pass · lint pass · build pass · test pass 1185/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 57823b2e): install pass · typecheck pass · lint pass · build pass · test pass 1307/0/0
 - **2026-11-08** — Fix round R1 addressing findings R1-F1 through R1-F9:
   - R1-F1: `rollbackFrame` returns boolean (`res.ok`) and surfaces distinct `ROLLBACK_FAILED` code with warning message when removal fails. Tested non-OK (500) and throwing `/cart/change.js`.
   - R1-F2: On `FRAME_RESPONSE_INVALID` or `FRAME_KEY_MISSING` after 200, re-reads `/cart.js` and rolls back newest frame line for variant by `_bundle_id`, reporting `rolledBack` truthfully. Tested both frame-failure paths and `UNKNOWN_LENS` rollback.

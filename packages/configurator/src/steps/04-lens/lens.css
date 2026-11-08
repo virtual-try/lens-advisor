@@ -1,0 +1,54 @@
+.la-notice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--la-space-3);
+  padding: var(--la-space-4);
+  background: var(--la-bg-deep);
+  border: var(--la-border-width) solid var(--la-hairline-2);
+  border-radius: var(--la-radius);
+  margin-bottom: var(--la-space-4);
+}
+
+.la-notice__text {
+  font-size: var(--la-text-sm);
+  color: var(--la-ink-2);
+  line-height: var(--la-leading-body);
+}
+
+.la-notice__actions {
+  display: flex;
+  gap: var(--la-space-2);
+}
+
+.la-notice__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--la-target);
+  padding: 0 var(--la-space-4);
+  border-radius: var(--la-radius-pill);
+  border: var(--la-border-width) solid var(--la-ink);
+  background: transparent;
+  color: var(--la-ink);
+  font-size: var(--la-text-sm);
+  font-weight: var(--la-weight-medium);
+  cursor: pointer;
+  transition: background-color var(--la-transition-duration) var(--la-ease),
+    color var(--la-transition-duration) var(--la-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .la-notice__btn {
+    transition: none;
+  }
+}
+
+.la-notice__btn:hover {
+  background: var(--la-ink);
+  color: var(--la-on-ink);
+}
+
+.la-notice__btn:focus-visible {
+  outline: var(--la-focus-outline);
+  outline-offset: var(--la-focus-offset);
+}

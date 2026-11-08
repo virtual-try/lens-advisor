@@ -364,12 +364,19 @@ export function ConfiguratorApp({
 
   const canGoBack = applicableIndex > 0;
   const isCurrentComplete = activeStep ? activeStep.isComplete(state) : false;
+  const canCurrentContinue = activeStep?.canContinue
+    ? activeStep.canContinue(state)
+    : isCurrentComplete;
 
   const handleBack = () => {
     dispatch({ type: "BACK", steps });
   };
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
+    if (activeStep?.onContinue) {
+      await activeStep.onContinue({ state, dispatch, api });
+      return;
+    }
     dispatch({ type: "CONTINUE", steps });
   };
 
@@ -422,6 +429,7 @@ export function ConfiguratorApp({
                 api={api}
                 activeStep={activeStep}
                 canGoBack={canGoBack}
+                canContinue={canCurrentContinue}
                 isComplete={isCurrentComplete}
                 mount={mountElement}
                 product={safeProduct}

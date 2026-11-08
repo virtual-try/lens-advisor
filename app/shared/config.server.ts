@@ -181,7 +181,7 @@ const shopifySchema = z.object({
     .string()
     .trim()
     .min(1)
-    .default("read_products,write_products,read_orders,write_app_proxy"),
+    .default("read_products,write_products,read_orders,write_app_proxy,write_publications"),
   SHOP_CUSTOM_DOMAIN: z
     .string()
     .trim()

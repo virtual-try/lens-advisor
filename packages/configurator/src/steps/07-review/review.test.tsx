@@ -148,6 +148,7 @@ function createReviewState(overrides?: Partial<ConfiguratorState>): Configurator
     rxType: "PROGRESSIVE",
     prescription: distinctivePrescription,
     prescriptionRef: "rx-ref-123",
+    lensGroupId: null,
     catalog: fixtureCatalog,
     selection: fixtureSelection,
     status: "ready",
