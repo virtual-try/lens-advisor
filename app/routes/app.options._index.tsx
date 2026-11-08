@@ -283,13 +283,8 @@ export default function AdminOptionsRoute() {
   const [newGroupName, setNewGroupName] = useState("");
   const [newGroupKind, setNewGroupKind] = useState<"MATERIAL" | "TINT_TYPE" | "COLOR">("MATERIAL");
 
-  let isSubmitting = false;
-  try {
-    const navigation = useNavigation();
-    isSubmitting = navigation.state === "submitting" || navigation.state === "loading";
-  } catch {
-    isSubmitting = false;
-  }
+  const navigation = useNavigation();
+  const isSubmitting = navigation.state === "submitting" || navigation.state === "loading";
 
   const actionError = (
     actionData as
@@ -302,10 +297,6 @@ export default function AdminOptionsRoute() {
         }
       | undefined
   )?.error;
-
-  const handleFormSubmitClick = (e: { currentTarget: unknown }) => {
-    ((e.currentTarget as HTMLElement)?.closest("form") as HTMLFormElement | null)?.requestSubmit?.();
-  };
 
   const addModalRef = useRef<HTMLElementTagNameMap["s-modal"] | null>(null);
   const deleteModalRef = useRef<HTMLElementTagNameMap["s-modal"] | null>(null);
@@ -350,6 +341,7 @@ export default function AdminOptionsRoute() {
         slot="primary-action"
         variant="primary"
         onClick={() => showAddModal("MATERIAL")}
+        {...(isSubmitting ? { disabled: true } : {})}
       >
         Add option group
       </s-button>
@@ -382,6 +374,7 @@ export default function AdminOptionsRoute() {
                 <s-button
                   type="button"
                   onClick={() => showAddModal("MATERIAL")}
+                  {...(isSubmitting ? { disabled: true } : {})}
                 >
                   Add material group
                 </s-button>
@@ -404,7 +397,6 @@ export default function AdminOptionsRoute() {
                         <s-button
                           type="submit"
                           {...((gIndex === 0 || isSubmitting) ? { disabled: true } : {})}
-                          onClick={handleFormSubmitClick}
                         >
                           Move up
                         </s-button>
@@ -419,7 +411,6 @@ export default function AdminOptionsRoute() {
                         <s-button
                           type="submit"
                           {...((gIndex === materialGroups.length - 1 || isSubmitting) ? { disabled: true } : {})}
-                          onClick={handleFormSubmitClick}
                         >
                           Move down
                         </s-button>
@@ -471,7 +462,6 @@ export default function AdminOptionsRoute() {
                                       type="submit"
                                       variant="tertiary"
                                       {...(isSubmitting ? { disabled: true } : {})}
-                                      onClick={handleFormSubmitClick}
                                     >
                                       Retry
                                     </s-button>
@@ -493,7 +483,6 @@ export default function AdminOptionsRoute() {
                                     type="submit"
                                     variant="tertiary"
                                     {...(isSubmitting ? { disabled: true } : {})}
-                                    onClick={handleFormSubmitClick}
                                   >
                                     Retry
                                   </s-button>
@@ -511,7 +500,6 @@ export default function AdminOptionsRoute() {
                               <s-button
                                 type="submit"
                                 {...((vIndex === 0 || isSubmitting) ? { disabled: true } : {})}
-                                onClick={handleFormSubmitClick}
                               >
                                 Move up
                               </s-button>
@@ -527,7 +515,6 @@ export default function AdminOptionsRoute() {
                               <s-button
                                 type="submit"
                                 {...((vIndex === group.values.length - 1 || isSubmitting) ? { disabled: true } : {})}
-                                onClick={handleFormSubmitClick}
                               >
                                 Move down
                               </s-button>
@@ -571,6 +558,7 @@ export default function AdminOptionsRoute() {
                 <s-button
                   type="button"
                   onClick={() => showAddModal("TINT_TYPE")}
+                  {...(isSubmitting ? { disabled: true } : {})}
                 >
                   Add tint or colour group
                 </s-button>
@@ -595,7 +583,6 @@ export default function AdminOptionsRoute() {
                         <s-button
                           type="submit"
                           {...((gIndex === 0 || isSubmitting) ? { disabled: true } : {})}
-                          onClick={handleFormSubmitClick}
                         >
                           Move up
                         </s-button>
@@ -610,7 +597,6 @@ export default function AdminOptionsRoute() {
                         <s-button
                           type="submit"
                           {...((gIndex === tintAndColorGroups.length - 1 || isSubmitting) ? { disabled: true } : {})}
-                          onClick={handleFormSubmitClick}
                         >
                           Move down
                         </s-button>
@@ -665,7 +651,6 @@ export default function AdminOptionsRoute() {
                                       type="submit"
                                       variant="tertiary"
                                       {...(isSubmitting ? { disabled: true } : {})}
-                                      onClick={handleFormSubmitClick}
                                     >
                                       Retry
                                     </s-button>
@@ -687,7 +672,6 @@ export default function AdminOptionsRoute() {
                                     type="submit"
                                     variant="tertiary"
                                     {...(isSubmitting ? { disabled: true } : {})}
-                                    onClick={handleFormSubmitClick}
                                   >
                                     Retry
                                   </s-button>
@@ -705,7 +689,6 @@ export default function AdminOptionsRoute() {
                               <s-button
                                 type="submit"
                                 {...((vIndex === 0 || isSubmitting) ? { disabled: true } : {})}
-                                onClick={handleFormSubmitClick}
                               >
                                 Move up
                               </s-button>
@@ -721,7 +704,6 @@ export default function AdminOptionsRoute() {
                               <s-button
                                 type="submit"
                                 {...((vIndex === group.values.length - 1 || isSubmitting) ? { disabled: true } : {})}
-                                onClick={handleFormSubmitClick}
                               >
                                 Move down
                               </s-button>
@@ -791,7 +773,6 @@ export default function AdminOptionsRoute() {
                             type="submit"
                             variant="tertiary"
                             {...(isSubmitting ? { disabled: true } : {})}
-                            onClick={handleFormSubmitClick}
                           >
                             Retry
                           </s-button>
@@ -808,7 +789,6 @@ export default function AdminOptionsRoute() {
                       <s-button
                         type="submit"
                         {...((aIndex === 0 || isSubmitting) ? { disabled: true } : {})}
-                        onClick={handleFormSubmitClick}
                       >
                         Move up
                       </s-button>
@@ -823,7 +803,6 @@ export default function AdminOptionsRoute() {
                       <s-button
                         type="submit"
                         {...((aIndex === addOns.length - 1 || isSubmitting) ? { disabled: true } : {})}
-                        onClick={handleFormSubmitClick}
                       >
                         Move down
                       </s-button>
@@ -886,7 +865,6 @@ export default function AdminOptionsRoute() {
                 variant="primary"
                 {...(isSubmitting ? { loading: true } : {})}
                 {...(isSubmitting ? { disabled: true } : {})}
-                onClick={handleFormSubmitClick}
               >
                 Create group
               </s-button>
@@ -931,7 +909,6 @@ export default function AdminOptionsRoute() {
               tone="critical"
               {...(isSubmitting ? { loading: true } : {})}
               {...(isSubmitting ? { disabled: true } : {})}
-              onClick={handleFormSubmitClick}
             >
               Confirm delete
             </s-button>

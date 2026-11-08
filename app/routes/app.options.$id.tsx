@@ -39,11 +39,34 @@ import {
   parseMoneyText,
   toShopifyDecimal,
 } from "../../packages/rx-core/src/pricing/index.js";
-import { archiveItem, syncItem } from "../features/product-sync";
+import {
+  archiveItem,
+  syncItem,
+  type ProductSyncAdminClient,
+} from "../features/product-sync";
+import { SHOP_CURRENCY_QUERY } from "../features/product-sync/graphql";
 import {
   OptionValueForm,
   type OptionValueFormData,
 } from "../features/catalog/components/option-value-form";
+
+async function getShopCurrency(admin: ProductSyncAdminClient): Promise<string> {
+  try {
+    const res = await admin.graphql(SHOP_CURRENCY_QUERY);
+    const json =
+      typeof (res as { json?: () => Promise<{ data?: { shop?: { currencyCode?: string } } }> }).json === "function"
+        ? await (res as { json: () => Promise<{ data?: { shop?: { currencyCode?: string } } }> }).json()
+        : (res as { data?: { shop?: { currencyCode?: string } } });
+    const currency = json?.data?.shop?.currencyCode;
+    if (typeof currency === "string" && currency.trim()) {
+      return currency.trim().toUpperCase();
+    }
+    throw new Error("Currency code not found");
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    throw new AppError(500, "CURRENCY_UNAVAILABLE", "Failed to determine shop currency");
+  }
+}
 
 async function getShopByDomain(domain: string, prisma: PrismaClient) {
   let shop = await prisma.shop.findUnique({
@@ -58,10 +81,12 @@ async function getShopByDomain(domain: string, prisma: PrismaClient) {
 }
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session, plan } = await requireActivePlan(request);
+  const { session, admin, plan } = await requireActivePlan(request);
   const prisma = getPrisma();
   const shop = await getShopByDomain(session.shop, prisma);
   const catalogService = createCatalogService({ prisma });
+
+  const shopCurrency = await getShopCurrency(admin);
 
   const id = params.id;
   if (!id) {
@@ -83,6 +108,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       allGroups,
       plan,
       shopDomain: session.shop,
+      currency: shopCurrency,
     });
   }
 
@@ -99,6 +125,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     allGroups,
     plan,
     shopDomain: session.shop,
+    currency: shopCurrency,
   });
 };
 
@@ -220,10 +247,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       );
     }
 
-    const currency =
+    let currency =
       typeof payload.currency === "string" && payload.currency.trim()
         ? payload.currency.trim().toUpperCase()
-        : existing?.priceDelta.currency || "USD";
+        : existing?.priceDelta.currency;
+
+    if (!currency) {
+      currency = await getShopCurrency(admin);
+    }
 
     // Parse price delta
     let priceDeltaMinor = 0;
@@ -402,7 +433,6 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       const finalCreated = await catalogService.getOptionValue(shop.id, created.id);
       return data({ ok: true, optionValue: finalCreated ?? created, syncFailed });
     } else {
-      const previousDelta = existing!.priceDelta.amountMinor;
       const hadVariant = Boolean(existing!.shopifyVariantId);
 
       await catalogService.updateOptionValue(shop.id, id, {
@@ -415,8 +445,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         swatch,
       });
 
-      // Price removed: delta changed from > 0 to 0 on an item that had a Shopify variant
-      if (previousDelta > 0 && priceDeltaMinor === 0 && hadVariant) {
+      // Price removed: delta is 0 and hadVariant (delta changed to 0, or earlier archive failed)
+      if (priceDeltaMinor === 0 && hadVariant) {
         let archiveSuccess = false;
         try {
           const res = await archiveItem(admin, shop.id, "optionValue", id);
@@ -442,9 +472,6 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           await syncItem(admin, shop.id, "optionValue", id);
         } catch {
           syncFailed = true;
-          await catalogService.updateOptionValue(shop.id, id, {
-            shopifyVariantId: null,
-          });
         }
       }
 
@@ -468,17 +495,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function OptionValueRoute() {
-  const { optionValue, group } = useLoaderData<typeof loader>();
+  const { optionValue, group, currency: shopCurrency } = useLoaderData<typeof loader>();
   const actionResult = useActionData<typeof action>();
   const navigate = useNavigate();
 
-  let isSubmitting = false;
-  try {
-    const navigation = useNavigation();
-    isSubmitting = navigation.state === "submitting" || navigation.state === "loading";
-  } catch {
-    isSubmitting = false;
-  }
+  const navigation = useNavigation();
+  const isSubmitting = navigation.state === "submitting" || navigation.state === "loading";
 
   const actionError = (
     actionResult as {
@@ -503,7 +525,7 @@ export default function OptionValueRoute() {
     }
   }
 
-  const currency = optionValue?.priceDelta.currency ?? "USD";
+  const currency = optionValue?.priceDelta.currency ?? shopCurrency ?? "USD";
   const initialData: OptionValueFormData = {
     id: optionValue?.id,
     optionGroupId: optionValue?.optionGroupId ?? group?.id,

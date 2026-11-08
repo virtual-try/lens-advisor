@@ -90,7 +90,24 @@ Real, used now: 14, 17, 09. Tests: `testConfig()` loader/action calls, fake admi
     - `pnpm lint` -> exit 0 (0 errors, 0 warnings)
     - `pnpm build` -> exit 0
     - `git diff --check` -> exit 0
-- **2026-11-08** — Evidence (orchestro spec verify, tree fc092732): install pass · typecheck pass · lint pass · build pass · test pass 709/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 0c34f01a): install pass · typecheck pass · lint pass · build pass · test pass 715/0/0
+- **2026-11-08** — Addressed Review R4 findings:
+  - R4-F1: Retain `shopifyVariantId` on price update `syncItem` failures, return `syncFailed: true`, and show badge with Retry; updated R3-F1 test to assert ID retention and that Retry calls update rather than create (both routes).
+  - R4-F2: Removed `requestSubmit` `onClick` handlers from submit buttons, using native submit alone; tested that one click triggers exactly one action call.
+  - R4-F3: Query shop currency via `ShopCurrency` in loaders and use for new options/add-ons; throws 500 `CURRENCY_UNAVAILABLE` if unavailable. Tested with JPY shop.
+  - R4-F5: Recorded intentional cross-owner edits in `app/features/catalog/schema.ts` and `packages/rx-core/src/pricing/index.ts` in spec Log.
+  - R4-F6: Triggered archive when `priceDeltaMinor === 0 && hadVariant` to cleanly clear leftover variant IDs from earlier failed archives.
+  - R4-F7: Eliminated test scaffolding `try/catch` around `useNavigation` in production route components and wrapped test renders in data routers.
+  - R4-F8: Removed duplicate `name="codeType"` from choice list so `codeType` is posted once via the hidden input.
+  - R4-F9: Added test asserting index page disables all interactive buttons during submission, and INV-1 test for cross-tenant option value creation returning 404.
+  - Gates:
+    - `pnpm vitest run app/features/catalog/admin-options.test.tsx` -> 53 passed (53)
+    - `pnpm test` -> 43 files passed (43), 715 tests passed (715)
+    - `rg 'style=|className=|<style' app/routes/app.options* app/routes/app.add-ons* app/features/catalog/components/option-value-form.tsx` -> 0 matches (exit 1)
+    - `pnpm typecheck` -> exit 0 (0 errors)
+    - `pnpm lint` -> exit 0 (0 errors, 0 warnings)
+    - `pnpm build` -> exit 0
+    - `git diff --check` -> exit 0
 - **2026-11-08** — Addressed Review R3 and R4 findings (Spec 18 R6-F1/F2 Ruling):
   - R3-F1: Surfaced and persisted positive-price sync failures on options and add-ons with Retry button on both detail and list views.
   - R3-F2: Maintained mapping when token/override is omitted on partial updates, and cleared only on explicit selection ("none" or mode switch).

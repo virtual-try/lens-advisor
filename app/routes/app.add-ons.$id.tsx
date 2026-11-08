@@ -39,7 +39,30 @@ import {
   parseMoneyText,
   toShopifyDecimal,
 } from "../../packages/rx-core/src/pricing/index.js";
-import { archiveItem, syncItem } from "../features/product-sync";
+import {
+  archiveItem,
+  syncItem,
+  type ProductSyncAdminClient,
+} from "../features/product-sync";
+import { SHOP_CURRENCY_QUERY } from "../features/product-sync/graphql";
+
+async function getShopCurrency(admin: ProductSyncAdminClient): Promise<string> {
+  try {
+    const res = await admin.graphql(SHOP_CURRENCY_QUERY);
+    const json =
+      typeof (res as { json?: () => Promise<{ data?: { shop?: { currencyCode?: string } } }> }).json === "function"
+        ? await (res as { json: () => Promise<{ data?: { shop?: { currencyCode?: string } } }> }).json()
+        : (res as { data?: { shop?: { currencyCode?: string } } });
+    const currency = json?.data?.shop?.currencyCode;
+    if (typeof currency === "string" && currency.trim()) {
+      return currency.trim().toUpperCase();
+    }
+    throw new Error("Currency code not found");
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    throw new AppError(500, "CURRENCY_UNAVAILABLE", "Failed to determine shop currency");
+  }
+}
 
 async function getShopByDomain(domain: string, prisma: PrismaClient) {
   let shop = await prisma.shop.findUnique({
@@ -54,10 +77,12 @@ async function getShopByDomain(domain: string, prisma: PrismaClient) {
 }
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session, plan } = await requireActivePlan(request);
+  const { session, admin, plan } = await requireActivePlan(request);
   const prisma = getPrisma();
   const shop = await getShopByDomain(session.shop, prisma);
   const catalogService = createCatalogService({ prisma });
+
+  const shopCurrency = await getShopCurrency(admin);
 
   const id = params.id;
   if (!id) {
@@ -69,6 +94,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       addOn: null,
       plan,
       shopDomain: session.shop,
+      currency: shopCurrency,
     });
   }
 
@@ -81,6 +107,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     addOn,
     plan,
     shopDomain: session.shop,
+    currency: shopCurrency,
   });
 };
 
@@ -183,12 +210,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       );
     }
 
-    const currency =
-      typeof payload.currency === "string" && payload.currency.trim()
-        ? payload.currency.trim().toUpperCase()
-        : existing?.price.currency || "USD";
-
-    let priceMinor = 0;
+    // Validate price presence and positivity prior to currency lookup
     if (payload.priceMinor !== undefined && payload.priceMinor !== null) {
       if (typeof payload.priceMinor !== "number" || isNaN(payload.priceMinor)) {
         return errorResponse(
@@ -206,7 +228,6 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           ),
         );
       }
-      priceMinor = payload.priceMinor;
     } else if (payload.price !== undefined && payload.price !== null) {
       const priceStr = String(payload.price).trim();
       if (priceStr === "") {
@@ -216,6 +237,38 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           ]),
         );
       }
+      const num = Number(priceStr);
+      if (!isNaN(num) && num <= 0) {
+        return errorResponse(
+          new BadRequestError(
+            num < 0 ? "Price must be at least 0" : "Price must be greater than 0",
+            num < 0 ? "NEGATIVE_PRICE" : "PRICE_NOT_POSITIVE",
+            [{ path: "price", code: num < 0 ? "NEGATIVE_PRICE" : "PRICE_NOT_POSITIVE" }],
+          ),
+        );
+      }
+    } else if (!existing) {
+      return errorResponse(
+        new BadRequestError("Price is required", "REQUIRED", [
+          { path: "price", code: "REQUIRED" },
+        ]),
+      );
+    }
+
+    let currency =
+      typeof payload.currency === "string" && payload.currency.trim()
+        ? payload.currency.trim().toUpperCase()
+        : existing?.price.currency;
+
+    if (!currency) {
+      currency = await getShopCurrency(admin);
+    }
+
+    let priceMinor = 0;
+    if (payload.priceMinor !== undefined && payload.priceMinor !== null) {
+      priceMinor = payload.priceMinor;
+    } else if (payload.price !== undefined && payload.price !== null) {
+      const priceStr = String(payload.price).trim();
       const parsed = parseMoneyText(priceStr, currency);
       if (!parsed.ok) {
         if (parsed.error === "MONEY_PRECISION") {
@@ -246,12 +299,6 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       priceMinor = parsed.amountMinor;
     } else if (existing) {
       priceMinor = existing.price.amountMinor;
-    } else {
-      return errorResponse(
-        new BadRequestError("Price is required", "REQUIRED", [
-          { path: "price", code: "REQUIRED" },
-        ]),
-      );
     }
 
     if (id === "new") {
@@ -282,9 +329,6 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         await syncItem(admin, shop.id, "addOn", id);
       } catch {
         syncFailed = true;
-        await catalogService.updateAddOn(shop.id, id, {
-          shopifyVariantId: null,
-        });
       }
 
       const finalAddOn = await catalogService.getAddOn(shop.id, id);
@@ -307,19 +351,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function AddOnRoute() {
-  const { addOn } = useLoaderData<typeof loader>();
+  const { addOn, currency: shopCurrency } = useLoaderData<typeof loader>();
   const actionResult = useActionData<typeof action>();
   const navigate = useNavigate();
 
-  let isSubmitting = false;
-  try {
-    const navigation = useNavigation();
-    isSubmitting = navigation.state === "submitting" || navigation.state === "loading";
-  } catch {
-    isSubmitting = false;
-  }
+  const navigation = useNavigation();
+  const isSubmitting = navigation.state === "submitting" || navigation.state === "loading";
 
-  const currency = addOn?.price.currency ?? "USD";
+  const currency = addOn?.price.currency ?? shopCurrency ?? "USD";
   const [name, setName] = useState(addOn?.name ?? "");
   const [price, setPrice] = useState(
     addOn
@@ -430,6 +469,8 @@ export default function AddOnRoute() {
               </s-banner>
             )}
 
+            <input type="hidden" name="currency" value={currency} />
+
             <s-text-field
               label="Name"
               name="name"
@@ -440,7 +481,7 @@ export default function AddOnRoute() {
             />
 
             <s-text-field
-              label="Price"
+              label={currency ? `Price (${currency})` : "Price"}
               name="price"
               value={price}
               onInput={(e) => setPrice(e.currentTarget.value)}

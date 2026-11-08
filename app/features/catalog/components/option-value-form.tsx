@@ -28,7 +28,7 @@ export interface OptionValueFormProps {
 export function OptionValueForm({
   initialData,
   groupKind = "MATERIAL",
-  currency = "USD",
+  currency = "",
   errors = {},
   isSubmitting = false,
   onCancel,
@@ -60,7 +60,7 @@ export function OptionValueForm({
     hasBothCodes ||
     Boolean(errors.ONE_CODE_SOURCE || errors.overrideCode === "ONE_CODE_SOURCE");
 
-  const digits = minorUnitDigits(currency) ?? 2;
+  const digits = currency ? (minorUnitDigits(currency) ?? 2) : 2;
   const KNOWN_ERROR_KEYS = new Set([
     "ONE_CODE_SOURCE",
     "MONEY_PRECISION",
@@ -122,7 +122,7 @@ export function OptionValueForm({
         />
 
         <s-text-field
-          label={`Price delta (${currency})`}
+          label={currency ? `Price delta (${currency})` : "Price delta"}
           name="priceDelta"
           value={priceDelta}
           onInput={(e) => setPriceDelta(e.currentTarget.value)}
@@ -130,11 +130,11 @@ export function OptionValueForm({
           details="Additional price for this option in the shop currency's normal units (e.g. 35.00 or 0 for included)."
         />
 
+        {currency && <input type="hidden" name="currency" value={currency} />}
         <input type="hidden" name="codeType" value={codeType} />
 
         <s-choice-list
           label="Lab-code mapping"
-          name="codeType"
           values={[codeType]}
           onChange={(e) => {
             const target = e.currentTarget as unknown as { values?: string[] };
