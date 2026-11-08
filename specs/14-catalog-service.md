@@ -81,14 +81,18 @@ Stubbed: none. Consumers: 17, 18, 19, 21, 31.
   - Service `app/features/catalog/catalog.service.server.ts`: Implemented `createCatalogService(deps)` and `CatalogService` class plus standalone service functions. Validates inputs through `schema.ts`, enforces unique names within groups/shops among active entities (`NAME_NOT_UNIQUE`), maps rows to spec 03 DTOs without leaking raw Prisma models or floats past the boundary, and provides `getStorefrontCatalog(shopId)` returning validated `CatalogResponse` excluding archived rows, un-synced lenses/add-ons without variant IDs, and unsynced priced options.
   - Inventory fragment `specs/inventory/14-catalog-service.md`: Created, documenting all repository and service functions, error classes, schemas, and DTO types.
   - Self-check 1: checked, holds. Every query in `catalog.repository.server.ts` includes `shopId` in its where clause (`shopId_id` for individual lookups/updates/deletes; `shopId` filter for list and reorder queries).
-  - Self-check 2: checked, holds. Reorder runs inside `prisma.$transaction`. Reorder interrupted mid-transaction by an invalid ID rolls back completely and leaves original positions intact.
+  - Self-check 2: checked, holds. Reorder runs inside `prisma.$transaction`. Invalid IDs fail during preflight before any update; mid-transaction rollback is proven by an injected second-update failure (using a proxy wrapper that throws mid-transaction), rolling back completely and leaving original positions intact.
   - Self-check 3: checked, holds. Storage and API checklists satisfied: soft-deletes preserve old orders; Prisma P2025 errors map to 404 `NotFoundError`; input errors throw 400 `ValidationError` with specific error codes.
   - Sabotage 1: Removed `shopId` filter from `getLensGroup` in repository -> red (`expected { ... } to be null`); restored.
   - Sabotage 2: Disabled `LIMITS_INVERTED` validation for SPH limits -> red (`promise resolved instead of rejecting`); restored.
+  - Sabotage 3 (R82 transaction-removal): Removed `$transaction` from `runInTx` in repository -> red (`AssertionError: expected +0 to be 30 // Object.is equality` at `expect(check3?.position).toBe(30)`); restored, green.
   - Gates after last code change:
     - `pnpm vitest run app/features/catalog` -> `Test Files  2 passed (2)` / `Tests  59 passed (59)`
     - `pnpm test` -> `Test Files  19 passed (19)` / `Tests  338 passed (338)`
     - `pnpm typecheck` -> exit 0
     - `pnpm lint` (`eslint . --max-warnings 0`) -> exit 0
     - `pnpm build` -> exit 0
-- **2026-11-08** — Evidence (orchestro spec verify, tree 5a4b567f): install pass · typecheck pass · lint pass · build pass · test pass 355/0/0
+- **2026-11-08** — Review R2 fixes implemented (coder agy-4).
+  - R2-F1: Fixed parent reassignment in `updateLens` and `updateOptionValue` in `catalog.repository.server.ts` to look up the target parent (`LensGroup` via `groupId` or `OptionGroup` via `optionGroupId`) by compound unique key `shopId_id: { shopId, id }` inside the same transaction (`runInTx`) and throw `NotFoundError` if not in caller's shop. Added two-shop reparenting tests in `app/features/catalog/catalog.repository.server.test.ts` and `app/features/catalog/catalog.service.server.test.ts` asserting `NotFoundError` and leaving both shops' rows unchanged.
+  - R2-F4: Corrected Self-check 2 in Log to clarify that rollback is proven by injected second-update failure (since invalid IDs fail during preflight), and recorded the R82 sabotage: removing `$transaction` failed at `expect(check3?.position).toBe(30)` (`expected +0 to be 30`), restored, green.
+- **2026-11-08** — Evidence (orchestro spec verify, tree 8fcc90c1): install pass · typecheck pass · lint pass · build pass · test pass 359/0/0

@@ -231,6 +231,38 @@ describe("CatalogService (DB-backed)", { timeout: 60_000 }, () => {
       const checkA = await service.getLens(shopA, lensA.id);
       expect(checkA.name).toBe(originalName);
     });
+
+    it("updateLens reassigning groupId to another shop's group throws NotFoundError and leaves row unchanged", async () => {
+      const lensesA = await service.listLenses(shopA);
+      const lensA = lensesA[0];
+      const groupsB = await service.listLensGroups(shopB);
+      const groupB = groupsB[0];
+      const originalGroupId = lensA.groupId;
+
+      await expect(
+        service.updateLens(shopA, lensA.id, { groupId: groupB.id }),
+      ).rejects.toThrow(NotFoundError);
+
+      const checkA = await service.getLens(shopA, lensA.id);
+      expect(checkA.groupId).toBe(originalGroupId);
+    });
+
+    it("updateOptionValue reassigning optionGroupId to another shop's group throws NotFoundError and leaves row unchanged", async () => {
+      const optGroupsA = await service.listOptionGroups(shopA);
+      const optGroupA = optGroupsA[0];
+      const valueA = optGroupA.values[0];
+      const optGroupsB = await service.listOptionGroups(shopB);
+      const optGroupB = optGroupsB[0];
+      const originalGroupId = valueA.optionGroupId;
+
+      await expect(
+        service.updateOptionValue(shopA, valueA.id, { optionGroupId: optGroupB.id }),
+      ).rejects.toThrow(NotFoundError);
+
+      const checkOptGroupA = await service.listOptionGroups(shopA);
+      const checkValueA = checkOptGroupA[0].values.find((v) => v.id === valueA.id);
+      expect(checkValueA?.optionGroupId).toBe(originalGroupId);
+    });
   });
 
   // =========================================================================

@@ -350,32 +350,43 @@ export class CatalogRepository {
     id: string,
     data: UpdateLensData,
   ): Promise<Lens> {
-    try {
-      return await this.prisma.lens.update({
-        where: { shopId_id: { shopId, id } },
-        data: {
-          ...(data.groupId !== undefined ? { groupId: data.groupId } : {}),
-          ...(data.name !== undefined ? { name: data.name } : {}),
-          ...(data.description !== undefined ? { description: data.description } : {}),
-          ...(data.priceMinor !== undefined ? { priceMinor: data.priceMinor } : {}),
-          ...(data.currency !== undefined ? { currency: data.currency } : {}),
-          ...(data.rxTypes !== undefined ? { rxTypes: data.rxTypes } : {}),
-          ...(data.sphMin !== undefined ? { sphMin: data.sphMin } : {}),
-          ...(data.sphMax !== undefined ? { sphMax: data.sphMax } : {}),
-          ...(data.cylMin !== undefined ? { cylMin: data.cylMin } : {}),
-          ...(data.cylMax !== undefined ? { cylMax: data.cylMax } : {}),
-          ...(data.addMin !== undefined ? { addMin: data.addMin } : {}),
-          ...(data.addMax !== undefined ? { addMax: data.addMax } : {}),
-          ...(data.labCodeTemplate !== undefined ? { labCodeTemplate: data.labCodeTemplate } : {}),
-          ...(data.shopifyProductId !== undefined ? { shopifyProductId: data.shopifyProductId } : {}),
-          ...(data.shopifyVariantId !== undefined ? { shopifyVariantId: data.shopifyVariantId } : {}),
-          ...(data.position !== undefined ? { position: data.position } : {}),
-          ...(data.archivedAt !== undefined ? { archivedAt: data.archivedAt } : {}),
-        },
-      });
-    } catch (error) {
-      handlePrismaNotFound(error, "Lens");
-    }
+    return this.runInTx(async (tx) => {
+      if (data.groupId !== undefined) {
+        const group = await tx.lensGroup.findUnique({
+          where: { shopId_id: { shopId, id: data.groupId } },
+        });
+        if (!group) {
+          throw new NotFoundError("LensGroup not found");
+        }
+      }
+
+      try {
+        return await tx.lens.update({
+          where: { shopId_id: { shopId, id } },
+          data: {
+            ...(data.groupId !== undefined ? { groupId: data.groupId } : {}),
+            ...(data.name !== undefined ? { name: data.name } : {}),
+            ...(data.description !== undefined ? { description: data.description } : {}),
+            ...(data.priceMinor !== undefined ? { priceMinor: data.priceMinor } : {}),
+            ...(data.currency !== undefined ? { currency: data.currency } : {}),
+            ...(data.rxTypes !== undefined ? { rxTypes: data.rxTypes } : {}),
+            ...(data.sphMin !== undefined ? { sphMin: data.sphMin } : {}),
+            ...(data.sphMax !== undefined ? { sphMax: data.sphMax } : {}),
+            ...(data.cylMin !== undefined ? { cylMin: data.cylMin } : {}),
+            ...(data.cylMax !== undefined ? { cylMax: data.cylMax } : {}),
+            ...(data.addMin !== undefined ? { addMin: data.addMin } : {}),
+            ...(data.addMax !== undefined ? { addMax: data.addMax } : {}),
+            ...(data.labCodeTemplate !== undefined ? { labCodeTemplate: data.labCodeTemplate } : {}),
+            ...(data.shopifyProductId !== undefined ? { shopifyProductId: data.shopifyProductId } : {}),
+            ...(data.shopifyVariantId !== undefined ? { shopifyVariantId: data.shopifyVariantId } : {}),
+            ...(data.position !== undefined ? { position: data.position } : {}),
+            ...(data.archivedAt !== undefined ? { archivedAt: data.archivedAt } : {}),
+          },
+        });
+      } catch (error) {
+        handlePrismaNotFound(error, "Lens");
+      }
+    });
   }
 
   async deleteLens(shopId: string, id: string): Promise<Lens> {
@@ -598,26 +609,37 @@ export class CatalogRepository {
     id: string,
     data: UpdateOptionValueData,
   ): Promise<OptionValue> {
-    try {
-      return await this.prisma.optionValue.update({
-        where: { shopId_id: { shopId, id } },
-        data: {
-          ...(data.optionGroupId !== undefined ? { optionGroupId: data.optionGroupId } : {}),
-          ...(data.label !== undefined ? { label: data.label } : {}),
-          ...(data.priceDeltaMinor !== undefined ? { priceDeltaMinor: data.priceDeltaMinor } : {}),
-          ...(data.currency !== undefined ? { currency: data.currency } : {}),
-          ...(data.tokenKey !== undefined ? { tokenKey: data.tokenKey } : {}),
-          ...(data.tokenValue !== undefined ? { tokenValue: data.tokenValue } : {}),
-          ...(data.overrideCode !== undefined ? { overrideCode: data.overrideCode } : {}),
-          ...(data.swatch !== undefined ? { swatch: data.swatch } : {}),
-          ...(data.shopifyVariantId !== undefined ? { shopifyVariantId: data.shopifyVariantId } : {}),
-          ...(data.position !== undefined ? { position: data.position } : {}),
-          ...(data.archivedAt !== undefined ? { archivedAt: data.archivedAt } : {}),
-        },
-      });
-    } catch (error) {
-      handlePrismaNotFound(error, "OptionValue");
-    }
+    return this.runInTx(async (tx) => {
+      if (data.optionGroupId !== undefined) {
+        const group = await tx.optionGroup.findUnique({
+          where: { shopId_id: { shopId, id: data.optionGroupId } },
+        });
+        if (!group) {
+          throw new NotFoundError("OptionGroup not found");
+        }
+      }
+
+      try {
+        return await tx.optionValue.update({
+          where: { shopId_id: { shopId, id } },
+          data: {
+            ...(data.optionGroupId !== undefined ? { optionGroupId: data.optionGroupId } : {}),
+            ...(data.label !== undefined ? { label: data.label } : {}),
+            ...(data.priceDeltaMinor !== undefined ? { priceDeltaMinor: data.priceDeltaMinor } : {}),
+            ...(data.currency !== undefined ? { currency: data.currency } : {}),
+            ...(data.tokenKey !== undefined ? { tokenKey: data.tokenKey } : {}),
+            ...(data.tokenValue !== undefined ? { tokenValue: data.tokenValue } : {}),
+            ...(data.overrideCode !== undefined ? { overrideCode: data.overrideCode } : {}),
+            ...(data.swatch !== undefined ? { swatch: data.swatch } : {}),
+            ...(data.shopifyVariantId !== undefined ? { shopifyVariantId: data.shopifyVariantId } : {}),
+            ...(data.position !== undefined ? { position: data.position } : {}),
+            ...(data.archivedAt !== undefined ? { archivedAt: data.archivedAt } : {}),
+          },
+        });
+      } catch (error) {
+        handlePrismaNotFound(error, "OptionValue");
+      }
+    });
   }
 
   async deleteOptionValue(shopId: string, id: string): Promise<OptionValue> {

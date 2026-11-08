@@ -224,6 +224,24 @@ describe("CatalogRepository (DB-backed)", { timeout: 60_000 }, () => {
         expect(checkB?.name).toBe(originalName);
       });
 
+      it("updateLens reassigning groupId to another shop's group throws NotFoundError and leaves both shops' rows untouched", async () => {
+        const lensesA = await repo.listLenses(shopA);
+        const lensA = lensesA[0];
+        const groupsB = await repo.listLensGroups(shopB);
+        const groupB = groupsB[0];
+        const originalGroupIdA = lensA.groupId;
+
+        await expect(
+          repo.updateLens(shopA, lensA.id, { groupId: groupB.id }),
+        ).rejects.toThrow(NotFoundError);
+
+        const checkA = await repo.getLens(shopA, lensA.id);
+        expect(checkA?.groupId).toBe(originalGroupIdA);
+
+        const checkGroupB = await repo.getLensGroup(shopB, groupB.id);
+        expect(checkGroupB?.lenses.some((l) => l.id === lensA.id)).toBe(false);
+      });
+
       it("deleteLens with another shop's ID throws NotFoundError and leaves row untouched", async () => {
         const lensesB = await repo.listLenses(shopB);
         const lensB = lensesB[0];
@@ -398,6 +416,24 @@ describe("CatalogRepository (DB-backed)", { timeout: 60_000 }, () => {
 
         const checkB = await repo.getOptionValue(shopB, valueB.id);
         expect(checkB?.label).toBe(originalLabel);
+      });
+
+      it("updateOptionValue reassigning optionGroupId to another shop's group throws NotFoundError and leaves both shops' rows untouched", async () => {
+        const valuesA = await repo.listOptionValues(shopA);
+        const valueA = valuesA[0];
+        const optGroupsB = await repo.listOptionGroups(shopB);
+        const optGroupB = optGroupsB[0];
+        const originalOptGroupIdA = valueA.optionGroupId;
+
+        await expect(
+          repo.updateOptionValue(shopA, valueA.id, { optionGroupId: optGroupB.id }),
+        ).rejects.toThrow(NotFoundError);
+
+        const checkA = await repo.getOptionValue(shopA, valueA.id);
+        expect(checkA?.optionGroupId).toBe(originalOptGroupIdA);
+
+        const checkOptGroupB = await repo.getOptionGroup(shopB, optGroupB.id);
+        expect(checkOptGroupB?.values.some((v) => v.id === valueA.id)).toBe(false);
       });
 
       it("deleteOptionValue with another shop's ID throws NotFoundError and leaves row untouched", async () => {
