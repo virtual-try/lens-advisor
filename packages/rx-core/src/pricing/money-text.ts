@@ -54,7 +54,7 @@ function fail(
  * Minor-unit digits for an ISO-4217 code: USD 2, JPY 0, KWD 3.
  * Unknown codes return null. Cached. Not a display formatter.
  */
-function minorUnitDigits(currency: string): number | null {
+export function minorUnitDigits(currency: string): number | null {
   const cached = digitCache.get(currency);
   if (cached !== undefined) {
     return cached;

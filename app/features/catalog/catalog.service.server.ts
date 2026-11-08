@@ -21,7 +21,7 @@ import {
   type RxType,
 } from "../../../packages/rx-core/src/index.js";
 import { getPrisma } from "../../shared/container/prisma.server";
-import { NotFoundError } from "../../shared/http/errors.server";
+import { ConflictError, NotFoundError } from "../../shared/http/errors.server";
 import {
   CatalogRepository,
   createCatalogRepository,
@@ -291,8 +291,15 @@ export class CatalogService {
 
   async deleteLensGroup(shopId: string, id: string): Promise<CatalogLensGroupDto> {
     const existing = await this.repository.getLensGroup(shopId, id);
-    if (!existing) {
+    if (!existing || existing.archivedAt) {
       throw new NotFoundError("LensGroup not found");
+    }
+    const activeLenses = (existing.lenses ?? []).filter((l) => !l.archivedAt);
+    if (activeLenses.length > 0) {
+      throw new ConflictError(
+        "Cannot archive a group that still has active lenses. Archive its lenses first.",
+        "GROUP_NOT_EMPTY",
+      );
     }
     const deleted = await this.repository.deleteLensGroup(shopId, id);
     return mapLensGroupToDto({ ...deleted, lenses: existing.lenses });
@@ -350,13 +357,17 @@ export class CatalogService {
       throw new ValidationError("LIMITS_INVERTED");
     }
 
-    // Verify groupId exists and belongs to shopId
+    // Verify groupId exists and belongs to shopId and is not archived
     const group = await this.repository.getLensGroup(shopId, valid.groupId);
-    if (!group) {
+    if (!group || group.archivedAt) {
       throw new NotFoundError("LensGroup not found");
     }
 
     return this.withAdvisoryLock(shopId, "lens", valid.groupId, async (repo) => {
+      const lockedGroup = await repo.getLensGroup(shopId, valid.groupId);
+      if (!lockedGroup || lockedGroup.archivedAt) {
+        throw new NotFoundError("LensGroup not found");
+      }
       // Enforce unique name within groupId among active lenses
       const lensesInGroup = await repo.listLenses(shopId, {
         groupId: valid.groupId,
@@ -400,14 +411,14 @@ export class CatalogService {
     const valid = validateInput(lensUpdateSchema, input);
 
     const existing = await this.repository.getLens(shopId, id);
-    if (!existing) {
+    if (!existing || existing.archivedAt) {
       throw new NotFoundError("Lens not found");
     }
 
     const targetGroupId = valid.groupId ?? existing.groupId;
-    if (valid.groupId && valid.groupId !== existing.groupId) {
+    if (valid.groupId !== undefined) {
       const group = await this.repository.getLensGroup(shopId, valid.groupId);
-      if (!group) {
+      if (!group || group.archivedAt) {
         throw new NotFoundError("LensGroup not found");
       }
     }
@@ -425,8 +436,19 @@ export class CatalogService {
       throw new ValidationError("LIMITS_INVERTED");
     }
 
-    const mergedAddMin = valid.addMin !== undefined ? valid.addMin : existing.addMin;
-    const mergedAddMax = valid.addMax !== undefined ? valid.addMax : existing.addMax;
+    const targetRxTypes = (valid.rxTypes ?? existing.rxTypes) as RxType[];
+    const supportsAdd =
+      targetRxTypes.includes("PROGRESSIVE") || targetRxTypes.includes("READING");
+
+    let addMinToSave = valid.addMin;
+    let addMaxToSave = valid.addMax;
+    if (!supportsAdd && valid.rxTypes !== undefined) {
+      if (addMinToSave === undefined) addMinToSave = null;
+      if (addMaxToSave === undefined) addMaxToSave = null;
+    }
+
+    const mergedAddMin = addMinToSave !== undefined ? addMinToSave : existing.addMin;
+    const mergedAddMax = addMaxToSave !== undefined ? addMaxToSave : existing.addMax;
     if (
       mergedAddMin !== null &&
       mergedAddMin !== undefined &&
@@ -454,8 +476,8 @@ export class CatalogService {
       sphMax: valid.sphMax,
       cylMin: valid.cylMin,
       cylMax: valid.cylMax,
-      addMin: valid.addMin,
-      addMax: valid.addMax,
+      addMin: addMinToSave,
+      addMax: addMaxToSave,
       labCodeTemplate: valid.labCodeTemplate,
       shopifyProductId: valid.shopifyProductId,
       shopifyVariantId: valid.shopifyVariantId,
@@ -465,6 +487,12 @@ export class CatalogService {
     if (valid.name !== undefined || (valid.groupId && valid.groupId !== existing.groupId)) {
       const targetName = valid.name ?? existing.name;
       return this.withAdvisoryLock(shopId, "lens", targetGroupId, async (repo) => {
+        if (valid.groupId !== undefined) {
+          const group = await repo.getLensGroup(shopId, valid.groupId);
+          if (!group || group.archivedAt) {
+            throw new NotFoundError("LensGroup not found");
+          }
+        }
         const lensesInGroup = await repo.listLenses(shopId, {
           groupId: targetGroupId,
           includeArchived: false,

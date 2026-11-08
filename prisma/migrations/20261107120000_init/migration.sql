@@ -159,6 +159,7 @@ CREATE TABLE "LabOrder" (
     "providerId" TEXT,
     "sentAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "LabOrder_pkey" PRIMARY KEY ("id")
 );
