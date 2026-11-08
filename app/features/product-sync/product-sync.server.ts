@@ -6,6 +6,7 @@ import {
   GET_PUBLICATIONS_QUERY,
   GET_VARIANT_PRODUCT_QUERY,
   PRODUCT_CREATE_MUTATION,
+  PRODUCT_DELETE_MUTATION,
   PRODUCT_UPDATE_MUTATION,
   PRODUCT_VARIANTS_BULK_UPDATE_MUTATION,
   PUBLISHABLE_PUBLISH_MUTATION,
@@ -50,6 +51,50 @@ function checkUserErrors(userErrors?: Array<{ field?: string[]; message: string 
   if (userErrors && userErrors.length > 0) {
     throw new SyncError(userErrors[0].message, "SYNC_FAILED");
   }
+}
+
+interface PublicationsData {
+  publications?: {
+    nodes?: Array<{ id: string; name: string }>;
+    pageInfo?: {
+      hasNextPage: boolean;
+      endCursor?: string | null;
+    };
+  };
+}
+
+async function findOnlineStorePublicationId(
+  admin: ProductSyncAdminClient,
+): Promise<string> {
+  let cursor: string | null = null;
+  let hasNextPage = true;
+  let pageCount = 0;
+  const maxPages = 50;
+
+  while (hasNextPage && pageCount < maxPages) {
+    pageCount++;
+    const publicationsData: PublicationsData = await executeGraphQL<PublicationsData>(
+      admin,
+      GET_PUBLICATIONS_QUERY,
+      cursor ? { after: cursor } : undefined,
+    );
+
+    const nodes = publicationsData.publications?.nodes ?? [];
+    const onlineStore = nodes.find(
+      (node) => node.name.trim().toLowerCase() === "online store",
+    );
+    if (onlineStore) {
+      return onlineStore.id;
+    }
+
+    hasNextPage = publicationsData.publications?.pageInfo?.hasNextPage === true;
+    cursor = publicationsData.publications?.pageInfo?.endCursor ?? null;
+    if (hasNextPage && !cursor) {
+      break;
+    }
+  }
+
+  throw new SyncError("Online Store publication not found", "SYNC_FAILED");
 }
 
 export async function syncItem(
@@ -158,7 +203,10 @@ export async function syncItem(
     };
   }
 
-  // 4. Create new product
+  // 4. Resolve Online Store publication (paginate until found; if absent, throw SyncError and do not markSynced)
+  const publicationId = await findOnlineStorePublicationId(admin);
+
+  // 5. Create new product
   const createData = await executeGraphQL<{
     productCreate: {
       product?: {
@@ -205,7 +253,27 @@ export async function syncItem(
     throw new SyncError("No variant generated for created product");
   }
 
-  // 5. Update variant price and inventory tracking
+  // Persist the Shopify product id immediately after productCreate succeeds (before variant update and publish).
+  // If persisting fails right after create, delete the just-created product (compensate) before throwing SyncError.
+  try {
+    await service.markSynced(shopId, entity, id, variantId, productId);
+  } catch (persistError) {
+    try {
+      await executeGraphQL(admin, PRODUCT_DELETE_MUTATION, {
+        input: { id: productId },
+      });
+    } catch {
+      // Ignore compensation failure so primary error is thrown
+    }
+    if (persistError instanceof SyncError) {
+      throw persistError;
+    }
+    throw new SyncError(
+      `Failed to persist synced product: ${persistError instanceof Error ? persistError.message : String(persistError)}`,
+    );
+  }
+
+  // 6. Update variant price and inventory tracking
   const variantUpdateData = await executeGraphQL<{
     productVariantsBulkUpdate: {
       productVariants?: Array<{ id: string; price: string }>;
@@ -226,36 +294,21 @@ export async function syncItem(
 
   checkUserErrors(variantUpdateData.productVariantsBulkUpdate?.userErrors);
 
-  // 6. Publish to Online Store channel
-  const publicationsData = await executeGraphQL<{
-    publications: {
-      nodes: Array<{ id: string; name: string }>;
+  // 7. Publish to Online Store channel
+  const publishData = await executeGraphQL<{
+    publishablePublish: {
+      userErrors?: Array<{ field?: string[]; message: string }>;
     };
-  }>(admin, GET_PUBLICATIONS_QUERY);
+  }>(admin, PUBLISHABLE_PUBLISH_MUTATION, {
+    id: productId,
+    input: [
+      {
+        publicationId,
+      },
+    ],
+  });
 
-  const onlineStore = publicationsData.publications?.nodes?.find(
-    (node) => node.name.toLowerCase() === "online store",
-  );
-
-  if (onlineStore) {
-    const publishData = await executeGraphQL<{
-      publishablePublish: {
-        userErrors?: Array<{ field?: string[]; message: string }>;
-      };
-    }>(admin, PUBLISHABLE_PUBLISH_MUTATION, {
-      id: productId,
-      input: [
-        {
-          publicationId: onlineStore.id,
-        },
-      ],
-    });
-
-    checkUserErrors(publishData.publishablePublish?.userErrors);
-  }
-
-  // 7. Mark synced in catalog DB
-  await service.markSynced(shopId, entity, id, variantId, productId);
+  checkUserErrors(publishData.publishablePublish?.userErrors);
 
   return {
     ok: true,

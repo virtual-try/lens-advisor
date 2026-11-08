@@ -7,11 +7,15 @@ export const SHOP_CURRENCY_QUERY = `#graphql
 `;
 
 export const GET_PUBLICATIONS_QUERY = `#graphql
-  query GetPublications {
-    publications(first: 20) {
+  query GetPublications($after: String) {
+    publications(first: 50, after: $after) {
       nodes {
         id
         name
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
       }
     }
   }
@@ -88,6 +92,18 @@ export const PRODUCT_UPDATE_MUTATION = `#graphql
         id
         status
       }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+export const PRODUCT_DELETE_MUTATION = `#graphql
+  mutation ProductDelete($input: ProductDeleteInput!) {
+    productDelete(input: $input) {
+      deletedProductId
       userErrors {
         field
         message

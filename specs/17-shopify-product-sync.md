@@ -106,4 +106,9 @@ Real, used now: Admin GraphQL. Tests: fake admin client recording mutations. Stu
     - `pnpm lint` (`eslint . --max-warnings 0`) -> exit 0
     - `pnpm build` -> exit 0
     - `git diff --check` -> exit 0
-- **2026-11-08** — Evidence (orchestro spec verify, tree 398dc041): install pass · typecheck pass · lint pass · build pass · test pass 530/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 415dc8f5): install pass · typecheck pass · lint pass · build pass · test pass 533/0/0
+- **2026-11-08** — Review R1 fixes applied by agy-1:
+  - R1-F2: Persist Shopify product and variant IDs immediately after `productCreate` succeeds via `markSynced`. On partial failure before publish, retry reuses the stored IDs without duplicating the product. Added compensation (`PRODUCT_DELETE_MUTATION`) to delete the newly created product if persisting fails immediately after creation before throwing `SyncError`.
+  - R1-F3: Added `findOnlineStorePublicationId` helper paginating `publications(first: 50, after: $after)` until "Online Store" is found. If absent, throws `SyncError` and does not call `markSynced` or `productCreate`.
+  - Tests: Added tests for variant update failure retry (exactly 1 `ProductCreate` call overall, stored ID reused), compensation on persist failure, publication pagination on later page, and absent publication failure.
+  - Gates: test 533 passed (33 files), typecheck passed, lint passed, build passed.

@@ -7,7 +7,7 @@
 - Converts minor units to a decimal string via `toShopifyDecimal` (INV-4).
 - For unpriced option values (delta 0), skips sync without creating a Shopify product (`{ ok: true, skipped: true }`).
 - Idempotent on retry: looks up stored IDs first; if `shopifyVariantId` already exists, only updates variant price via `productVariantsBulkUpdate` (with `inventoryItem: { tracked: false }`), never recreating the product.
-- For new items, creates a Shopify product with title (`"Lens: <name>"`, `"Option: <label>"`, or `"Add-on: <name>"`), vendor `"Lens Advisor"`, tag `lens-advisor-item`, status `ACTIVE`, and metafield `seo.hidden = 1` (integer) to exclude it from storefront search and sitemaps. Updates variant price, publishes to the Online Store channel (`publishablePublish`), and updates Postgres with `markSynced`.
+- For new items, creates a Shopify product with title (`"Lens: <name>"`, `"Option: <label>"`, or `"Add-on: <name>"`), vendor `"Lens Advisor"`, tag `lens-advisor-item`, status `ACTIVE`, and metafield `seo.hidden = 1` (integer) to exclude it from storefront search and sitemaps. Persists IDs to Postgres immediately via `markSynced` (compensating with `productDelete` if persisting fails), updates variant price, and publishes to the Online Store channel (`publishablePublish`, with paginated publication resolution).
 - Throws `SyncError` on GraphQL `userErrors` or network/API failure, leaving the catalog DB row unchanged.
 **Use instead of:** direct Shopify GraphQL mutations or ad-hoc product creation in admin route actions.
 **Added by:** spec 17.

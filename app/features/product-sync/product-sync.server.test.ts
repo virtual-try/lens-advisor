@@ -49,6 +49,10 @@ interface FakeAdminOptions {
   publishUserErrors?: Array<{ field?: string[]; message: string }>;
   productUpdateUserErrors?: Array<{ field?: string[]; message: string }>;
   topLevelErrors?: Array<{ message: string }>;
+  publicationsPages?: Array<{
+    nodes: Array<{ id: string; name: string }>;
+    pageInfo?: { hasNextPage: boolean; endCursor?: string | null };
+  }>;
   customHandler?: (
     query: string,
     variables?: Record<string, unknown>,
@@ -95,6 +99,34 @@ function createFakeAdminClient(options: FakeAdminOptions = {}) {
 
     // 2. Publications
     if (query.includes("GetPublications")) {
+      if (options.publicationsPages && options.publicationsPages.length > 0) {
+        const after = init?.variables?.after as string | undefined;
+        let page;
+        if (!after) {
+          page = options.publicationsPages[0];
+        } else {
+          const prevIdx = options.publicationsPages.findIndex(
+            (p) => p.pageInfo?.endCursor === after,
+          );
+          page =
+            prevIdx >= 0 && prevIdx + 1 < options.publicationsPages.length
+              ? options.publicationsPages[prevIdx + 1]
+              : undefined;
+        }
+
+        return new Response(
+          JSON.stringify({
+            data: {
+              publications: page ?? {
+                nodes: [],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
       return new Response(
         JSON.stringify({
           data: {
@@ -258,6 +290,22 @@ function createFakeAdminClient(options: FakeAdminOptions = {}) {
                 id: vars.product?.id ?? "gid://shopify/Product/1",
                 status: vars.product?.status ?? "DRAFT",
               },
+              userErrors: [],
+            },
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // 8. Product delete (compensation)
+    if (query.includes("ProductDelete")) {
+      const vars = (init?.variables ?? {}) as { input?: { id?: string } };
+      return new Response(
+        JSON.stringify({
+          data: {
+            productDelete: {
+              deletedProductId: vars.input?.id ?? "gid://shopify/Product/1",
               userErrors: [],
             },
           },
@@ -993,11 +1041,11 @@ describe("Shopify Product Sync (DB-backed)", { timeout: 60_000 }, () => {
       ).rejects.toThrow(new SyncError("Throttled: API rate limit exceeded"));
     });
 
-    it("handles userErrors in variant bulk update: throws and leaves catalog unchanged", async () => {
+    it("R1-F2: variant update fails once, retry -> exactly one productCreate call overall and the stored id is reused", async () => {
       const groups = await service.listLensGroups(shopA);
       const lens = await service.createLens(shopA, {
         groupId: groups[0].id,
-        name: "Variant Update Error Lens",
+        name: "Retry Partial Failure Lens",
         priceMinor: 4000,
         currency: "USD",
         rxTypes: ["SINGLE_VISION"],
@@ -1005,25 +1053,115 @@ describe("Shopify Product Sync (DB-backed)", { timeout: 60_000 }, () => {
         sphMax: 100,
         cylMin: 0,
         cylMax: 0,
-        labCodeTemplate: "ERR-2",
+        labCodeTemplate: "R1F2-1",
       });
 
+      let variantUpdateAttempts = 0;
       const fake = createFakeAdminClient({
         shopCurrency: "USD",
-        variantBulkUpdateUserErrors: [{ message: "Invalid variant price" }],
+        customHandler: (query) => {
+          if (query.includes("ProductVariantsBulkUpdate")) {
+            variantUpdateAttempts++;
+            if (variantUpdateAttempts === 1) {
+              return new Response(
+                JSON.stringify({
+                  data: {
+                    productVariantsBulkUpdate: {
+                      productVariants: [],
+                      userErrors: [{ field: ["price"], message: "Temporary variant update failure" }],
+                    },
+                  },
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } },
+              );
+            }
+          }
+          return undefined;
+        },
       });
 
+      // Call 1: fails at variant update
       await expect(
         syncItem(fake.admin, shopA, "lens", lens.id, {
           catalogService: service,
         }),
-      ).rejects.toThrow(new SyncError("Invalid variant price"));
+      ).rejects.toThrow(new SyncError("Temporary variant update failure"));
 
-      const check = await service.getLens(shopA, lens.id);
-      expect(check.shopifyVariantId).toBeNull();
+      // Exactly 1 productCreate call so far
+      expect(fake.countCalls("ProductCreate")).toBe(1);
+
+      // Verify IDs are persisted in catalog DB immediately after productCreate succeeded
+      const intermediate = await service.getLens(shopA, lens.id);
+      expect(intermediate.shopifyProductId).toBeTruthy();
+      expect(intermediate.shopifyVariantId).toBeTruthy();
+
+      // Call 2: retry on the same item succeeds
+      const retryRes = await syncItem(fake.admin, shopA, "lens", lens.id, {
+        catalogService: service,
+      });
+
+      expect(retryRes.ok).toBe(true);
+      expect(retryRes.updated).toBe(true);
+      // ProductCreate call count remains EXACTLY 1 overall!
+      expect(fake.countCalls("ProductCreate")).toBe(1);
+      // Stored IDs are reused
+      expect(retryRes.productId).toBe(intermediate.shopifyProductId);
+      expect(retryRes.variantId).toBe(intermediate.shopifyVariantId);
+
+      const finalLens = await service.getLens(shopA, lens.id);
+      expect(finalLens.shopifyProductId).toBe(intermediate.shopifyProductId);
+      expect(finalLens.shopifyVariantId).toBe(intermediate.shopifyVariantId);
     });
 
-    it("handles userErrors in publish: throws and leaves catalog unchanged", async () => {
+    it("R1-F2 compensation: if persisting fails right after create, deletes created product before throwing SyncError", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const lens = await service.createLens(shopA, {
+        groupId: groups[0].id,
+        name: "Persist Failure Lens",
+        priceMinor: 4000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -100,
+        sphMax: 100,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "R1F2-2",
+      });
+
+      const fake = createFakeAdminClient({ shopCurrency: "USD" });
+
+      const spy = vi
+        .spyOn(service, "markSynced")
+        .mockRejectedValueOnce(new Error("DB connection lost during markSynced"));
+
+      try {
+        await expect(
+          syncItem(fake.admin, shopA, "lens", lens.id, {
+            catalogService: service,
+          }),
+        ).rejects.toThrow(
+          new SyncError("Failed to persist synced product: DB connection lost during markSynced"),
+        );
+      } finally {
+        spy.mockRestore();
+      }
+
+      // Product was created...
+      expect(fake.countCalls("ProductCreate")).toBe(1);
+      // ...and compensated via ProductDelete!
+      expect(fake.countCalls("ProductDelete")).toBe(1);
+      const deleteCall = fake.findCall("ProductDelete");
+      expect(deleteCall?.variables).toEqual({
+        input: { id: "gid://shopify/Product/1" },
+      });
+
+      // DB row untouched
+      const untouched = await service.getLens(shopA, lens.id);
+      expect(untouched.shopifyProductId).toBeNull();
+      expect(untouched.shopifyVariantId).toBeNull();
+    });
+
+    it("handles userErrors in publish: throws SyncError and persists IDs so retry reuses them", async () => {
       const groups = await service.listLensGroups(shopA);
       const lens = await service.createLens(shopA, {
         groupId: groups[0].id,
@@ -1050,6 +1188,112 @@ describe("Shopify Product Sync (DB-backed)", { timeout: 60_000 }, () => {
       ).rejects.toThrow(new SyncError("Publication access denied"));
 
       const check = await service.getLens(shopA, lens.id);
+      expect(check.shopifyVariantId).toBeTruthy();
+      expect(check.shopifyProductId).toBeTruthy();
+    });
+
+    it("R1-F3: paginates publications until Online Store is found on a later page", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const lens = await service.createLens(shopA, {
+        groupId: groups[0].id,
+        name: "Later Page Publication Lens",
+        priceMinor: 4000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -100,
+        sphMax: 100,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "R1F3-1",
+      });
+
+      const fake = createFakeAdminClient({
+        shopCurrency: "USD",
+        publicationsPages: [
+          {
+            nodes: [
+              { id: "gid://shopify/Publication/1", name: "Point of Sale" },
+              { id: "gid://shopify/Publication/2", name: "Shopify Inbox" },
+            ],
+            pageInfo: { hasNextPage: true, endCursor: "page-1-cursor" },
+          },
+          {
+            nodes: [
+              { id: "gid://shopify/Publication/888", name: "Online Store" },
+            ],
+            pageInfo: { hasNextPage: false, endCursor: null },
+          },
+        ],
+      });
+
+      const result = await syncItem(fake.admin, shopA, "lens", lens.id, {
+        catalogService: service,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.created).toBe(true);
+
+      // Paginates: called GetPublications twice
+      expect(fake.countCalls("GetPublications")).toBe(2);
+      const firstPubCall = fake.calls.filter((c) => c.query.includes("GetPublications"))[0];
+      const secondPubCall = fake.calls.filter((c) => c.query.includes("GetPublications"))[1];
+      expect(firstPubCall.variables).toBeUndefined();
+      expect(secondPubCall.variables).toEqual({ after: "page-1-cursor" });
+
+      // Published to publication 888 found on page 2
+      expect(fake.countCalls("PublishablePublish")).toBe(1);
+      const pubCall = fake.findCall("PublishablePublish");
+      expect(pubCall?.variables).toEqual({
+        id: result.productId,
+        input: [{ publicationId: "gid://shopify/Publication/888" }],
+      });
+
+      // Item marked synced
+      const synced = await service.getLens(shopA, lens.id);
+      expect(synced.shopifyProductId).toBe(result.productId);
+      expect(synced.shopifyVariantId).toBe(result.variantId);
+    });
+
+    it("R1-F3: throws SyncError and does not markSynced when Online Store publication is absent", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const lens = await service.createLens(shopA, {
+        groupId: groups[0].id,
+        name: "Missing Online Store Lens",
+        priceMinor: 4000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -100,
+        sphMax: 100,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "R1F3-2",
+      });
+
+      const fake = createFakeAdminClient({
+        shopCurrency: "USD",
+        publicationsPages: [
+          {
+            nodes: [
+              { id: "gid://shopify/Publication/1", name: "Point of Sale" },
+              { id: "gid://shopify/Publication/2", name: "Shopify Inbox" },
+            ],
+            pageInfo: { hasNextPage: false, endCursor: null },
+          },
+        ],
+      });
+
+      await expect(
+        syncItem(fake.admin, shopA, "lens", lens.id, {
+          catalogService: service,
+        }),
+      ).rejects.toThrow(new SyncError("Online Store publication not found", "SYNC_FAILED"));
+
+      // Product was NOT created
+      expect(fake.countCalls("ProductCreate")).toBe(0);
+
+      // markSynced was NOT called: catalog DB row remains un-synced
+      const check = await service.getLens(shopA, lens.id);
+      expect(check.shopifyProductId).toBeNull();
       expect(check.shopifyVariantId).toBeNull();
     });
 
