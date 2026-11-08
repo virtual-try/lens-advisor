@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { BadRequestError } from "../../shared/http/errors.server";
+import { BadRequestError, UnauthorizedError, errorResponse } from "../../shared/http/errors.server";
 import { registerJob, type AnyJobDefinition } from "../../shared/queue/define-job";
 import { resolveComplianceDeps, resolveCompliancePrisma } from "./deps.server";
 import {
@@ -9,6 +9,7 @@ import {
   shopRedactJob,
 } from "./jobs.server";
 import {
+  complianceRequestHandled,
   deleteUnfinishedComplianceRequest,
   findShopByDomain,
   insertComplianceRequest,
@@ -36,6 +37,18 @@ export type VerifiedWebhook = {
   payload: unknown;
 };
 
+/**
+ * `authenticate.webhook` throws an empty Response for a bad signature (401) or
+ * other webhook-auth rejection (400). INV-6 requires the canonical error body.
+ * Any other Response, including 405, is left untouched.
+ */
+export function authenticationErrorResponse(error: unknown): Response | undefined {
+  if (!(error instanceof Response)) return undefined;
+  if (error.status === 401) return errorResponse(new UnauthorizedError());
+  if (error.status === 400) return errorResponse(new BadRequestError());
+  return undefined;
+}
+
 export async function handleComplianceWebhook(input: VerifiedWebhook): Promise<Response> {
   const topic = complianceTopic(input.topic);
   if (!topic) {
@@ -59,7 +72,14 @@ export async function handleComplianceWebhook(input: VerifiedWebhook): Promise<R
     topic,
     shopifyRequestId: webhookId.data,
   });
-  if (!inserted.created) {
+  // A duplicate whose row is already handled is a pure no-op. An unfinished
+  // duplicate is enqueued again with the same singleton key (INV-8): a crash
+  // after insert and before enqueue must not ack the webhook with no job.
+  const unfinished =
+    inserted.created ||
+    (inserted.id.length > 0 &&
+      !(await complianceRequestHandled(deps.prisma, shop.id, inserted.id)));
+  if (!unfinished) {
     return new Response(null, { status: 200 });
   }
 
@@ -70,9 +90,11 @@ export async function handleComplianceWebhook(input: VerifiedWebhook): Promise<R
       singletonKey: webhookId.data,
     });
   } catch (error) {
-    await deleteUnfinishedComplianceRequest(deps.prisma, shop.id, inserted.id).catch(
-      () => undefined,
-    );
+    if (inserted.created) {
+      await deleteUnfinishedComplianceRequest(deps.prisma, shop.id, inserted.id).catch(
+        () => undefined,
+      );
+    }
     throw error;
   }
 

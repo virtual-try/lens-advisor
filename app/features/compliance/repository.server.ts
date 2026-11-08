@@ -48,8 +48,9 @@ export type InsertedComplianceRequest = {
 };
 
 /**
- * One row per Shopify webhook id. A duplicate id is not an error: the caller
- * must not enqueue a second job (INV-8).
+ * One row per Shopify webhook id. A duplicate id is not an error. The caller
+ * re-enqueues while the row is unfinished; the queue singleton key keeps that
+ * to one job (INV-8). A row that is already handled is a no-op.
  */
 export async function insertComplianceRequest(
   db: ComplianceDb,

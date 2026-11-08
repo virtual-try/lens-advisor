@@ -92,4 +92,4 @@ Real, used now: 02, 06, 07, 08. Tests: fake object store and mailer; real DB and
   - `pnpm vitest run app/features/compliance` → `Test Files  1 passed (1)` / `Tests  11 passed (11)`
   - `pnpm test` → `Test Files  39 passed (39)` / `Tests  571 passed (571)`
   - `pnpm build` exit 0
-- **2026-11-08** — Evidence (orchestro spec verify, tree 7965d99d): install pass · typecheck pass · lint pass · build pass · test pass 571/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 8c4ddb17): install pass · typecheck pass · lint pass · build pass · test pass 576/0/0

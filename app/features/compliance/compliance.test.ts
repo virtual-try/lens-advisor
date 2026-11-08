@@ -31,6 +31,16 @@ vi.mock("../../shopify.server", async (importOriginal) => {
       timingSafeEqual(providedBytes, expectedBytes);
     if (!valid) return actual.authenticate.webhook(request);
 
+    const topic = request.headers.get("X-Shopify-Topic") ?? "";
+    const shop = request.headers.get("X-Shopify-Shop-Domain") ?? "";
+    const id = request.headers.get("X-Shopify-Webhook-Id") ?? "";
+    const apiVersion = request.headers.get("X-Shopify-API-Version") ?? "";
+    // A valid signature with a missing webhook header is Shopify's non-HMAC
+    // auth failure (empty 400). Delegate so the route maps that Response.
+    if (!topic || !shop || !id || !apiVersion) {
+      return actual.authenticate.webhook(request);
+    }
+
     let payload: unknown;
     try {
       payload = raw === "" ? {} : JSON.parse(raw);
@@ -224,20 +234,23 @@ async function post(
   mode: "valid" | "forged",
   domain: string,
   id: string,
+  options?: { omitHeaders?: readonly string[] },
 ): Promise<Response> {
   const raw = typeof body === "string" ? body : JSON.stringify(body);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Shopify-Hmac-Sha256": mode === "valid" ? sign(raw) : "forged-not-a-signature",
+    "X-Shopify-Topic": topic,
+    "X-Shopify-Shop-Domain": domain,
+    "X-Shopify-API-Version": "2026-10",
+    "X-Shopify-Webhook-Id": id,
+  };
+  for (const name of options?.omitHeaders ?? []) delete headers[name];
   const request = new Request(
     `https://app.example.test${route === "compliance" ? "/webhooks/compliance" : "/webhooks/app/uninstalled"}`,
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shopify-Hmac-Sha256": mode === "valid" ? sign(raw) : "forged-not-a-signature",
-        "X-Shopify-Topic": topic,
-        "X-Shopify-Shop-Domain": domain,
-        "X-Shopify-API-Version": "2026-10",
-        "X-Shopify-Webhook-Id": id,
-      },
+      headers,
       body: raw,
     },
   );
@@ -675,7 +688,7 @@ describe("Examples", () => {
     expect(await prisma.prescription.findUnique({ where: { id: rxB.id } })).not.toBeNull();
   }, DB_MS);
 
-  it("returns 401 for a forged HMAC on every compliance topic and app/uninstalled", async () => {
+  it("returns the canonical error body for webhook auth failures and calls no repository", async () => {
     const prisma = database();
     const shop = await seedShop(prisma, shopDomain("hmac"));
     await prisma.session.create({
@@ -689,15 +702,43 @@ describe("Examples", () => {
     });
     const beforeJobs = await jobTotal();
     const beforeRequests = await prisma.complianceRequest.count({ where: { shopId: shop.shopId } });
+    let repositoryCalls = 0;
+    setComplianceDepsForTests({
+      prisma: countingPrisma(prisma, () => {
+        repositoryCalls += 1;
+      }),
+      queue: testQueue(),
+      objectStore: objectStore as ObjectStore,
+      mailer,
+      cipher,
+      logger,
+      shopContactEmail: async () => CONTACT,
+    });
     const cases: [string, "compliance" | "uninstalled", unknown][] = [
       ["customers/redact", "compliance", { orders_to_redact: [1001] }],
       ["customers/data_request", "compliance", { orders_requested: [1001] }],
       ["shop/redact", "compliance", { shop_id: 1 }],
       ["app/uninstalled", "uninstalled", { myshopify_domain: shop.domain }],
     ];
-    for (const [topic, route, body] of cases) {
-      const response = await post(route, topic, body, "forged", shop.domain, webhookId());
-      expect(response.status).toBe(401);
+    try {
+      for (const [topic, route, body] of cases) {
+        const forged = await post(route, topic, body, "forged", shop.domain, webhookId());
+        expect(forged.status).toBe(401);
+        expect(await errorBody(forged)).toEqual({
+          error: { code: "UNAUTHORIZED", message: "Unauthorized" },
+        });
+
+        const rejected = await post(route, topic, body, "valid", shop.domain, webhookId(), {
+          omitHeaders: ["X-Shopify-Webhook-Id"],
+        });
+        expect(rejected.status).toBe(400);
+        expect(await errorBody(rejected)).toEqual({
+          error: { code: "BAD_REQUEST", message: "Bad request" },
+        });
+      }
+      expect(repositoryCalls).toBe(0);
+    } finally {
+      applyDeps();
     }
     expect(await prisma.complianceRequest.count({ where: { shopId: shop.shopId } })).toBe(
       beforeRequests,
@@ -795,6 +836,7 @@ describe("webhook boundaries", () => {
   it("app/uninstalled marks the shop, deletes sessions, and keeps prescription rows", async () => {
     const prisma = database();
     const shop = await seedShop(prisma, shopDomain("bye"));
+    const shopB = await seedShop(prisma, shopDomain("bye-b"));
     const rx = await prisma.prescription.findFirstOrThrow({ where: { shopId: shop.shopId } });
     await prisma.session.create({
       data: {
@@ -804,6 +846,19 @@ describe("webhook boundaries", () => {
         isOnline: false,
         accessToken: "fake-token",
       },
+    });
+    await prisma.session.create({
+      data: {
+        id: `offline_${shopB.domain}`,
+        shop: shopB.domain,
+        state: "fixture-b",
+        isOnline: false,
+        accessToken: "fake-token-b",
+      },
+    });
+    const shopBBefore = await prisma.shop.findUniqueOrThrow({ where: { id: shopB.shopId } });
+    const sessionBBefore = await prisma.session.findUniqueOrThrow({
+      where: { id: `offline_${shopB.domain}` },
     });
     const first = await post(
       "uninstalled",
@@ -830,6 +885,300 @@ describe("webhook boundaries", () => {
     expect(second.status).toBe(200);
     const again = await prisma.shop.findUniqueOrThrow({ where: { id: shop.shopId } });
     expect(again.uninstalledAt?.toISOString()).toBe(marked.uninstalledAt?.toISOString());
+
+    const shopBAfter = await prisma.shop.findUniqueOrThrow({ where: { id: shopB.shopId } });
+    expect(shopBAfter.domain).toBe(shopBBefore.domain);
+    expect(shopBAfter.uninstalledAt).toBeNull();
+    expect(shopBAfter.installedAt.toISOString()).toBe(shopBBefore.installedAt.toISOString());
+    expect(await prisma.session.findUnique({ where: { id: sessionBBefore.id } })).toMatchObject({
+      shop: sessionBBefore.shop,
+      state: sessionBBefore.state,
+      accessToken: sessionBBefore.accessToken,
+      isOnline: sessionBBefore.isOnline,
+    });
+  }, DB_MS);
+
+  it("re-enqueues one job when insert committed and the process died before enqueue", async () => {
+    const prisma = database();
+    const shop = await seedShop(prisma, shopDomain("died"));
+    const id = webhookId();
+    const persisted = await prisma.complianceRequest.create({
+      data: {
+        shopId: shop.shopId,
+        topic: "customers/redact",
+        shopifyRequestId: id,
+      },
+    });
+    const response = await post(
+      "compliance",
+      "customers/redact",
+      { orders_to_redact: [1001], customer: { id: 191167 } },
+      "valid",
+      shop.domain,
+      id,
+    );
+    expect(response.status).toBe(200);
+    expect(
+      await prisma.complianceRequest.count({ where: { shopifyRequestId: id } }),
+    ).toBe(1);
+    const jobs = await testQueue().findJobs(customersRedactJob.name, {
+      data: { shopId: shop.shopId },
+    });
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]?.data).toMatchObject({
+      complianceRequestId: persisted.id,
+      shopId: shop.shopId,
+      orderIds: ["1001"],
+      customerId: "191167",
+    });
+  }, DB_MS);
+
+  it("does not enqueue when the duplicate compliance request is already handled", async () => {
+    const prisma = database();
+    const shop = await seedShop(prisma, shopDomain("done"));
+    const id = webhookId();
+    await prisma.complianceRequest.create({
+      data: {
+        shopId: shop.shopId,
+        topic: "customers/redact",
+        shopifyRequestId: id,
+        handledAt: new Date("2026-02-01T00:00:00.000Z"),
+      },
+    });
+    const before = await jobTotal();
+    const response = await post(
+      "compliance",
+      "customers/redact",
+      { orders_to_redact: [1001] },
+      "valid",
+      shop.domain,
+      id,
+    );
+    expect(response.status).toBe(200);
+    expect(await jobTotal()).toBe(before);
+    expect(
+      await prisma.complianceRequest.count({ where: { shopifyRequestId: id } }),
+    ).toBe(1);
+  }, DB_MS);
+
+  it("enqueue failure deletes only this shop's unfinished request and leaves shop B", async () => {
+    const prisma = database();
+    const shopA = await seedShop(prisma, shopDomain("enq-a"));
+    const shopB = await seedShop(prisma, shopDomain("enq-b"));
+    await prisma.session.create({
+      data: {
+        id: `offline_${shopA.domain}`,
+        shop: shopA.domain,
+        state: "fixture",
+        isOnline: false,
+        accessToken: "fake-token-a",
+      },
+    });
+    await prisma.session.create({
+      data: {
+        id: `offline_${shopB.domain}`,
+        shop: shopB.domain,
+        state: "fixture-b",
+        isOnline: false,
+        accessToken: "fake-token-b",
+      },
+    });
+    const shopBBefore = await prisma.shop.findUniqueOrThrow({ where: { id: shopB.shopId } });
+    const sessionBBefore = await prisma.session.findUniqueOrThrow({
+      where: { id: `offline_${shopB.domain}` },
+    });
+    const requestB = await prisma.complianceRequest.findFirstOrThrow({
+      where: { shopId: shopB.shopId },
+    });
+    const id = webhookId();
+    setComplianceDepsForTests({
+      prisma,
+      queue: queueThatRejectsEnqueue(testQueue()),
+      objectStore: objectStore as ObjectStore,
+      mailer,
+      cipher,
+      logger,
+      shopContactEmail: async () => CONTACT,
+    });
+    try {
+      const response = await post(
+        "compliance",
+        "customers/redact",
+        { orders_to_redact: [1001] },
+        "valid",
+        shopA.domain,
+        id,
+      );
+      expect(response.status).toBe(500);
+    } finally {
+      applyDeps();
+    }
+
+    expect(
+      await prisma.complianceRequest.findUnique({ where: { shopifyRequestId: id } }),
+    ).toBeNull();
+    expect(await testQueue().findJobs(customersRedactJob.name, { data: { shopId: shopA.shopId } })).toEqual(
+      [],
+    );
+    const shopBAfter = await prisma.shop.findUniqueOrThrow({ where: { id: shopB.shopId } });
+    expect(shopBAfter.domain).toBe(shopBBefore.domain);
+    expect(shopBAfter.uninstalledAt).toBeNull();
+    expect(shopBAfter.installedAt.toISOString()).toBe(shopBBefore.installedAt.toISOString());
+    expect(await prisma.session.findUnique({ where: { id: sessionBBefore.id } })).toMatchObject({
+      shop: sessionBBefore.shop,
+      state: sessionBBefore.state,
+      accessToken: sessionBBefore.accessToken,
+      isOnline: sessionBBefore.isOnline,
+    });
+    expect(await prisma.complianceRequest.findUnique({ where: { id: requestB.id } })).toMatchObject({
+      shopId: shopB.shopId,
+      handledAt: null,
+    });
+    expect(await prisma.session.findUnique({ where: { id: `offline_${shopA.domain}` } })).toMatchObject({
+      shop: shopA.domain,
+      accessToken: "fake-token-a",
+    });
+    expect((await prisma.shop.findUniqueOrThrow({ where: { id: shopA.shopId } })).uninstalledAt).toBeNull();
+  }, DB_MS);
+
+  it("retries customer redaction after storage succeeds and the database throws", async () => {
+    const prisma = database();
+    const shopA = await seedShop(prisma, shopDomain("retry-rx-a"));
+    const shopB = await seedShop(prisma, shopDomain("retry-rx-b"));
+    const rxA = await prisma.prescription.findFirstOrThrow({ where: { shopId: shopA.shopId } });
+    const rxB = await prisma.prescription.findFirstOrThrow({ where: { shopId: shopB.shopId } });
+    const request = await prisma.complianceRequest.create({
+      data: {
+        shopId: shopA.shopId,
+        topic: "customers/redact",
+        shopifyRequestId: webhookId(),
+      },
+    });
+    const beforeB = await snapshot(prisma, shopB.shopId);
+    const keyA = buildRxKey(shopA.shopId, rxA.id, "file", "pdf");
+    const keyB = buildRxKey(shopB.shopId, rxB.id, "file", "pdf");
+    loadMemoryStore([keyA, keyB]);
+    const flaky = prismaThatThrowsOnceOnTransaction(prisma);
+    setComplianceDepsForTests({
+      prisma: flaky,
+      queue: testQueue(),
+      objectStore: objectStore as ObjectStore,
+      mailer,
+      cipher,
+      logger,
+      shopContactEmail: async () => CONTACT,
+    });
+
+    const payload = {
+      complianceRequestId: request.id,
+      shopId: shopA.shopId,
+      orderIds: ["1001"],
+    };
+    try {
+      await expect(customersRedactJob.handler(payload, jobContext())).rejects.toThrow(
+        "injected database failure",
+      );
+      expect(storedKeys?.has(keyA)).toBe(false);
+      expect(storedKeys?.has(keyB)).toBe(true);
+      expect(await prisma.prescription.findUnique({ where: { id: rxA.id } })).not.toBeNull();
+      expect(
+        (await prisma.complianceRequest.findUniqueOrThrow({ where: { id: request.id } })).handledAt,
+      ).toBeNull();
+
+      await customersRedactJob.handler(payload, jobContext());
+    } finally {
+      applyDeps();
+    }
+
+    expect(await prisma.prescription.findUnique({ where: { id: rxA.id } })).toBeNull();
+    expect(await prisma.prescription.findUnique({ where: { id: rxB.id } })).not.toBeNull();
+    expect(storedKeys?.has(keyA)).toBe(false);
+    expect(storedKeys?.has(keyB)).toBe(true);
+    const lab = await prisma.labOrder.findFirstOrThrow({
+      where: { shopId: shopA.shopId, shopifyOrderId: "1001" },
+    });
+    expect(lab.prescriptionId).toBeNull();
+    expect(
+      (await prisma.complianceRequest.findUniqueOrThrow({ where: { id: request.id } })).handledAt,
+    ).not.toBeNull();
+    expect(await snapshot(prisma, shopB.shopId)).toEqual(beforeB);
+  }, DB_MS);
+
+  it("retries shop redaction after the database commits and storage throws", async () => {
+    const prisma = database();
+    const shopA = await seedShop(prisma, shopDomain("retry-shop-a"));
+    const shopB = await seedShop(prisma, shopDomain("retry-shop-b"));
+    await prisma.session.create({
+      data: {
+        id: `offline_${shopA.domain}`,
+        shop: shopA.domain,
+        state: "fixture",
+        isOnline: false,
+        accessToken: "fake-token-a",
+      },
+    });
+    await prisma.session.create({
+      data: {
+        id: `offline_${shopB.domain}`,
+        shop: shopB.domain,
+        state: "fixture-b",
+        isOnline: false,
+        accessToken: "fake-token-b",
+      },
+    });
+    const beforeB = await snapshot(prisma, shopB.shopId);
+    const keyA = buildRxKey(shopA.shopId, "rx-a", "file", "pdf");
+    const keyB = buildRxKey(shopB.shopId, "rx-b", "file", "pdf");
+    const ticket = `shops/${shopA.shopId}/tickets/lab.pdf`;
+    loadMemoryStore([keyA, keyB, ticket]);
+    const store = objectStore as ObjectStore;
+    setComplianceDepsForTests({
+      prisma,
+      queue: testQueue(),
+      objectStore: objectStoreThatThrowsOnce(store),
+      mailer,
+      cipher,
+      logger,
+      shopContactEmail: async () => CONTACT,
+    });
+
+    const request = await prisma.complianceRequest.findFirstOrThrow({
+      where: { shopId: shopA.shopId },
+    });
+    const payload = { complianceRequestId: request.id, shopId: shopA.shopId };
+    try {
+      await expect(shopRedactJob.handler(payload, jobContext())).rejects.toThrow(
+        "injected storage failure",
+      );
+      for (const name of dmmfShopModelNames()) {
+        expect(await countModel(prisma, name, shopA.shopId)).toBe(0);
+      }
+      expect(storedKeys?.has(keyA)).toBe(true);
+      expect(storedKeys?.has(ticket)).toBe(true);
+      expect(await prisma.session.findUnique({ where: { id: `offline_${shopA.domain}` } })).toBeNull();
+      expect(await snapshot(prisma, shopB.shopId)).toEqual(beforeB);
+      expect(await prisma.session.findUnique({ where: { id: `offline_${shopB.domain}` } })).toMatchObject({
+        shop: shopB.domain,
+        accessToken: "fake-token-b",
+      });
+
+      await shopRedactJob.handler(payload, jobContext());
+    } finally {
+      applyDeps();
+    }
+
+    expect(storedKeys?.has(keyA)).toBe(false);
+    expect(storedKeys?.has(ticket)).toBe(false);
+    expect(storedKeys?.has(keyB)).toBe(true);
+    for (const name of dmmfShopModelNames()) {
+      expect(await countModel(prisma, name, shopA.shopId)).toBe(0);
+    }
+    expect(await snapshot(prisma, shopB.shopId)).toEqual(beforeB);
+    expect(await prisma.session.findUnique({ where: { id: `offline_${shopB.domain}` } })).toMatchObject({
+      shop: shopB.domain,
+      state: "fixture-b",
+      accessToken: "fake-token-b",
+    });
   }, DB_MS);
 
   it("rolls back shop redaction when a delete fails inside the transaction", async () => {
@@ -868,6 +1217,92 @@ async function jobTotal(): Promise<number> {
     }
   }
   return total;
+}
+
+async function errorBody(response: Response): Promise<unknown> {
+  expect(response.headers.get("Content-Type")).toContain("application/json");
+  return response.json();
+}
+
+/** Counts Prisma calls made through the compliance repository and uninstall writes. */
+function countingPrisma(prisma: PrismaClient, onCall: () => void): PrismaClient {
+  return new Proxy(prisma, {
+    get(target, prop, receiver) {
+      const value: unknown = Reflect.get(target, prop, receiver);
+      if (typeof value === "function") {
+        return (...args: unknown[]) => {
+          onCall();
+          return (value as (...inner: unknown[]) => unknown).apply(target, args);
+        };
+      }
+      if (value && typeof value === "object") {
+        return new Proxy(value, {
+          get(model, modelProp, modelReceiver) {
+            const method: unknown = Reflect.get(model, modelProp, modelReceiver);
+            if (typeof method !== "function") return method;
+            return (...args: unknown[]) => {
+              onCall();
+              return (method as (...inner: unknown[]) => unknown).apply(model, args);
+            };
+          },
+        });
+      }
+      return value;
+    },
+  }) as PrismaClient;
+}
+
+function queueThatRejectsEnqueue(inner: Queue): Queue {
+  return new Proxy(inner, {
+    get(target, prop, receiver) {
+      if (prop === "enqueue") {
+        return async () => {
+          throw new Error("enqueue failed");
+        };
+      }
+      const value: unknown = Reflect.get(target, prop, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+function prismaThatThrowsOnceOnTransaction(prisma: PrismaClient): PrismaClient {
+  let thrown = false;
+  return new Proxy(prisma, {
+    get(target, prop, receiver) {
+      if (prop === "$transaction") {
+        return (fn: (tx: Prisma.TransactionClient) => Promise<unknown>) => {
+          if (!thrown) {
+            thrown = true;
+            throw new Error("injected database failure");
+          }
+          return target.$transaction(fn);
+        };
+      }
+      const value: unknown = Reflect.get(target, prop, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as PrismaClient;
+}
+
+function objectStoreThatThrowsOnce(store: ObjectStore): ObjectStore {
+  let pending = true;
+  return {
+    bucket: store.bucket,
+    kmsKeyId: store.kmsKeyId,
+    presignUpload: (params) => store.presignUpload(params),
+    putObject: (params) => store.putObject(params),
+    presignDownload: (key) => store.presignDownload(key),
+    headObject: (key) => store.headObject(key),
+    objectExists: (key) => store.objectExists(key),
+    deletePrefix: async (prefix) => {
+      if (pending) {
+        pending = false;
+        throw new Error("injected storage failure");
+      }
+      return store.deletePrefix(prefix);
+    },
+  };
 }
 
 function prismaThatThrowsOnNthDelete(prisma: PrismaClient, failOn: number): PrismaClient {

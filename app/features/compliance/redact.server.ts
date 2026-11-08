@@ -44,6 +44,9 @@ export async function runCustomersRedact(
   if (await complianceRequestHandled(prisma, shopId, complianceRequestId)) return;
 
   const prescriptions = await findPrescriptionsForOrders(prisma, shopId, orderIds);
+  // Objects go first. A crash here leaves the rows, so a retry deletes the same
+  // prefixes (already-deleted objects are a no-op) and then commits the database.
+  // handledAt flips only in that transaction: the job is unfinished until both succeed.
   for (const prescription of prescriptions) {
     await objectStore.deletePrefix(buildRxPrefix(shopId, prescription.id));
   }
@@ -58,6 +61,9 @@ export async function runCustomersRedact(
 
 export async function runShopRedact(deps: ComplianceDeps, payload: ShopRedactPayload): Promise<void> {
   const shop = await findShopById(deps.prisma, payload.shopId);
+  // Rows commit first. If the prefix delete then throws, the shop row is gone
+  // and a retry skips this transaction and deletes the prefix. Deleting an
+  // already-deleted prefix is a no-op. The handler returns only after both succeed.
   if (shop) {
     await deps.prisma.$transaction(async (tx) => {
       await deleteShopOwnedRows(tx, shop.id, shop.domain);
