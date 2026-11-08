@@ -236,6 +236,15 @@ describe("Self-check 2 — Override and token targeting the same segment (overri
     expect(result.code).toBe("PO-67-NONE-NONE-00");
     expect(result.warnings).toEqual([]);
   });
+
+  it("overrides target named segments; segment '2' leaves lens_color unchanged", () => {
+    const result = compileLabCode(BLUEPRINT_TEMPLATE, [
+      { segment: "2", overrideCode: "CUSTOM_COLOR" },
+    ]);
+    // overrides target named segments ('material' = first segment); numeric index does not override named segment
+    expect(result.code).toBe("PO-58-NONE-NONE-00");
+    expect(result.warnings).toEqual([]);
+  });
 });
 
 describe("Step 3 — Identity property test for templates with no tokens", () => {

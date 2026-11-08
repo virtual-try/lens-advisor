@@ -1,6 +1,6 @@
 # Spec 05 — Field encryption for prescription data
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 01
 **Model:** Heavy — `claude-opus-5-5` · `gpt-6-astra` · `gemini-3.1-pro-preview`
 **Issue:** —
