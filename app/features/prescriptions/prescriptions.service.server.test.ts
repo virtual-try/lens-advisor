@@ -5,11 +5,13 @@ import { createTestDb, seedShop, type TestDb } from "../../../test/db";
 import { getCipher } from "../../shared/container/cipher.server";
 import { DecryptError } from "../../shared/crypto/field-cipher.server";
 import { BadRequestError } from "../../shared/http/errors.server";
-import type {
-  HeadObjectResult,
-  ObjectStore,
-  PresignUploadParams,
-  PutObjectParams,
+import {
+  type HeadObjectResult,
+  InvalidKeyError,
+  type ObjectStore,
+  type PresignUploadParams,
+  type PutObjectParams,
+  validateKey,
 } from "../../shared/storage/object-store.server";
 import {
   createPrescriptionsService,
@@ -27,19 +29,24 @@ class FakeObjectStore implements ObjectStore {
   public customHeadResults = new Map<string, Partial<HeadObjectResult>>();
 
   async presignUpload(params: PresignUploadParams): Promise<string> {
+    validateKey(params.key);
     this.presignedCalls.push(params);
     return `https://${this.bucket}.s3.amazonaws.com/${params.key}?signed=true`;
   }
 
-  async putObject(_params: PutObjectParams): Promise<void> {
+  async putObject(params: PutObjectParams): Promise<void> {
+    validateKey(params.key);
     // no-op
   }
 
-  async presignDownload(_keyOrParams: string | { key: string }): Promise<string> {
+  async presignDownload(keyOrParams: string | { key: string }): Promise<string> {
+    const key = typeof keyOrParams === "string" ? keyOrParams : keyOrParams.key;
+    validateKey(key);
     return "https://download.fake";
   }
 
   async headObject(key: string): Promise<HeadObjectResult | null> {
+    validateKey(key);
     if (this.customHeadResults.has(key)) {
       return {
         exists: true,
@@ -307,6 +314,24 @@ describe("Prescriptions Service", () => {
         ]);
       }
     });
+
+    it("R3-F2: rejects rxType: 'NON_PRESCRIPTION' at boundary with 400 UNSUPPORTED_RX_TYPE and writes nothing", async () => {
+      const countBefore = await db.prisma.prescription.count();
+
+      await expect(
+        service.submitPrescription(shopA.shopId, {
+          rxType: "NON_PRESCRIPTION",
+        }),
+      ).rejects.toThrowError(
+        expect.objectContaining({
+          status: 400,
+          code: "UNSUPPORTED_RX_TYPE",
+        }),
+      );
+
+      const countAfter = await db.prisma.prescription.count();
+      expect(countAfter).toBe(countBefore);
+    });
   });
 
   describe("submitPrescription — UPLOAD", () => {
@@ -372,6 +397,123 @@ describe("Prescriptions Service", () => {
         expect(error.message).not.toContain("SPH_-7.75_PATIENT.pdf");
         expect(error.message).not.toContain(shopB.shopId);
       }
+    });
+
+    it("R3-F1: rejects upload key with trailing slash before headObject and exposes no key or PHI in error (INV-2, R110)", async () => {
+      const draft = await service.requestUploadUrl(shopA.shopId, {
+        contentType: "image/png",
+        size: 1024,
+      });
+
+      const phiFilename = "SPH_-7.75_PATIENT.pdf";
+      const trailingSlashKey = `shops/${shopA.shopId}/rx/${draft.draftId}/${phiFilename}/`;
+
+      try {
+        await service.submitPrescription(shopA.shopId, {
+          rxType: "SINGLE_VISION",
+          draftId: draft.draftId,
+          uploadedKeys: [trailingSlashKey],
+        });
+        expect.unreachable("should have thrown BadRequestError");
+      } catch (err: unknown) {
+        const error = err as BadRequestError;
+        expect(error.status).toBe(400);
+        expect(error.code).toBe("INVALID_UPLOAD_KEY");
+        expect(error.message).toBe("Uploaded key does not belong to this shop or draft");
+        expect(error.message).not.toContain(phiFilename);
+        expect(error.message).not.toContain("-7.75");
+        expect(error.message).not.toContain(shopA.shopId);
+        expect(error.message).not.toContain(draft.draftId);
+      }
+    });
+
+    it("R3-F1: rejects non-canonical key shapes: empty segment, multiple segments, traversal (..)", async () => {
+      const draft = await service.requestUploadUrl(shopA.shopId, {
+        contentType: "image/png",
+        size: 1024,
+      });
+
+      const malformedKeys = [
+        `shops/${shopA.shopId}/rx/${draft.draftId}/`,
+        `shops/${shopA.shopId}/rx/${draft.draftId}/nested/file.png`,
+        `shops/${shopA.shopId}/rx/${draft.draftId}/../outside.png`,
+        `shops/${shopA.shopId}/rx/${draft.draftId}/file..png`,
+      ];
+
+      for (const badKey of malformedKeys) {
+        await expect(
+          service.submitPrescription(shopA.shopId, {
+            rxType: "SINGLE_VISION",
+            draftId: draft.draftId,
+            uploadedKeys: [badKey],
+          }),
+        ).rejects.toThrowError(
+          expect.objectContaining({
+            status: 400,
+            code: "INVALID_UPLOAD_KEY",
+            message: "Uploaded key does not belong to this shop or draft",
+          }),
+        );
+      }
+    });
+
+    it("R3-F1: maps storage InvalidKeyError from headObject to fixed INVALID_UPLOAD_KEY message", async () => {
+      const draft = await service.requestUploadUrl(shopA.shopId, {
+        contentType: "image/png",
+        size: 1024,
+      });
+
+      const origHead = fakeStore.headObject.bind(fakeStore);
+      fakeStore.headObject = async () => {
+        throw new InvalidKeyError("Key 'shops/.../SECRET_DIOPTER_-9.00.pdf' contains empty segments");
+      };
+
+      try {
+        await expect(
+          service.submitPrescription(shopA.shopId, {
+            rxType: "SINGLE_VISION",
+            draftId: draft.draftId,
+            uploadedKeys: [draft.key],
+          }),
+        ).rejects.toThrowError(
+          expect.objectContaining({
+            status: 400,
+            code: "INVALID_UPLOAD_KEY",
+            message: "Uploaded key does not belong to this shop or draft",
+          }),
+        );
+      } finally {
+        fakeStore.headObject = origHead;
+      }
+    });
+
+    it("R3-F2: rejects UPLOAD submission with rxType: 'NON_PRESCRIPTION' and leaves row unchanged", async () => {
+      const draft = await service.requestUploadUrl(shopA.shopId, {
+        contentType: "image/png",
+        size: 1024,
+      });
+      fakeStore.existingObjects.add(draft.key);
+
+      const countBefore = await db.prisma.prescription.count();
+
+      await expect(
+        service.submitPrescription(shopA.shopId, {
+          rxType: "NON_PRESCRIPTION",
+          draftId: draft.draftId,
+          uploadedKeys: [draft.key],
+        }),
+      ).rejects.toThrowError(
+        expect.objectContaining({
+          status: 400,
+          code: "UNSUPPORTED_RX_TYPE",
+        }),
+      );
+
+      const countAfter = await db.prisma.prescription.count();
+      expect(countAfter).toBe(countBefore);
+
+      const row = await service.getPrescription(shopA.shopId, draft.draftId);
+      expect(row?.uploadKeys).toEqual([]);
     });
 
     it("refuses UPLOAD with key never uploaded (UPLOAD_MISSING integrity)", async () => {

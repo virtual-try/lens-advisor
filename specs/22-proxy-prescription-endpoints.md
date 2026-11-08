@@ -113,4 +113,4 @@ Stubbed: none. Consumers: configurator steps (26, 29) via spec 16's client; spec
   - `pnpm lint` (`eslint . --max-warnings 0`): exit 0.
   - `pnpm build`: exit 0.
   - `git diff --check`: clean.
-- **2026-11-08** — Evidence (orchestro spec verify, tree 345b94c8): install pass · typecheck pass · lint pass · build pass · test pass 415/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree ddd0c31f): install pass · typecheck pass · lint pass · build pass · test pass 422/0/0

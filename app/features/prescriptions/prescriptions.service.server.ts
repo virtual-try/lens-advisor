@@ -22,6 +22,8 @@ import {
 import {
   ALLOWED_UPLOAD_CONTENT_TYPES,
   buildRxKey,
+  type HeadObjectResult,
+  InvalidKeyError,
   MAX_UPLOAD_BYTES,
   type ObjectStore,
 } from "../../shared/storage/object-store.server";
@@ -157,6 +159,14 @@ export class PrescriptionsService {
     shopId: string,
     input: PrescriptionSubmitBody,
   ): Promise<PrescriptionSubmitResponse> {
+    // Non-prescription lenses do not accept a prescription submission (R3-F2)
+    if (input.rxType === "NON_PRESCRIPTION") {
+      throw new BadRequestError(
+        "Prescriptions endpoint does not accept NON_PRESCRIPTION",
+        "UNSUPPORTED_RX_TYPE",
+      );
+    }
+
     const isUpload = Boolean(
       input.draftId || (input.uploadedKeys && input.uploadedKeys.length > 0),
     );
@@ -202,8 +212,66 @@ export class PrescriptionsService {
         );
       }
 
-      // Check object exists and metadata in S3 storage (integrity & KMS check, R1-F5)
-      const head = await this.objectStore.headObject(key);
+      // Canonical key shape validation (R3-F1):
+      // Must be `shops/<shopId>/rx/<draftId>/<one non-empty filename segment>`,
+      // with no trailing slash, no multiple segments, no '..', and no whitespace/null bytes.
+      const filename = key.slice(expectedPrefix.length);
+      if (
+        !filename ||
+        filename.includes("/") ||
+        filename.includes("\\") ||
+        filename.includes("..") ||
+        filename.includes("\0") ||
+        /\s/.test(filename)
+      ) {
+        throw new BadRequestError(
+          "Uploaded key does not belong to this shop or draft",
+          "INVALID_UPLOAD_KEY",
+        );
+      }
+
+      let decodedFilename = filename;
+      try {
+        decodedFilename = decodeURIComponent(filename);
+      } catch {
+        throw new BadRequestError(
+          "Uploaded key does not belong to this shop or draft",
+          "INVALID_UPLOAD_KEY",
+        );
+      }
+
+      if (
+        decodedFilename.includes("/") ||
+        decodedFilename.includes("\\") ||
+        decodedFilename.includes("..") ||
+        decodedFilename.includes("\0") ||
+        /\s/.test(decodedFilename)
+      ) {
+        throw new BadRequestError(
+          "Uploaded key does not belong to this shop or draft",
+          "INVALID_UPLOAD_KEY",
+        );
+      }
+
+      // Check object exists and metadata in S3 storage (integrity & KMS check, R1-F5, R3-F1)
+      let head: HeadObjectResult | null;
+      try {
+        head = await this.objectStore.headObject(key);
+      } catch (err: unknown) {
+        if (
+          err instanceof InvalidKeyError ||
+          (typeof err === "object" &&
+            err !== null &&
+            (("code" in err && (err as { code: string }).code === "INVALID_KEY") ||
+              ("name" in err && (err as { name: string }).name === "InvalidKeyError")))
+        ) {
+          throw new BadRequestError(
+            "Uploaded key does not belong to this shop or draft",
+            "INVALID_UPLOAD_KEY",
+          );
+        }
+        throw err;
+      }
       if (!head || !head.exists) {
         throw new BadRequestError(
           "Uploaded file not found in storage",

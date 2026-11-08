@@ -71,6 +71,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
 
+    // Prescriptions endpoint accepts only MANUAL and UPLOAD prescription types (R3-F2)
+    if (parsed.data.rxType === "NON_PRESCRIPTION") {
+      throw new BadRequestError(
+        "Prescriptions endpoint does not accept NON_PRESCRIPTION",
+        "UNSUPPORTED_RX_TYPE",
+      );
+    }
+
     // 6. Resolve shop from verified domain (INV-1)
     const db = getPrisma();
     const shop = await findShopByDomain(db, shopDomain);

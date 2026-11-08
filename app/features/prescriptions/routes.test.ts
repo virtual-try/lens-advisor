@@ -7,11 +7,12 @@ import { createTestDb, seedShop, type TestDb } from "../../../test/db";
 import { action as prescriptionsAction } from "../../routes/proxy.prescriptions";
 import { action as uploadUrlAction } from "../../routes/proxy.upload-url";
 import { getConfig } from "../../shared/config.server";
-import type {
-  HeadObjectResult,
-  ObjectStore,
-  PresignUploadParams,
-  PutObjectParams,
+import {
+  type HeadObjectResult,
+  type ObjectStore,
+  type PresignUploadParams,
+  type PutObjectParams,
+  validateKey,
 } from "../../shared/storage/object-store.server";
 import * as repo from "./prescriptions.repository.server";
 import { prescriptionRateLimiter } from "./rate-limiter.server";
@@ -36,17 +37,23 @@ class FakeObjectStore implements ObjectStore {
   public presignedUploads: PresignUploadParams[] = [];
 
   async presignUpload(params: PresignUploadParams): Promise<string> {
+    validateKey(params.key);
     this.presignedUploads.push(params);
     return `https://${this.bucket}.s3.amazonaws.com/${params.key}?presigned=true`;
   }
 
-  async putObject(_params: PutObjectParams): Promise<void> {}
+  async putObject(params: PutObjectParams): Promise<void> {
+    validateKey(params.key);
+  }
 
-  async presignDownload(_keyOrParams: string | { key: string }): Promise<string> {
+  async presignDownload(keyOrParams: string | { key: string }): Promise<string> {
+    const key = typeof keyOrParams === "string" ? keyOrParams : keyOrParams.key;
+    validateKey(key);
     return "https://download.fake";
   }
 
   async headObject(key: string): Promise<HeadObjectResult | null> {
+    validateKey(key);
     if (this.existingObjects.has(key)) {
       return {
         exists: true,
@@ -621,6 +628,93 @@ describe("Spec 22: App Proxy Prescription Endpoints (routes.test.ts)", () => {
       warnSpy.mockRestore();
       errorSpy.mockRestore();
     }
+  });
+
+  it("R3-F1: malformed upload key with trailing slash returns 400 INVALID_UPLOAD_KEY and echoes no key or PHI in response body or logs (INV-2, R110)", async () => {
+    // Create draft
+    const uploadReq = makeSignedProxyRequest(
+      "/apps/lens-advisor/upload-url",
+      shopA.domain,
+      { contentType: "application/pdf", size: 1024 },
+    );
+    const uploadRes = await uploadUrlAction(createActionArgs(uploadReq));
+    expect(uploadRes.status).toBe(200);
+    const { draftId } = await uploadRes.json();
+
+    const phiFilename = "SPH_-7.75_PATIENT.pdf";
+    const phiKeyWithTrailingSlash = `shops/${shopA.shopId}/rx/${draftId}/${phiFilename}/`;
+
+    const logSpy = vi.spyOn(console, "log");
+    const infoSpy = vi.spyOn(console, "info");
+    const warnSpy = vi.spyOn(console, "warn");
+    const errorSpy = vi.spyOn(console, "error");
+
+    try {
+      const submitReq = makeSignedProxyRequest(
+        "/apps/lens-advisor/prescriptions",
+        shopA.domain,
+        {
+          rxType: "SINGLE_VISION",
+          draftId,
+          uploadedKeys: [phiKeyWithTrailingSlash],
+        },
+      );
+
+      const submitRes = await prescriptionsAction(createActionArgs(submitReq));
+      expect(submitRes.status).toBe(400);
+
+      const data = await submitRes.json();
+      expect(data.error.code).toBe("INVALID_UPLOAD_KEY");
+      expect(data.error.message).toBe("Uploaded key does not belong to this shop or draft");
+
+      const rawBody = JSON.stringify(data);
+      expect(rawBody).not.toContain(phiFilename);
+      expect(rawBody).not.toContain("-7.75");
+      expect(rawBody).not.toContain(shopA.shopId);
+      expect(rawBody).not.toContain(draftId);
+
+      const allLogged = [
+        ...logSpy.mock.calls,
+        ...infoSpy.mock.calls,
+        ...warnSpy.mock.calls,
+        ...errorSpy.mock.calls,
+      ]
+        .flat()
+        .map((item) => (typeof item === "object" ? JSON.stringify(item) : String(item)))
+        .join(" ");
+
+      expect(allLogged).not.toContain(phiFilename);
+      expect(allLogged).not.toContain("-7.75");
+      expect(allLogged).not.toContain(shopA.shopId);
+      expect(allLogged).not.toContain(draftId);
+    } finally {
+      logSpy.mockRestore();
+      infoSpy.mockRestore();
+      warnSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("R3-F2: prescriptions endpoint rejects rxType: 'NON_PRESCRIPTION' with 400 UNSUPPORTED_RX_TYPE and writes nothing", async () => {
+    const countBefore = await db.prisma.prescription.count();
+
+    const submitReq = makeSignedProxyRequest(
+      "/apps/lens-advisor/prescriptions",
+      shopA.domain,
+      {
+        rxType: "NON_PRESCRIPTION",
+      },
+    );
+
+    const submitRes = await prescriptionsAction(createActionArgs(submitReq));
+    expect(submitRes.status).toBe(400);
+
+    const data = await submitRes.json();
+    expect(data.error.code).toBe("UNSUPPORTED_RX_TYPE");
+    expect(data.error.message).toBe("Prescriptions endpoint does not accept NON_PRESCRIPTION");
+
+    const countAfter = await db.prisma.prescription.count();
+    expect(countAfter).toBe(countBefore);
   });
 
   it("INV-2: captured console/logs contain no Rx values during submission", async () => {
