@@ -39,6 +39,8 @@ interface ProductUpdateVariables {
   product?: {
     id?: string;
     title?: string;
+    vendor?: string;
+    tags?: string[];
     status?: string;
     metafields?: Array<{
       namespace: string;
@@ -49,8 +51,23 @@ interface ProductUpdateVariables {
   };
 }
 
+export interface FakeProductRecord {
+  id: string;
+  title: string;
+  vendor?: string;
+  tags?: string[];
+  status?: string;
+  metafields?: Array<{
+    namespace: string;
+    key: string;
+    value: string;
+    type: string;
+  }>;
+}
+
 interface FakeAdminOptions {
   shopCurrency?: string;
+  products?: Map<string, FakeProductRecord>;
   createProductUserErrors?: Array<{ field?: string[]; message: string }>;
   variantBulkUpdateUserErrors?: Array<{ field?: string[]; message: string }>;
   publishUserErrors?: Array<{ field?: string[]; message: string }>;
@@ -71,6 +88,7 @@ interface FakeAdminOptions {
 function createFakeAdminClient(options: FakeAdminOptions = {}) {
   const calls: Array<{ query: string; variables?: Record<string, unknown> }> = [];
   const shopCurrency = options.shopCurrency ?? "USD";
+  const products = options.products ?? new Map<string, FakeProductRecord>();
 
   let createdProductCounter = 1;
   let createdVariantCounter = 10;
@@ -173,6 +191,27 @@ function createFakeAdminClient(options: FakeAdminOptions = {}) {
 
     // 4. Product create
     if (query.includes("ProductCreate")) {
+      const vars = (init?.variables ?? {}) as ProductCreateVariables;
+      const invalidMetafield = vars.product?.metafields?.find((m) => m.type === "integer");
+      if (invalidMetafield) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              productCreate: {
+                product: null,
+                userErrors: [
+                  {
+                    field: ["product", "metafields", "0", "type"],
+                    message: "Type integer is invalid; use number_integer",
+                  },
+                ],
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
       if (options.createProductUserErrors && options.createProductUserErrors.length > 0) {
         return new Response(
           JSON.stringify({
@@ -189,15 +228,24 @@ function createFakeAdminClient(options: FakeAdminOptions = {}) {
 
       const pId = `gid://shopify/Product/${createdProductCounter++}`;
       const vId = `gid://shopify/ProductVariant/${createdVariantCounter++}`;
-      const vars = (init?.variables ?? {}) as ProductCreateVariables;
+      const record: FakeProductRecord = {
+        id: pId,
+        title: vars.product?.title ?? "Test Title",
+        vendor: vars.product?.vendor,
+        tags: vars.product?.tags ? [...vars.product.tags] : [],
+        status: vars.product?.status ?? "ACTIVE",
+        metafields: vars.product?.metafields ? [...vars.product.metafields] : [],
+      };
+      products.set(pId, record);
+
       return new Response(
         JSON.stringify({
           data: {
             productCreate: {
               product: {
                 id: pId,
-                title: vars.product?.title ?? "Test Title",
-                status: "ACTIVE",
+                title: record.title,
+                status: record.status,
                 variants: {
                   nodes: [{ id: vId, price: "0.00" }],
                 },
@@ -274,8 +322,29 @@ function createFakeAdminClient(options: FakeAdminOptions = {}) {
       );
     }
 
-    // 7. Product update (archive to draft)
+    // 7. Product update (archive to draft or convergence update)
     if (query.includes("ProductUpdate")) {
+      const vars = (init?.variables ?? {}) as ProductUpdateVariables;
+      const invalidMetafield = vars.product?.metafields?.find((m) => m.type === "integer");
+      if (invalidMetafield) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              productUpdate: {
+                product: null,
+                userErrors: [
+                  {
+                    field: ["product", "metafields", "0", "type"],
+                    message: "Type integer is invalid; use number_integer",
+                  },
+                ],
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
       if (options.productUpdateUserErrors && options.productUpdateUserErrors.length > 0) {
         return new Response(
           JSON.stringify({
@@ -290,15 +359,24 @@ function createFakeAdminClient(options: FakeAdminOptions = {}) {
         );
       }
 
-      const vars = (init?.variables ?? {}) as ProductUpdateVariables;
+      const pId = vars.product?.id ?? "gid://shopify/Product/1";
+      const existing = products.get(pId);
+      if (existing) {
+        if (vars.product?.title !== undefined) existing.title = vars.product.title;
+        if (vars.product?.vendor !== undefined) existing.vendor = vars.product.vendor;
+        if (vars.product?.tags !== undefined) existing.tags = [...vars.product.tags];
+        if (vars.product?.status !== undefined) existing.status = vars.product.status;
+        if (vars.product?.metafields !== undefined) existing.metafields = [...vars.product.metafields];
+      }
+
       return new Response(
         JSON.stringify({
           data: {
             productUpdate: {
               product: {
-                id: vars.product?.id ?? "gid://shopify/Product/1",
-                title: vars.product?.title ?? "Test Title",
-                status: vars.product?.status ?? "DRAFT",
+                id: pId,
+                title: vars.product?.title ?? existing?.title ?? "Test Title",
+                status: vars.product?.status ?? existing?.status ?? "DRAFT",
               },
               userErrors: [],
             },
@@ -352,6 +430,10 @@ function createFakeAdminClient(options: FakeAdminOptions = {}) {
     admin,
     graphql,
     calls,
+    products,
+    getProduct(id: string) {
+      return products.get(id);
+    },
     countCalls(keyword: string) {
       return calls.filter((c) => c.query.includes(keyword)).length;
     },
@@ -428,7 +510,7 @@ describe("Shopify Product Sync (DB-backed)", { timeout: 60_000 }, () => {
           namespace: "seo",
           key: "hidden",
           value: "1",
-          type: "integer",
+          type: "number_integer",
         },
       ]);
 
@@ -1445,13 +1527,15 @@ describe("Shopify Product Sync (DB-backed)", { timeout: 60_000 }, () => {
         product: {
           id: intermediate.shopifyProductId,
           title: "Lens: Publish Fail Once Lens",
+          vendor: "Lens Advisor",
+          tags: ["lens-advisor-item"],
           status: "ACTIVE",
           metafields: [
             {
               namespace: "seo",
               key: "hidden",
               value: "1",
-              type: "integer",
+              type: "number_integer",
             },
           ],
         },
@@ -1506,13 +1590,15 @@ describe("Shopify Product Sync (DB-backed)", { timeout: 60_000 }, () => {
         product: {
           id: initialSync.productId,
           title: "Lens: Renamed Ultra Clear Lens",
+          vendor: "Lens Advisor",
+          tags: ["lens-advisor-item"],
           status: "ACTIVE",
           metafields: [
             {
               namespace: "seo",
               key: "hidden",
               value: "1",
-              type: "integer",
+              type: "number_integer",
             },
           ],
         },
@@ -1637,6 +1723,183 @@ describe("Shopify Product Sync (DB-backed)", { timeout: 60_000 }, () => {
         markSyncedSpy.mockRestore();
         consoleErrorSpy.mockRestore();
       }
+    });
+  });
+
+  // =========================================================================
+  // Review R3 regressions: R3-F1 and R3-F2
+  // =========================================================================
+
+  describe("Review R3 regressions: R3-F1 and R3-F2", () => {
+    it("R3-F1: uses number_integer metafield type in both productCreate and productUpdate mutations", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const lens = await service.createLens(shopA, {
+        groupId: groups[0].id,
+        name: "Metafield Type Lens",
+        priceMinor: 5000,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -100,
+        sphMax: 100,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "R3F1-1",
+      });
+
+      const fake = createFakeAdminClient({ shopCurrency: "USD" });
+
+      // 1. Initial sync (productCreate)
+      const initialSync = await syncItem(fake.admin, shopA, "lens", lens.id, {
+        catalogService: service,
+      });
+
+      expect(initialSync.ok).toBe(true);
+      expect(initialSync.created).toBe(true);
+
+      const createCall = fake.findCall("ProductCreate");
+      const createVars = (createCall?.variables ?? {}) as ProductCreateVariables;
+      expect(createVars.product?.metafields).toEqual([
+        {
+          namespace: "seo",
+          key: "hidden",
+          value: "1",
+          type: "number_integer",
+        },
+      ]);
+
+      // 2. Resync via stored ID (productUpdate)
+      const resync = await syncItem(fake.admin, shopA, "lens", lens.id, {
+        catalogService: service,
+      });
+
+      expect(resync.ok).toBe(true);
+      expect(resync.updated).toBe(true);
+
+      const updateCall = fake.findCall("ProductUpdate");
+      const updateVars = (updateCall?.variables ?? {}) as ProductUpdateVariables;
+      expect(updateVars.product?.metafields).toEqual([
+        {
+          namespace: "seo",
+          key: "hidden",
+          value: "1",
+          type: "number_integer",
+        },
+      ]);
+    });
+
+    it("R3-F2: resync restores drifted vendor and tags to Lens Advisor defaults", async () => {
+      const groups = await service.listLensGroups(shopA);
+      const lens = await service.createLens(shopA, {
+        groupId: groups[0].id,
+        name: "Drifted Vendor Tags Lens",
+        priceMinor: 6500,
+        currency: "USD",
+        rxTypes: ["SINGLE_VISION"],
+        sphMin: -100,
+        sphMax: 100,
+        cylMin: 0,
+        cylMax: 0,
+        labCodeTemplate: "R3F2-1",
+      });
+
+      // 1. Initial sync creates product on Shopify with standard vendor and tag
+      const fake1 = createFakeAdminClient({ shopCurrency: "USD" });
+      const initialSync = await syncItem(fake1.admin, shopA, "lens", lens.id, {
+        catalogService: service,
+      });
+      expect(initialSync.ok).toBe(true);
+      expect(initialSync.created).toBe(true);
+      const productId = initialSync.productId!;
+
+      const shopifyProduct = fake1.getProduct(productId);
+      expect(shopifyProduct).toBeDefined();
+      expect(shopifyProduct?.vendor).toBe("Lens Advisor");
+      expect(shopifyProduct?.tags).toEqual(["lens-advisor-item"]);
+
+      // 2. Merchant drifts the product on Shopify: modifies vendor and removes/changes tags
+      shopifyProduct!.vendor = "Custom Vendor Inc.";
+      shopifyProduct!.tags = ["merchant-manual-tag"];
+
+      // 3. Resync using the stored ID converges and restores vendor and tags
+      const fake2 = createFakeAdminClient({
+        shopCurrency: "USD",
+        products: fake1.products,
+      });
+      const resync = await syncItem(fake2.admin, shopA, "lens", lens.id, {
+        catalogService: service,
+      });
+
+      expect(resync.ok).toBe(true);
+      expect(resync.updated).toBe(true);
+      expect(fake2.countCalls("ProductCreate")).toBe(0);
+      expect(fake2.countCalls("ProductUpdate")).toBe(1);
+
+      // Verify the ProductUpdate mutation payload sent to Shopify contains restored vendor and tags
+      const updateCall = fake2.findCall("ProductUpdate");
+      const updateVars = (updateCall?.variables ?? {}) as ProductUpdateVariables;
+      expect(updateVars.product).toEqual({
+        id: productId,
+        title: "Lens: Drifted Vendor Tags Lens",
+        vendor: "Lens Advisor",
+        tags: ["lens-advisor-item"],
+        status: "ACTIVE",
+        metafields: [
+          {
+            namespace: "seo",
+            key: "hidden",
+            value: "1",
+            type: "number_integer",
+          },
+        ],
+      });
+
+      // Verify the remote Shopify product record has converged back to fresh-sync state
+      const restoredProduct = fake2.getProduct(productId);
+      expect(restoredProduct?.vendor).toBe("Lens Advisor");
+      expect(restoredProduct?.tags).toEqual(["lens-advisor-item"]);
+      expect(restoredProduct?.status).toBe("ACTIVE");
+    });
+
+    it("R3-F2: resync on add-on restores drifted vendor and tags", async () => {
+      const addOn = await service.createAddOn(shopA, {
+        name: "Drifted AddOn",
+        priceMinor: 2000,
+        currency: "USD",
+      });
+
+      const fake1 = createFakeAdminClient({ shopCurrency: "USD" });
+      const initialSync = await syncItem(fake1.admin, shopA, "addOn", addOn.id, {
+        catalogService: service,
+      });
+      expect(initialSync.ok).toBe(true);
+      expect(initialSync.created).toBe(true);
+      const productId = initialSync.productId!;
+
+      // Merchant drifts vendor and removes tags
+      const shopifyProduct = fake1.getProduct(productId);
+      shopifyProduct!.vendor = "External Supplier";
+      shopifyProduct!.tags = [];
+
+      // Resync
+      const fake2 = createFakeAdminClient({
+        shopCurrency: "USD",
+        products: fake1.products,
+      });
+      const resync = await syncItem(fake2.admin, shopA, "addOn", addOn.id, {
+        catalogService: service,
+      });
+
+      expect(resync.ok).toBe(true);
+      expect(resync.updated).toBe(true);
+
+      const updateCall = fake2.findCall("ProductUpdate");
+      const updateVars = (updateCall?.variables ?? {}) as ProductUpdateVariables;
+      expect(updateVars.product?.vendor).toBe("Lens Advisor");
+      expect(updateVars.product?.tags).toEqual(["lens-advisor-item"]);
+
+      const restoredProduct = fake2.getProduct(productId);
+      expect(restoredProduct?.vendor).toBe("Lens Advisor");
+      expect(restoredProduct?.tags).toEqual(["lens-advisor-item"]);
     });
   });
 });

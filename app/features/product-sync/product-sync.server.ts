@@ -20,6 +20,39 @@ import type {
   SyncItemResult,
 } from "./types";
 
+export const LENS_ADVISOR_VENDOR = "Lens Advisor";
+export const LENS_ADVISOR_TAG = "lens-advisor-item";
+
+export interface LensAdvisorProductInput {
+  title: string;
+  vendor: string;
+  tags: string[];
+  status: "ACTIVE";
+  metafields: Array<{
+    namespace: string;
+    key: string;
+    value: string;
+    type: string;
+  }>;
+}
+
+export function buildProductInput(title: string): LensAdvisorProductInput {
+  return {
+    title,
+    vendor: LENS_ADVISOR_VENDOR,
+    tags: [LENS_ADVISOR_TAG],
+    status: "ACTIVE",
+    metafields: [
+      {
+        namespace: "seo",
+        key: "hidden",
+        value: "1",
+        type: "number_integer",
+      },
+    ],
+  };
+}
+
 interface GraphQLResponse<T> {
   data?: T;
   errors?: Array<{ message: string }>;
@@ -177,7 +210,7 @@ export async function syncItem(
     }
 
     // Converge to the same end state as a fresh sync:
-    // Update product title, ensure ACTIVE status, set metafields
+    // Update product title, vendor, tags, ensure ACTIVE status, set metafields
     const productUpdateData = await executeGraphQL<{
       productUpdate: {
         product?: { id: string; title?: string; status: string };
@@ -186,16 +219,7 @@ export async function syncItem(
     }>(admin, PRODUCT_UPDATE_MUTATION, {
       product: {
         id: productId,
-        title: itemTitle,
-        status: "ACTIVE",
-        metafields: [
-          {
-            namespace: "seo",
-            key: "hidden",
-            value: "1",
-            type: "integer",
-          },
-        ],
+        ...buildProductInput(itemTitle),
       },
     });
 
@@ -263,20 +287,7 @@ export async function syncItem(
       userErrors?: Array<{ field?: string[]; message: string }>;
     };
   }>(admin, PRODUCT_CREATE_MUTATION, {
-    product: {
-      title: itemTitle,
-      vendor: "Lens Advisor",
-      tags: ["lens-advisor-item"],
-      status: "ACTIVE",
-      metafields: [
-        {
-          namespace: "seo",
-          key: "hidden",
-          value: "1",
-          type: "integer",
-        },
-      ],
-    },
+    product: buildProductInput(itemTitle),
   });
 
   checkUserErrors(createData.productCreate?.userErrors);

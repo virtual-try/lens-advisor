@@ -84,7 +84,7 @@ Real, used now: Admin GraphQL. Tests: fake admin client recording mutations. Stu
   - Inventory fragment: `specs/inventory/17-shopify-product-sync.md` created, documenting `syncItem`, `archiveItem`, and `SyncError`.
   - Decisions:
     1. Titles: `"Lens: " + lens.name`, `"Option: " + optionValue.label`, `"Add-on: " + addOn.name`.
-    2. Tags: `["lens-advisor-item"]`, vendor `"Lens Advisor"`, status `"ACTIVE"`, and metafield `{ namespace: "seo", key: "hidden", value: "1", type: "integer" }` so synced items remain hidden from search and sitemaps.
+    2. Tags: `["lens-advisor-item"]`, vendor `"Lens Advisor"`, status `"ACTIVE"`, and metafield `{ namespace: "seo", key: "hidden", value: "1", type: "number_integer" }` so synced items remain hidden from search and sitemaps.
     3. Decimal string conversion: Uses `toShopifyDecimal` from spec 13 (INV-4) with zero float math. Taxable is left unchanged (not taxable-changed); inventory is set to untracked (`inventoryItem: { tracked: false }`).
     4. Currency check: Queries `shop { currencyCode }` from Shopify; if item currency differs, throws `SyncError` with code `CURRENCY_MISMATCH` before creating any product.
     5. Option delta 0: Skips product creation (`{ ok: true, skipped: true }`) without calling Shopify Admin or assigning a variant ID.
@@ -106,9 +106,14 @@ Real, used now: Admin GraphQL. Tests: fake admin client recording mutations. Stu
     - `pnpm lint` (`eslint . --max-warnings 0`) -> exit 0
     - `pnpm build` -> exit 0
     - `git diff --check` -> exit 0
-- **2026-11-08** — Evidence (orchestro spec verify, tree c54ace0d): install pass · typecheck pass · lint pass · build pass · test pass 537/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 4e6ef5c2): install pass · typecheck pass · lint pass · build pass · test pass 540/0/0
 - **2026-11-08** — Review R1 fixes applied by agy-1:
   - R1-F2: Persist Shopify product and variant IDs immediately after `productCreate` succeeds via `markSynced`. On partial failure before publish, retry reuses the stored IDs without duplicating the product. Added compensation (`PRODUCT_DELETE_MUTATION`) to delete the newly created product if persisting fails immediately after creation before throwing `SyncError`.
   - R1-F3: Added `findOnlineStorePublicationId` helper paginating `publications(first: 50, after: $after)` until "Online Store" is found. If absent, throws `SyncError` and does not call `markSynced` or `productCreate`.
   - Tests: Added tests for variant update failure retry (exactly 1 `ProductCreate` call overall, stored ID reused), compensation on persist failure, publication pagination on later page, and absent publication failure.
   - Gates: test 533 passed (33 files), typecheck passed, lint passed, build passed.
+- **2026-11-08** — Review R3 fixes applied by agy-1:
+  - R3-F1: Switched `seo.hidden` metafield type from invalid `"integer"` to `"number_integer"` in both `productCreate` and `productUpdate` mutations. Fake client rejects `"integer"` with Shopify user error.
+  - R3-F2: Extracted shared `buildProductInput` builder ensuring title, vendor (`"Lens Advisor"`), tags (`["lens-advisor-item"]`), status (`"ACTIVE"`), and metafields are identical between create and the stored-ID update path, restoring drifted vendor or tags on resync.
+  - Tests: Added regression tests verifying `number_integer` metafield type and drifted vendor/tags restoration.
+  - Gates: test 540 passed (33 files), typecheck passed, lint passed, build passed.
