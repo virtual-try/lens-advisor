@@ -24,7 +24,9 @@ Resolve the two findings identified by the Spec 34 verification pass:
 ## Explicit non-scope
 
 - Introducing new tokens into `DESIGN-SYSTEM.md`.
-- Changes to production application code or database schema.
+- Database schema changes or migrations.
+- Changes to production application code outside the scoped CSS token fix in `packages/configurator/src/steps/02-prescription/prescription.css`.
+- New features or unrelated refactoring.
 
 ## Steps
 
@@ -39,3 +41,7 @@ Resolve the two findings identified by the Spec 34 verification pass:
 - [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
 - [ ] `pnpm build` passes. [static]
 - [ ] `pnpm test` and `pnpm test:e2e` pass with 0 failures. [suite]
+
+## Log
+
+- **2026-11-09** — Spec created to address findings identified during Spec 34 verification pass.
