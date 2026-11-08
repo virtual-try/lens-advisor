@@ -1,0 +1,1792 @@
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import React from "react";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import * as ReactRouter from "react-router";
+import { testConfig } from "@shopify/shopify-app-react-router/test-helpers";
+
+import { createTestDb, type TestDb } from "../../../test/db";
+import { authenticate } from "../../shopify.server";
+import type { ErrorResponseBody } from "../../shared/http/errors.server";
+import { getSettings } from "./settings.service.server";
+import SettingsRoute, { action, loader } from "../../routes/app.settings";
+
+const DB_TIMEOUT_MS = 120_000;
+
+const mocks = vi.hoisted(() => ({
+  currentShop: "test-shop.myshopify.com",
+  toastShow: vi.fn(),
+  redirect: vi.fn(),
+  adminGraphql: vi.fn(),
+}));
+
+vi.mock("../../shopify.server", () => ({
+  authenticate: {
+    admin: vi.fn(async () => ({
+      session: { shop: mocks.currentShop },
+      admin: {
+        graphql: mocks.adminGraphql,
+      },
+      redirect: mocks.redirect,
+    })),
+  },
+}));
+
+vi.mock("@shopify/app-bridge-react", () => ({
+  useAppBridge: () => ({
+    toast: { show: mocks.toastShow },
+  }),
+}));
+
+let db: TestDb | undefined;
+
+function getTestPrisma() {
+  if (!db) throw new Error("Test database not initialized");
+  return db.prisma;
+}
+
+beforeAll(async () => {
+  db = await createTestDb();
+  (globalThis as Record<string, unknown>).__prismaClient = db.prisma;
+}, DB_TIMEOUT_MS);
+
+afterAll(async () => {
+  (globalThis as Record<string, unknown>).__prismaClient = undefined;
+  await db?.drop();
+}, DB_TIMEOUT_MS);
+
+afterEach(() => {
+  cleanup();
+});
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  // Ensure testConfig is exercised in the test harness
+  testConfig();
+
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        data: {
+          activeSubscription: {
+            items: [{ handle: "pro-plan", description: "Pro Plan" }],
+          },
+        },
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    ),
+  );
+
+  mocks.adminGraphql.mockImplementation(async (query: string) => {
+    if (query.includes("AppPlanShopId")) {
+      return new Response(
+        JSON.stringify({ data: { shop: { id: "gid://shopify/Shop/1001" } } }),
+        { status: 200 },
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        data: {
+          currentAppInstallation: {
+            activeSubscriptions: [
+              {
+                id: "gid://shopify/AppSubscription/1",
+                name: "Pro Plan",
+                status: "ACTIVE",
+                test: false,
+              },
+            ],
+          },
+        },
+      }),
+      { status: 200 },
+    );
+  });
+});
+
+async function createShop(domain: string): Promise<string> {
+  const shop = await getTestPrisma().shop.create({
+    data: { domain },
+  });
+  return shop.id;
+}
+
+function createActionArgs(request: Request): ReactRouter.ActionFunctionArgs {
+  const url = new URL(request.url);
+  return {
+    request,
+    params: {},
+    context: {},
+    url,
+    pattern: { path: "/app/settings" },
+  } as unknown as ReactRouter.ActionFunctionArgs;
+}
+
+function createLoaderArgs(request: Request): ReactRouter.LoaderFunctionArgs {
+  const url = new URL(request.url);
+  return {
+    request,
+    params: {},
+    context: {},
+    url,
+    pattern: { path: "/app/settings" },
+  } as unknown as ReactRouter.LoaderFunctionArgs;
+}
+
+async function unwrapResponse<T = Record<string, unknown>>(
+  result: unknown,
+): Promise<{
+  status: number;
+  data: T;
+}> {
+  if (result instanceof Response) {
+    const data = (await result.clone().json()) as T;
+    return {
+      status: result.status,
+      data,
+    };
+  }
+  if (
+    result &&
+    typeof result === "object" &&
+    "type" in result &&
+    (result as { type: string }).type === "DataWithResponseInit"
+  ) {
+    const r = result as unknown as {
+      data: T;
+      init?: { status?: number };
+    };
+    return {
+      status: r.init?.status ?? 200,
+      data: r.data,
+    };
+  }
+  return {
+    status: 200,
+    data: result as T,
+  };
+}
+
+describe("Spec 20 — Admin Settings Route (Server)", () => {
+  describe("Examples", () => {
+    it("add lab@example.com, save -> saved, toast (normal)", async () => {
+      const shopDomain = "example-row1.myshopify.com";
+      const shopId = await createShop(shopDomain);
+      mocks.currentShop = shopDomain;
+
+      const formData = new FormData();
+      formData.append("labEmail", "lab@example.com");
+      formData.append("ticketFormat", "PDF");
+      formData.append("manualRxEnabled", "true");
+      formData.append("rxUploadEnabled", "true");
+
+      const request = new Request("https://app.test/app/settings", {
+        method: "POST",
+        body: formData,
+      });
+
+      const response = await action(createActionArgs(request));
+      const { status, data: result } = await unwrapResponse<{
+        ok: boolean;
+        settings?: { labEmail: string[] };
+      }>(response);
+
+      expect(status).toBe(200);
+      expect(result.ok).toBe(true);
+      expect(result.settings?.labEmail).toEqual(["lab@example.com"]);
+
+      const saved = await getSettings(shopId, getTestPrisma());
+      expect(saved.labEmail).toEqual(["lab@example.com"]);
+    }, DB_TIMEOUT_MS);
+
+    it("lab@ -> inline EMAIL error, nothing saved (invalid)", async () => {
+      const shopDomain = "example-row2.myshopify.com";
+      const shopId = await createShop(shopDomain);
+      mocks.currentShop = shopDomain;
+
+      const formData = new FormData();
+      formData.append("labEmail", "lab@");
+
+      const request = new Request("https://app.test/app/settings", {
+        method: "POST",
+        body: formData,
+      });
+
+      const response = await action(createActionArgs(request));
+      const { status, data: result } =
+        await unwrapResponse<ErrorResponseBody>(response);
+
+      expect(status).toBe(400);
+      expect(result.error.code).toBe("EMAIL");
+      expect(result.error.message).toBe("Enter a valid lab email address.");
+      expect(result.error.fields).toEqual([
+        { path: "labEmail.0", code: "EMAIL" },
+      ]);
+
+      const saved = await getSettings(shopId, getTestPrisma());
+      expect(saved.labEmail).toEqual([]);
+    }, DB_TIMEOUT_MS);
+
+    it("both Rx inputs unchecked -> inline AT_LEAST_ONE_RX_INPUT (invalid)", async () => {
+      const shopDomain = "example-row3.myshopify.com";
+      const shopId = await createShop(shopDomain);
+      mocks.currentShop = shopDomain;
+
+      const formData = new FormData();
+      formData.append("manualRxEnabled", "false");
+      formData.append("rxUploadEnabled", "false");
+
+      const request = new Request("https://app.test/app/settings", {
+        method: "POST",
+        body: formData,
+      });
+
+      const response = await action(createActionArgs(request));
+      const { status, data: result } =
+        await unwrapResponse<ErrorResponseBody>(response);
+
+      expect(status).toBe(400);
+      expect(result.error.code).toBe("AT_LEAST_ONE_RX_INPUT");
+      expect(result.error.message).toBe("Keep at least one prescription input on.");
+      expect(result.error.fields).toEqual([
+        { path: "rxUploadEnabled", code: "AT_LEAST_ONE_RX_INPUT" },
+        { path: "manualRxEnabled", code: "AT_LEAST_ONE_RX_INPUT" },
+      ]);
+
+      const saved = await getSettings(shopId, getTestPrisma());
+      expect(saved.manualRxEnabled).toBe(true);
+      expect(saved.rxUploadEnabled).toBe(true);
+    }, DB_TIMEOUT_MS);
+
+    it("privacy toggle on, confirm -> saved true (INV-3)", async () => {
+      const shopDomain = "example-row4.myshopify.com";
+      const shopId = await createShop(shopDomain);
+      mocks.currentShop = shopDomain;
+
+      const formData = new FormData();
+      formData.append("storeRxInOrder", "true");
+      formData.append("confirmStoreRxInOrder", "true");
+
+      const request = new Request("https://app.test/app/settings", {
+        method: "POST",
+        body: formData,
+      });
+
+      const response = await action(createActionArgs(request));
+      const { status, data: result } = await unwrapResponse<{
+        ok: boolean;
+        settings?: { storeRxInOrder: boolean };
+      }>(response);
+
+      expect(status).toBe(200);
+      expect(result.ok).toBe(true);
+      expect(result.settings?.storeRxInOrder).toBe(true);
+
+      const saved = await getSettings(shopId, getTestPrisma());
+      expect(saved.storeRxInOrder).toBe(true);
+    }, DB_TIMEOUT_MS);
+
+    it("privacy toggle on, cancel -> stays false (INV-3)", async () => {
+      const shopDomain = "example-row5.myshopify.com";
+      const shopId = await createShop(shopDomain);
+      mocks.currentShop = shopDomain;
+
+      // When cancelled in the UI, the toggle reverts to false and confirms nothing
+      const formData = new FormData();
+      formData.append("storeRxInOrder", "false");
+      formData.append("confirmStoreRxInOrder", "false");
+
+      const request = new Request("https://app.test/app/settings", {
+        method: "POST",
+        body: formData,
+      });
+
+      const response = await action(createActionArgs(request));
+      const { status, data: result } = await unwrapResponse<{
+        ok: boolean;
+        settings?: { storeRxInOrder: boolean };
+      }>(response);
+
+      expect(status).toBe(200);
+      expect(result.ok).toBe(true);
+      expect(result.settings?.storeRxInOrder).toBe(false);
+
+      const saved = await getSettings(shopId, getTestPrisma());
+      expect(saved.storeRxInOrder).toBe(false);
+    }, DB_TIMEOUT_MS);
+  });
+
+  describe("Invariants", () => {
+    it("INV-1: action ignores any shopId in form data and writes session shop only", async () => {
+      const domainA = "inv1-shop-a.myshopify.com";
+      const domainB = "inv1-shop-b.myshopify.com";
+      const shopAId = await createShop(domainA);
+      const shopBId = await createShop(domainB);
+
+      mocks.currentShop = domainA;
+
+      const formData = new FormData();
+      formData.append("shopId", shopBId);
+      formData.append("labEmail", "alpha@example.com");
+      formData.append("ticketFormat", "CSV");
+
+      const request = new Request("https://app.test/app/settings", {
+        method: "POST",
+        body: formData,
+      });
+
+      const response = await action(createActionArgs(request));
+      const { status, data: result } = await unwrapResponse<{ ok: boolean }>(response);
+
+      expect(status).toBe(200);
+      expect(result.ok).toBe(true);
+
+      const settingsA = await getSettings(shopAId, getTestPrisma());
+      expect(settingsA.labEmail).toEqual(["alpha@example.com"]);
+      expect(settingsA.ticketFormat).toBe("CSV");
+
+      const settingsB = await getSettings(shopBId, getTestPrisma());
+      expect(settingsB.labEmail).toEqual([]);
+      expect(settingsB.ticketFormat).toBe("PDF");
+    }, DB_TIMEOUT_MS);
+
+    it("INV-3: post setting storeRxInOrder=true without confirmation field is rejected", async () => {
+      const domain = "inv3-reject.myshopify.com";
+      const shopId = await createShop(domain);
+      mocks.currentShop = domain;
+
+      const formData = new FormData();
+      formData.append("storeRxInOrder", "true");
+      // Intentionally omit confirmation field
+
+      const request = new Request("https://app.test/app/settings", {
+        method: "POST",
+        body: formData,
+      });
+
+      const response = await action(createActionArgs(request));
+      const { status, data: result } =
+        await unwrapResponse<ErrorResponseBody>(response);
+
+      expect(status).toBe(400);
+      expect(result.error.code).toBe("CONFIRMATION_REQUIRED");
+      expect(result.error.fields).toEqual([
+        { path: "storeRxInOrder", code: "CONFIRMATION_REQUIRED" },
+      ]);
+
+      const saved = await getSettings(shopId, getTestPrisma());
+      expect(saved.storeRxInOrder).toBe(false);
+    }, DB_TIMEOUT_MS);
+  });
+
+  describe("Boundary input validation (R1-F3)", () => {
+    it("rejects non-object or primitive JSON payload with 400 and writes nothing", async () => {
+      const domain = "f3-primitive-json.myshopify.com";
+      const shopId = await createShop(domain);
+      mocks.currentShop = domain;
+
+      // Primitive number JSON payload
+      const requestNum = new Request("https://app.test/app/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "123",
+      });
+      const resNum = await action(createActionArgs(requestNum));
+      const unwrappedNum = await unwrapResponse<ErrorResponseBody>(resNum);
+      expect(unwrappedNum.status).toBe(400);
+      expect(unwrappedNum.data.error.code).toBe("INVALID_INPUT");
+
+      // Primitive string JSON payload
+      const requestStr = new Request("https://app.test/app/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: '"some string"',
+      });
+      const resStr = await action(createActionArgs(requestStr));
+      const unwrappedStr = await unwrapResponse<ErrorResponseBody>(resStr);
+      expect(unwrappedStr.status).toBe(400);
+      expect(unwrappedStr.data.error.code).toBe("INVALID_INPUT");
+
+      // Malformed JSON syntax
+      const requestMalformed = new Request("https://app.test/app/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: '{"unclosed',
+      });
+      const resMalformed = await action(createActionArgs(requestMalformed));
+      const unwrappedMalformed =
+        await unwrapResponse<ErrorResponseBody>(resMalformed);
+      expect(unwrappedMalformed.status).toBe(400);
+      expect(unwrappedMalformed.data.error.code).toBe("INVALID_INPUT");
+
+      // Nothing written to database
+      const saved = await getSettings(shopId, getTestPrisma());
+      expect(saved.labEmail).toEqual([]);
+      expect(saved.storeRxInOrder).toBe(false);
+    }, DB_TIMEOUT_MS);
+
+    it("rejects invalid boolean strings in form data with 400 and writes nothing", async () => {
+      const domain = "f3-form-invalid-bool.myshopify.com";
+      const shopId = await createShop(domain);
+      mocks.currentShop = domain;
+
+      const formData = new FormData();
+      formData.append("manualRxEnabled", "not-a-boolean");
+      formData.append("labEmail", "valid@example.com");
+
+      const request = new Request("https://app.test/app/settings", {
+        method: "POST",
+        body: formData,
+      });
+
+      const response = await action(createActionArgs(request));
+      const { status, data: result } =
+        await unwrapResponse<ErrorResponseBody>(response);
+
+      expect(status).toBe(400);
+      expect(result.error.code).toBe("INVALID_INPUT");
+      expect(result.error.fields).toEqual(
+        expect.arrayContaining([
+          { path: "manualRxEnabled", code: "INVALID_BOOLEAN" },
+        ]),
+      );
+
+      const saved = await getSettings(shopId, getTestPrisma());
+      expect(saved.labEmail).toEqual([]);
+    }, DB_TIMEOUT_MS);
+
+    it("rejects invalid boolean strings in JSON with 400 and writes nothing", async () => {
+      const domain = "f3-json-invalid-bool.myshopify.com";
+      const shopId = await createShop(domain);
+      mocks.currentShop = domain;
+
+      const request = new Request("https://app.test/app/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          storeRxInOrder: "invalid-string",
+          labEmail: ["lab@example.com"],
+        }),
+      });
+
+      const response = await action(createActionArgs(request));
+      const { status, data: result } =
+        await unwrapResponse<ErrorResponseBody>(response);
+
+      expect(status).toBe(400);
+      expect(result.error.code).toBe("INVALID_INPUT");
+      expect(result.error.fields).toEqual(
+        expect.arrayContaining([
+          { path: "storeRxInOrder", code: "INVALID_BOOLEAN" },
+        ]),
+      );
+
+      const saved = await getSettings(shopId, getTestPrisma());
+      expect(saved.labEmail).toEqual([]);
+    }, DB_TIMEOUT_MS);
+  });
+
+  describe("Authorization refusal (R1-F5)", () => {
+    it("loader refuses access when authenticate.admin rejects", async () => {
+      const authRejectResponse = new Response(null, {
+        status: 302,
+        headers: { Location: "/auth/login" },
+      });
+      vi.mocked(authenticate.admin).mockRejectedValueOnce(authRejectResponse);
+
+      const request = new Request("https://app.test/app/settings");
+      await expect(loader(createLoaderArgs(request))).rejects.toBe(
+        authRejectResponse,
+      );
+    }, DB_TIMEOUT_MS);
+
+    it("action refuses access and performs no database write when authenticate.admin rejects", async () => {
+      const domain = "f5-auth-refusal.myshopify.com";
+      const shopId = await createShop(domain);
+
+      const authRejectResponse = new Response(null, {
+        status: 302,
+        headers: { Location: "/auth/login" },
+      });
+      vi.mocked(authenticate.admin).mockRejectedValueOnce(authRejectResponse);
+
+      const formData = new FormData();
+      formData.append("labEmail", "attacker@example.com");
+
+      const request = new Request("https://app.test/app/settings", {
+        method: "POST",
+        body: formData,
+      });
+
+      await expect(action(createActionArgs(request))).rejects.toBe(
+        authRejectResponse,
+      );
+
+      const saved = await getSettings(shopId, getTestPrisma());
+      expect(saved.labEmail).toEqual([]);
+    }, DB_TIMEOUT_MS);
+  });
+
+  describe("Lab emails round-trip (R1-F6)", () => {
+    it("two saved addresses render in s-text-area and round-trip unchanged", async () => {
+      const shopDomain = "f6-roundtrip.myshopify.com";
+      const shopId = await createShop(shopDomain);
+      mocks.currentShop = shopDomain;
+
+      // 1. Save two addresses separated by newline
+      const formData = new FormData();
+      formData.append("labEmail", "lab1@example.com\nlab2@example.com");
+
+      const postRequest = new Request("https://app.test/app/settings", {
+        method: "POST",
+        body: formData,
+      });
+
+      const saveResponse = await action(createActionArgs(postRequest));
+      const { status: saveStatus, data: saveResult } = await unwrapResponse<{
+        ok: boolean;
+        settings?: { labEmail: string[] };
+      }>(saveResponse);
+
+      expect(saveStatus).toBe(200);
+      expect(saveResult.ok).toBe(true);
+      expect(saveResult.settings?.labEmail).toEqual([
+        "lab1@example.com",
+        "lab2@example.com",
+      ]);
+
+      // 2. Verify stored in DB
+      const savedInDb = await getSettings(shopId, getTestPrisma());
+      expect(savedInDb.labEmail).toEqual([
+        "lab1@example.com",
+        "lab2@example.com",
+      ]);
+
+      // 3. Loader loads both addresses
+      const loadRequest = new Request("https://app.test/app/settings");
+      const loadResponse = await loader(createLoaderArgs(loadRequest));
+      const { data: loadData } = await unwrapResponse<{
+        settings: { labEmail: string[] };
+      }>(loadResponse);
+      expect(loadData.settings.labEmail).toEqual([
+        "lab1@example.com",
+        "lab2@example.com",
+      ]);
+
+      // 4. Render component and verify s-text-area value contains both lines
+      vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+        settings: loadData.settings,
+        plan: { active: true, planName: "Pro Plan", test: false },
+        pricingUrl: "https://pricing.test",
+      });
+      vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+        data: undefined,
+        state: "idle",
+        Form: ({
+          children,
+          ...props
+        }: React.PropsWithChildren<Record<string, unknown>>) => (
+          <form {...props}>{children}</form>
+        ),
+        submit: vi.fn(),
+        load: vi.fn(),
+      } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+      const { container } = render(<SettingsRoute />);
+      const textArea = container.querySelector(
+        's-text-area[name="labEmail"]',
+      ) as (HTMLElement & { value: string }) | null;
+      expect(textArea).not.toBeNull();
+      expect(textArea?.value).toBe(
+        "lab1@example.com\nlab2@example.com",
+      );
+    }, DB_TIMEOUT_MS);
+  });
+
+  describe("Lab email boundary limits (R5-F1)", () => {
+    it("accepts exactly 10 lab email addresses and saves them", async () => {
+      const domain = "ten-emails.myshopify.com";
+      const shopId = await createShop(domain);
+      mocks.currentShop = domain;
+
+      const tenEmails = Array.from(
+        { length: 10 },
+        (_, i) => `lab${i + 1}@example.com`,
+      );
+      const formData = new FormData();
+      formData.append("labEmail", tenEmails.join("\n"));
+
+      const request = new Request("https://app.test/app/settings", {
+        method: "POST",
+        body: formData,
+      });
+
+      const response = await action(createActionArgs(request));
+      const { status, data: result } = await unwrapResponse<{
+        ok: boolean;
+        settings?: { labEmail: string[] };
+      }>(response);
+
+      expect(status).toBe(200);
+      expect(result.ok).toBe(true);
+      expect(result.settings?.labEmail).toHaveLength(10);
+      expect(result.settings?.labEmail).toEqual(tenEmails);
+
+      const saved = await getSettings(shopId, getTestPrisma());
+      expect(saved.labEmail).toHaveLength(10);
+      expect(saved.labEmail).toEqual(tenEmails);
+    }, DB_TIMEOUT_MS);
+
+    it("rejects 11 lab email addresses with 400 TOO_MANY_LAB_EMAILS and writes nothing (form data)", async () => {
+      const domain = "eleven-emails-form.myshopify.com";
+      const shopId = await createShop(domain);
+      mocks.currentShop = domain;
+
+      const elevenEmails = Array.from(
+        { length: 11 },
+        (_, i) => `lab${i + 1}@example.com`,
+      );
+      const formData = new FormData();
+      formData.append("labEmail", elevenEmails.join("\n"));
+
+      const request = new Request("https://app.test/app/settings", {
+        method: "POST",
+        body: formData,
+      });
+
+      const response = await action(createActionArgs(request));
+      const { status, data: result } =
+        await unwrapResponse<ErrorResponseBody>(response);
+
+      expect(status).toBe(400);
+      expect(result.error.code).toBe("TOO_MANY_LAB_EMAILS");
+      expect(result.error.fields).toEqual([
+        { path: "labEmail", code: "TOO_MANY_LAB_EMAILS" },
+      ]);
+
+      const saved = await getSettings(shopId, getTestPrisma());
+      expect(saved.labEmail).toEqual([]);
+    }, DB_TIMEOUT_MS);
+
+    it("rejects 11 lab email addresses with 400 TOO_MANY_LAB_EMAILS and writes nothing (JSON array)", async () => {
+      const domain = "eleven-emails-json.myshopify.com";
+      const shopId = await createShop(domain);
+      mocks.currentShop = domain;
+
+      const elevenEmails = Array.from(
+        { length: 11 },
+        (_, i) => `lab${i + 1}@example.com`,
+      );
+      const request = new Request("https://app.test/app/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ labEmail: elevenEmails }),
+      });
+
+      const response = await action(createActionArgs(request));
+      const { status, data: result } =
+        await unwrapResponse<ErrorResponseBody>(response);
+
+      expect(status).toBe(400);
+      expect(result.error.code).toBe("TOO_MANY_LAB_EMAILS");
+      expect(result.error.fields).toEqual([
+        { path: "labEmail", code: "TOO_MANY_LAB_EMAILS" },
+      ]);
+
+      const saved = await getSettings(shopId, getTestPrisma());
+      expect(saved.labEmail).toEqual([]);
+    }, DB_TIMEOUT_MS);
+
+    it("rejects over-length lab email field (> 2,000 chars) with 400 FIELD_TOO_LONG and writes nothing (string)", async () => {
+      const domain = "over-length-email-string.myshopify.com";
+      const shopId = await createShop(domain);
+      mocks.currentShop = domain;
+
+      // 2,001 character field
+      const longInput = "a".repeat(2001);
+      const formData = new FormData();
+      formData.append("labEmail", longInput);
+
+      const request = new Request("https://app.test/app/settings", {
+        method: "POST",
+        body: formData,
+      });
+
+      const response = await action(createActionArgs(request));
+      const { status, data: result } =
+        await unwrapResponse<ErrorResponseBody>(response);
+
+      expect(status).toBe(400);
+      expect(result.error.code).toBe("FIELD_TOO_LONG");
+      expect(result.error.fields).toEqual([
+        { path: "labEmail", code: "FIELD_TOO_LONG" },
+      ]);
+
+      const saved = await getSettings(shopId, getTestPrisma());
+      expect(saved.labEmail).toEqual([]);
+    }, DB_TIMEOUT_MS);
+
+    it("rejects over-length lab email field (> 2,000 chars total) with 400 FIELD_TOO_LONG and writes nothing (array)", async () => {
+      const domain = "over-length-email-array.myshopify.com";
+      const shopId = await createShop(domain);
+      mocks.currentShop = domain;
+
+      // Array whose total string length is 2,001 characters
+      const arrayInput = ["a".repeat(1000), "b".repeat(1001)];
+      const request = new Request("https://app.test/app/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ labEmail: arrayInput }),
+      });
+
+      const response = await action(createActionArgs(request));
+      const { status, data: result } =
+        await unwrapResponse<ErrorResponseBody>(response);
+
+      expect(status).toBe(400);
+      expect(result.error.code).toBe("FIELD_TOO_LONG");
+      expect(result.error.fields).toEqual([
+        { path: "labEmail", code: "FIELD_TOO_LONG" },
+      ]);
+
+      const saved = await getSettings(shopId, getTestPrisma());
+      expect(saved.labEmail).toEqual([]);
+    }, DB_TIMEOUT_MS);
+  });
+
+  describe("Loader", () => {
+    it("loads current settings, plan status, and pricing URL", async () => {
+      const domain = "loader-test.myshopify.com";
+      await createShop(domain);
+      mocks.currentShop = domain;
+
+      const request = new Request("https://app.test/app/settings");
+      const response = await loader(createLoaderArgs(request));
+      const { status, data: result } = await unwrapResponse<{
+        settings: { ticketFormat: string; storeRxInOrder: boolean };
+        plan: { active: boolean; planName?: string };
+        pricingUrl: string;
+      }>(response);
+
+      expect(status).toBe(200);
+      expect(result.settings.ticketFormat).toBe("PDF");
+      expect(result.settings.storeRxInOrder).toBe(false);
+      expect(result.plan.active).toBe(true);
+      expect(result.plan.planName).toBe("Pro Plan");
+      expect(result.pricingUrl).toContain("pricing_plans");
+    }, DB_TIMEOUT_MS);
+  });
+});
+
+describe("Spec 20 — Admin Settings Component (UI)", () => {
+  const defaultLoaderData = {
+    settings: {
+      labEmail: ["lab1@example.com", "lab2@example.com"],
+      ticketFormat: "PDF" as const,
+      storeRxInOrder: false,
+      rxUploadEnabled: true,
+      manualRxEnabled: true,
+    },
+    plan: {
+      active: true,
+      planName: "Pro Plan",
+      test: false,
+    },
+    pricingUrl:
+      "https://admin.shopify.com/store/test-shop/charges/lens-advisor/pricing_plans",
+  };
+
+  it("renders all settings fields and plan card with change plan link (R1-F2 presence)", () => {
+    vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue(defaultLoaderData);
+    vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+      data: undefined,
+      state: "idle",
+      Form: ({
+        children,
+        ...props
+      }: React.PropsWithChildren<Record<string, unknown>>) => (
+        <form {...props}>{children}</form>
+      ),
+      submit: vi.fn(),
+      load: vi.fn(),
+    } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+    const { container } = render(<SettingsRoute />);
+
+    const page = container.querySelector("s-page");
+    expect(page).not.toBeNull();
+    expect(page?.getAttribute("heading")).toBe("Settings");
+
+    const labSection = container.querySelector(
+      's-section[heading="Lab fulfillment"]',
+    );
+    expect(labSection).not.toBeNull();
+    expect(labSection?.getAttribute("heading")).toBe("Lab fulfillment");
+
+    const labTextArea = container.querySelector(
+      's-text-area[name="labEmail"]',
+    ) as (HTMLElement & { value: string }) | null;
+    expect(labTextArea).not.toBeNull();
+    expect(labTextArea?.value).toBe(
+      "lab1@example.com\nlab2@example.com",
+    );
+
+    const rxSection = container.querySelector(
+      's-section[heading="Prescription inputs"]',
+    );
+    expect(rxSection).not.toBeNull();
+    expect(rxSection?.getAttribute("heading")).toBe("Prescription inputs");
+
+    const privacySection = container.querySelector(
+      's-section[heading="Order privacy"]',
+    );
+    expect(privacySection).not.toBeNull();
+    expect(privacySection?.getAttribute("heading")).toBe("Order privacy");
+
+    const planSection = container.querySelector('s-section[heading="Plan"]');
+    expect(planSection).not.toBeNull();
+    expect(planSection?.getAttribute("heading")).toBe("Plan");
+
+    const planName = screen.getByText("Pro Plan");
+    expect(planName).not.toBeNull();
+
+    const changePlanLink = screen.getByText("Change plan");
+    expect(changePlanLink).not.toBeNull();
+    expect(changePlanLink.getAttribute("href")).toBe(
+      defaultLoaderData.pricingUrl,
+    );
+    expect(changePlanLink.getAttribute("target")).toBe("_top");
+
+    const helpText = screen.getByText(
+      "When off, orders show 'Prescription on file' and values stay encrypted in this app.",
+    );
+    expect(helpText).not.toBeNull();
+  });
+
+  it("renders default (empty) settings when unconfigured (R1-F9)", () => {
+    const emptyLoaderData = {
+      settings: {
+        labEmail: [],
+        ticketFormat: "PDF" as const,
+        storeRxInOrder: false,
+        rxUploadEnabled: true,
+        manualRxEnabled: true,
+      },
+      plan: {
+        active: true,
+        planName: "Active Plan",
+        test: false,
+      },
+      pricingUrl: "https://pricing.test",
+    };
+
+    vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue(emptyLoaderData);
+    vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+      data: undefined,
+      state: "idle",
+      Form: ({
+        children,
+        ...props
+      }: React.PropsWithChildren<Record<string, unknown>>) => (
+        <form {...props}>{children}</form>
+      ),
+      submit: vi.fn(),
+      load: vi.fn(),
+    } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+    const { container } = render(<SettingsRoute />);
+
+    const textArea = container.querySelector(
+      's-text-area[name="labEmail"]',
+    ) as (HTMLElement & { value: string }) | null;
+    expect(textArea).not.toBeNull();
+    expect(textArea?.value).toBe("");
+
+    const manualRx = container.querySelector(
+      's-checkbox[name="manualRxCheckbox"]',
+    ) as (HTMLElement & { checked: boolean }) | null;
+    expect(manualRx).not.toBeNull();
+    expect(manualRx?.checked).toBe(true);
+
+    const rxUpload = container.querySelector(
+      's-checkbox[name="rxUploadCheckbox"]',
+    ) as (HTMLElement & { checked: boolean }) | null;
+    expect(rxUpload).not.toBeNull();
+    expect(rxUpload?.checked).toBe(true);
+
+    const storeRx = container.querySelector(
+      's-checkbox[name="storeRxInOrderCheckbox"]',
+    ) as (HTMLElement & { checked: boolean }) | null;
+    expect(storeRx).not.toBeNull();
+    expect(storeRx?.checked).toBe(false);
+  });
+
+  it("renders submitting state with busy/loading save button (R1-F9)", () => {
+    vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue(defaultLoaderData);
+    vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+      data: undefined,
+      state: "submitting",
+      Form: ({
+        children,
+        ...props
+      }: React.PropsWithChildren<Record<string, unknown>>) => (
+        <form {...props}>{children}</form>
+      ),
+      submit: vi.fn(),
+      load: vi.fn(),
+    } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+    render(<SettingsRoute />);
+
+    const saveButton = screen.getByText("Save");
+    expect(saveButton).not.toBeNull();
+    expect(saveButton.hasAttribute("loading")).toBe(true);
+  });
+
+  it("displays inline EMAIL error banner and field error when returned by action (R1-F4, R1-F9)", () => {
+    vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue(defaultLoaderData);
+    vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+      data: {
+        error: {
+          code: "EMAIL",
+          message: "Enter a valid lab email address.",
+          fields: [{ path: "labEmail", code: "EMAIL" }],
+        },
+      },
+      state: "idle",
+      Form: ({
+        children,
+        ...props
+      }: React.PropsWithChildren<Record<string, unknown>>) => (
+        <form {...props}>{children}</form>
+      ),
+      submit: vi.fn(),
+      load: vi.fn(),
+    } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+    const { container } = render(<SettingsRoute />);
+
+    const banner = container.querySelector(
+      's-banner[heading="Invalid lab email address"]',
+    );
+    expect(banner).not.toBeNull();
+    expect(banner?.getAttribute("tone")).toBe("critical");
+    expect(screen.getByText("Enter a valid lab email address.")).not.toBeNull();
+
+    const textArea = container.querySelector('s-text-area[name="labEmail"]');
+    expect(textArea?.getAttribute("error")).toBe(
+      "Enter a valid lab email address.",
+    );
+  });
+
+  it("displays inline TOO_MANY_LAB_EMAILS error banner and field error when returned by action (R5-F1)", () => {
+    vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue(defaultLoaderData);
+    vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+      data: {
+        error: {
+          code: "TOO_MANY_LAB_EMAILS",
+          message: "At most 10 lab email addresses are allowed.",
+          fields: [{ path: "labEmail", code: "TOO_MANY_LAB_EMAILS" }],
+        },
+      },
+      state: "idle",
+      Form: ({
+        children,
+        ...props
+      }: React.PropsWithChildren<Record<string, unknown>>) => (
+        <form {...props}>{children}</form>
+      ),
+      submit: vi.fn(),
+      load: vi.fn(),
+    } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+    const { container } = render(<SettingsRoute />);
+
+    const banner = container.querySelector(
+      's-banner[heading="Invalid lab email address"]',
+    );
+    expect(banner).not.toBeNull();
+    expect(banner?.getAttribute("tone")).toBe("critical");
+    expect(
+      screen.getByText("At most 10 lab email addresses are allowed."),
+    ).not.toBeNull();
+
+    const textArea = container.querySelector('s-text-area[name="labEmail"]');
+    expect(textArea?.getAttribute("error")).toBe(
+      "At most 10 lab email addresses are allowed.",
+    );
+  });
+
+  it("displays inline FIELD_TOO_LONG error banner and field error when returned by action (R5-F1)", () => {
+    vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue(defaultLoaderData);
+    vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+      data: {
+        error: {
+          code: "FIELD_TOO_LONG",
+          message: "Lab email field cannot exceed 2,000 characters.",
+          fields: [{ path: "labEmail", code: "FIELD_TOO_LONG" }],
+        },
+      },
+      state: "idle",
+      Form: ({
+        children,
+        ...props
+      }: React.PropsWithChildren<Record<string, unknown>>) => (
+        <form {...props}>{children}</form>
+      ),
+      submit: vi.fn(),
+      load: vi.fn(),
+    } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+    const { container } = render(<SettingsRoute />);
+
+    const banner = container.querySelector(
+      's-banner[heading="Invalid lab email address"]',
+    );
+    expect(banner).not.toBeNull();
+    expect(banner?.getAttribute("tone")).toBe("critical");
+    expect(
+      screen.getByText("Lab email field cannot exceed 2,000 characters."),
+    ).not.toBeNull();
+
+    const textArea = container.querySelector('s-text-area[name="labEmail"]');
+    expect(textArea?.getAttribute("error")).toBe(
+      "Lab email field cannot exceed 2,000 characters.",
+    );
+  });
+
+  it("displays inline AT_LEAST_ONE_RX_INPUT banner inside the Prescription inputs section (R1-F7)", () => {
+    vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue(defaultLoaderData);
+    vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+      data: {
+        error: {
+          code: "AT_LEAST_ONE_RX_INPUT",
+          message: "Keep at least one prescription input on.",
+          fields: [
+            { path: "rxUploadEnabled", code: "AT_LEAST_ONE_RX_INPUT" },
+            { path: "manualRxEnabled", code: "AT_LEAST_ONE_RX_INPUT" },
+          ],
+        },
+      },
+      state: "idle",
+      Form: ({
+        children,
+        ...props
+      }: React.PropsWithChildren<Record<string, unknown>>) => (
+        <form {...props}>{children}</form>
+      ),
+      submit: vi.fn(),
+      load: vi.fn(),
+    } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+    const { container } = render(<SettingsRoute />);
+
+    // R1-F7: Banner must be inside Prescription inputs section
+    const rxSection = container.querySelector(
+      's-section[heading="Prescription inputs"]',
+    );
+    expect(rxSection).not.toBeNull();
+
+    const banner = rxSection?.querySelector(
+      's-banner[heading="Prescription inputs required"]',
+    );
+    expect(banner).not.toBeNull();
+    expect(banner?.getAttribute("tone")).toBe("critical");
+    expect(
+      screen.getByText("Keep at least one prescription input on."),
+    ).not.toBeNull();
+
+    // Ensure it is NOT rendered as a page banner before the Lab fulfillment section
+    expect(
+      container.querySelector(
+        'form > s-stack > s-banner[heading="Prescription inputs required"]',
+      ),
+    ).toBeNull();
+  });
+
+  it("triggers toast notification on success once per completed submission (R1-F8)", () => {
+    vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue(defaultLoaderData);
+
+    let fetcherState = "idle";
+    let fetcherData: Record<string, unknown> | undefined = undefined;
+
+    vi.spyOn(ReactRouter, "useFetcher").mockImplementation(
+      () =>
+        ({
+          data: fetcherData,
+          state: fetcherState,
+          Form: ({
+            children,
+            ...props
+          }: React.PropsWithChildren<Record<string, unknown>>) => (
+            <form {...props}>{children}</form>
+          ),
+          submit: vi.fn(),
+          load: vi.fn(),
+        }) as unknown as ReturnType<typeof ReactRouter.useFetcher>,
+    );
+
+    const { rerender } = render(<SettingsRoute />);
+    expect(mocks.toastShow).not.toHaveBeenCalled();
+
+    // First save: submitting -> idle with ok
+    fetcherState = "submitting";
+    rerender(<SettingsRoute />);
+    expect(mocks.toastShow).not.toHaveBeenCalled();
+
+    fetcherState = "idle";
+    fetcherData = { ok: true, settings: defaultLoaderData.settings };
+    rerender(<SettingsRoute />);
+    expect(mocks.toastShow).toHaveBeenCalledTimes(1);
+    expect(mocks.toastShow).toHaveBeenCalledWith("Settings saved");
+
+    // Second save: submitting -> idle with ok
+    fetcherState = "submitting";
+    rerender(<SettingsRoute />);
+    expect(mocks.toastShow).toHaveBeenCalledTimes(1);
+
+    fetcherState = "idle";
+    fetcherData = { ok: true, settings: defaultLoaderData.settings };
+    rerender(<SettingsRoute />);
+    expect(mocks.toastShow).toHaveBeenCalledTimes(2);
+    expect(mocks.toastShow).toHaveBeenLastCalledWith("Settings saved");
+  });
+
+  it("privacy flow driven through toggle: toggle opens modal, cancel reverts toggle, confirm enables and submits (R1-F1, R1-F2, R2-F1)", async () => {
+    const shopDomain = "privacy-flow.myshopify.com";
+    const shopId = await createShop(shopDomain);
+    mocks.currentShop = shopDomain;
+
+    const requestSubmitSpy = vi.spyOn(HTMLFormElement.prototype, "requestSubmit");
+    const fetcherSubmitSpy = vi.fn();
+
+    vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+      ...defaultLoaderData,
+      settings: {
+        ...defaultLoaderData.settings,
+        storeRxInOrder: false,
+      },
+    });
+    vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+      data: undefined,
+      state: "idle",
+      Form: ({
+        children,
+        onSubmit,
+        ...props
+      }: React.PropsWithChildren<
+        React.FormHTMLAttributes<HTMLFormElement>
+      >) => (
+        <form
+          {...props}
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit?.(e);
+            const formData = new FormData(e.currentTarget);
+            fetcherSubmitSpy(formData);
+          }}
+        >
+          {children}
+        </form>
+      ),
+      submit: fetcherSubmitSpy,
+      load: vi.fn(),
+    } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+    const { container } = render(<SettingsRoute />);
+
+    const confirmModal = container.querySelector(
+      "#privacy-confirm-modal",
+    ) as HTMLElement & {
+      showOverlay: ReturnType<typeof vi.fn>;
+      hideOverlay: ReturnType<typeof vi.fn>;
+    };
+    expect(confirmModal).not.toBeNull();
+
+    const showOverlaySpy = vi.fn();
+    const hideOverlaySpy = vi.fn();
+    confirmModal.showOverlay = showOverlaySpy;
+    confirmModal.hideOverlay = hideOverlaySpy;
+
+    expect(showOverlaySpy).not.toHaveBeenCalled();
+    expect(hideOverlaySpy).not.toHaveBeenCalled();
+    expect(requestSubmitSpy).not.toHaveBeenCalled();
+    expect(fetcherSubmitSpy).not.toHaveBeenCalled();
+
+    const hiddenStoreInput = container.querySelector(
+      'input[name="storeRxInOrder"]',
+    ) as HTMLInputElement | null;
+    const hiddenConfirmInput = container.querySelector(
+      'input[name="confirmStoreRxInOrder"]',
+    ) as HTMLInputElement | null;
+    expect(hiddenStoreInput).not.toBeNull();
+    expect(hiddenConfirmInput).not.toBeNull();
+    expect(hiddenStoreInput?.value).toBe("false");
+    expect(hiddenConfirmInput?.value).toBe("false");
+
+    const toggle = container.querySelector(
+      's-checkbox[name="storeRxInOrderCheckbox"]',
+    ) as (HTMLElement & { checked: boolean }) | null;
+    expect(toggle).not.toBeNull();
+    expect(toggle?.checked).toBe(false);
+
+    // 1. User changes the checkbox to true -> modal's showOverlay() MUST be called (not open attribute)
+    fireEvent.input(toggle!, {
+      target: { checked: true },
+      currentTarget: { checked: true },
+    });
+    expect(showOverlaySpy).toHaveBeenCalledTimes(1);
+    expect(hideOverlaySpy).not.toHaveBeenCalled();
+
+    // 2. User clicks Cancel in the modal -> modal closes via hideOverlay(), toggle stays off, nothing confirmed
+    const cancelBtn = screen.getByText("Cancel");
+    expect(cancelBtn).not.toBeNull();
+    fireEvent.click(cancelBtn);
+
+    expect(hideOverlaySpy).toHaveBeenCalledTimes(1);
+    expect((toggle as HTMLElement & { checked: boolean }).checked).toBe(false);
+    expect(hiddenStoreInput?.value).toBe("false");
+    expect(hiddenConfirmInput?.value).toBe("false");
+
+    // Cancel causes no submission and no write to database
+    expect(requestSubmitSpy).not.toHaveBeenCalled();
+    expect(fetcherSubmitSpy).not.toHaveBeenCalled();
+    const settingsAfterCancel = await getSettings(shopId, getTestPrisma());
+    expect(settingsAfterCancel.storeRxInOrder).toBe(false);
+
+    // 3. User changes the checkbox to true again -> modal's showOverlay() called again
+    fireEvent.input(toggle!, {
+      target: { checked: true },
+      currentTarget: { checked: true },
+    });
+    expect(showOverlaySpy).toHaveBeenCalledTimes(2);
+
+    // 4. User clicks Confirm in the modal -> modal closes via hideOverlay(), toggle is on, confirm field is set
+    const confirmBtn = screen.getByText("Confirm");
+    expect(confirmBtn).not.toBeNull();
+    fireEvent.click(confirmBtn);
+
+    expect(hideOverlaySpy).toHaveBeenCalledTimes(2);
+    expect((toggle as HTMLElement & { checked: boolean }).checked).toBe(true);
+    expect(hiddenStoreInput?.value).toBe("true");
+    expect(hiddenConfirmInput?.value).toBe("true");
+
+    // 5. User clicks Save -> triggers requestSubmit() and submits the form
+    const saveBtn = screen.getByText("Save");
+    expect(saveBtn).not.toBeNull();
+    fireEvent.click(saveBtn);
+
+    expect(requestSubmitSpy).toHaveBeenCalled();
+    expect(fetcherSubmitSpy).toHaveBeenCalledTimes(1);
+
+    const submittedFormData = fetcherSubmitSpy.mock.calls[0][0] as FormData;
+    expect(submittedFormData.get("storeRxInOrder")).toBe("true");
+    expect(submittedFormData.get("confirmStoreRxInOrder")).toBe("true");
+
+    // Pass the submitted form data to the action to prove it writes true to the database
+    const postRequest = new Request("https://app.test/app/settings", {
+      method: "POST",
+      body: submittedFormData,
+    });
+    const actionResult = await action(createActionArgs(postRequest));
+    const { status, data: result } = await unwrapResponse<{
+      ok: boolean;
+      settings?: { storeRxInOrder: boolean };
+    }>(actionResult);
+
+    expect(status).toBe(200);
+    expect(result.ok).toBe(true);
+    expect(result.settings?.storeRxInOrder).toBe(true);
+
+    const savedInDb = await getSettings(shopId, getTestPrisma());
+    expect(savedInDb.storeRxInOrder).toBe(true);
+  });
+
+  it("controlled Polaris fields assign DOM properties (checked/value) and cancel resets toggle.checked (R3-F1)", () => {
+    vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+      settings: {
+        labEmail: ["lab@example.com"],
+        ticketFormat: "BOTH" as const,
+        storeRxInOrder: false,
+        rxUploadEnabled: true,
+        manualRxEnabled: false,
+      },
+      plan: {
+        active: true,
+        planName: "Pro Plan",
+        test: false,
+      },
+      pricingUrl: "https://pricing.test",
+    });
+
+    vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+      data: undefined,
+      state: "idle",
+      Form: ({
+        children,
+        ...props
+      }: React.PropsWithChildren<Record<string, unknown>>) => (
+        <form {...props}>{children}</form>
+      ),
+      submit: vi.fn(),
+      load: vi.fn(),
+    } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+    const { container } = render(<SettingsRoute />);
+
+    const textArea = container.querySelector(
+      's-text-area[name="labEmail"]',
+    ) as (HTMLElement & { value: string }) | null;
+    expect(textArea).not.toBeNull();
+    expect(textArea?.value).toBe("lab@example.com");
+
+    const select = container.querySelector(
+      's-select[name="ticketFormatSelect"]',
+    ) as (HTMLElement & { value: string }) | null;
+    expect(select).not.toBeNull();
+    expect(select?.value).toBe("BOTH");
+
+    const manualRx = container.querySelector(
+      's-checkbox[name="manualRxCheckbox"]',
+    ) as (HTMLElement & { checked: boolean }) | null;
+    expect(manualRx).not.toBeNull();
+    expect(manualRx?.checked).toBe(false);
+
+    const rxUpload = container.querySelector(
+      's-checkbox[name="rxUploadCheckbox"]',
+    ) as (HTMLElement & { checked: boolean }) | null;
+    expect(rxUpload).not.toBeNull();
+    expect(rxUpload?.checked).toBe(true);
+
+    const toggle = container.querySelector(
+      's-checkbox[name="storeRxInOrderCheckbox"]',
+    ) as (HTMLElement & { checked: boolean }) | null;
+    expect(toggle).not.toBeNull();
+    expect(toggle?.checked).toBe(false);
+
+    const modal = container.querySelector(
+      "#privacy-confirm-modal",
+    ) as HTMLElement & {
+      showOverlay: ReturnType<typeof vi.fn>;
+      hideOverlay: ReturnType<typeof vi.fn>;
+    };
+    expect(modal).not.toBeNull();
+    modal.showOverlay = vi.fn();
+    modal.hideOverlay = vi.fn();
+
+    // Toggle on -> opens modal
+    fireEvent.input(toggle!, {
+      target: { checked: true },
+      currentTarget: { checked: true },
+    });
+    expect(modal.showOverlay).toHaveBeenCalledTimes(1);
+
+    // Cancel -> toggle.checked is strictly false as a DOM property
+    const cancelBtn = screen.getByText("Cancel");
+    fireEvent.click(cancelBtn);
+    expect(modal.hideOverlay).toHaveBeenCalledTimes(1);
+    expect(toggle?.checked).toBe(false);
+
+    // Toggle on again -> confirm
+    fireEvent.input(toggle!, {
+      target: { checked: true },
+      currentTarget: { checked: true },
+    });
+    const confirmBtn = screen.getByText("Confirm");
+    fireEvent.click(confirmBtn);
+    expect(modal.hideOverlay).toHaveBeenCalledTimes(2);
+    expect(toggle?.checked).toBe(true);
+
+    // Toggle off -> toggle.checked becomes false without opening modal
+    fireEvent.input(toggle!, {
+      target: { checked: false },
+      currentTarget: { checked: false },
+    });
+    expect(toggle?.checked).toBe(false);
+    expect(modal.showOverlay).toHaveBeenCalledTimes(2);
+  });
+
+  it("dismissing privacy modal with Escape resets toggle.checked to false and subsequent Save submits false (R4-F1)", async () => {
+    const shopDomain = "privacy-escape.myshopify.com";
+    const shopId = await createShop(shopDomain);
+    mocks.currentShop = shopDomain;
+
+    const requestSubmitSpy = vi.spyOn(HTMLFormElement.prototype, "requestSubmit");
+    const fetcherSubmitSpy = vi.fn();
+
+    vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+      ...defaultLoaderData,
+      settings: {
+        ...defaultLoaderData.settings,
+        storeRxInOrder: false,
+      },
+    });
+    vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+      data: undefined,
+      state: "idle",
+      Form: ({
+        children,
+        onSubmit,
+        ...props
+      }: React.PropsWithChildren<
+        React.FormHTMLAttributes<HTMLFormElement>
+      >) => (
+        <form
+          {...props}
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit?.(e);
+            const formData = new FormData(e.currentTarget);
+            fetcherSubmitSpy(formData);
+          }}
+        >
+          {children}
+        </form>
+      ),
+      submit: fetcherSubmitSpy,
+      load: vi.fn(),
+    } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+    const { container } = render(<SettingsRoute />);
+
+    const confirmModal = container.querySelector(
+      "#privacy-confirm-modal",
+    ) as HTMLElement & {
+      showOverlay: ReturnType<typeof vi.fn>;
+      hideOverlay: ReturnType<typeof vi.fn>;
+    };
+    expect(confirmModal).not.toBeNull();
+    confirmModal.showOverlay = vi.fn();
+    confirmModal.hideOverlay = vi.fn();
+
+    const toggle = container.querySelector(
+      's-checkbox[name="storeRxInOrderCheckbox"]',
+    ) as (HTMLElement & { checked: boolean }) | null;
+    expect(toggle).not.toBeNull();
+    expect(toggle?.checked).toBe(false);
+
+    const hiddenStoreInput = container.querySelector(
+      'input[name="storeRxInOrder"]',
+    ) as HTMLInputElement | null;
+    const hiddenConfirmInput = container.querySelector(
+      'input[name="confirmStoreRxInOrder"]',
+    ) as HTMLInputElement | null;
+    expect(hiddenStoreInput?.value).toBe("false");
+    expect(hiddenConfirmInput?.value).toBe("false");
+
+    // 1. User changes the checkbox to true -> modal opens, toggle is checked
+    fireEvent.input(toggle!, {
+      target: { checked: true },
+      currentTarget: { checked: true },
+    });
+    expect(confirmModal.showOverlay).toHaveBeenCalledTimes(1);
+    expect(toggle?.checked).toBe(true);
+
+    // 2. User dismisses via Escape: modal emits hide event without confirmation
+    fireEvent.keyDown(confirmModal, { key: "Escape" });
+    fireEvent(confirmModal, new CustomEvent("hide"));
+
+    // Toggle property must be reset to off
+    expect(toggle?.checked).toBe(false);
+    expect(hiddenStoreInput?.value).toBe("false");
+    expect(hiddenConfirmInput?.value).toBe("false");
+
+    // 3. User clicks Save -> submits false, action writes false to db
+    const saveBtn = screen.getByText("Save");
+    fireEvent.click(saveBtn);
+
+    expect(requestSubmitSpy).toHaveBeenCalled();
+    expect(fetcherSubmitSpy).toHaveBeenCalledTimes(1);
+
+    const submittedFormData = fetcherSubmitSpy.mock.calls[0][0] as FormData;
+    expect(submittedFormData.get("storeRxInOrder")).toBe("false");
+    expect(submittedFormData.get("confirmStoreRxInOrder")).toBe("false");
+
+    const postRequest = new Request("https://app.test/app/settings", {
+      method: "POST",
+      body: submittedFormData,
+    });
+    const actionResult = await action(createActionArgs(postRequest));
+    const { status, data: result } = await unwrapResponse<{
+      ok: boolean;
+      settings?: { storeRxInOrder: boolean };
+    }>(actionResult);
+
+    expect(status).toBe(200);
+    expect(result.ok).toBe(true);
+    expect(result.settings?.storeRxInOrder).toBe(false);
+
+    const savedInDb = await getSettings(shopId, getTestPrisma());
+    expect(savedInDb.storeRxInOrder).toBe(false);
+  });
+
+  it("dismissing privacy modal with backdrop click resets toggle.checked to false and subsequent Save submits false (R4-F1)", async () => {
+    const shopDomain = "privacy-backdrop.myshopify.com";
+    const shopId = await createShop(shopDomain);
+    mocks.currentShop = shopDomain;
+
+    const requestSubmitSpy = vi.spyOn(HTMLFormElement.prototype, "requestSubmit");
+    const fetcherSubmitSpy = vi.fn();
+
+    vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+      ...defaultLoaderData,
+      settings: {
+        ...defaultLoaderData.settings,
+        storeRxInOrder: false,
+      },
+    });
+    vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+      data: undefined,
+      state: "idle",
+      Form: ({
+        children,
+        onSubmit,
+        ...props
+      }: React.PropsWithChildren<
+        React.FormHTMLAttributes<HTMLFormElement>
+      >) => (
+        <form
+          {...props}
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit?.(e);
+            const formData = new FormData(e.currentTarget);
+            fetcherSubmitSpy(formData);
+          }}
+        >
+          {children}
+        </form>
+      ),
+      submit: fetcherSubmitSpy,
+      load: vi.fn(),
+    } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+    const { container } = render(<SettingsRoute />);
+
+    const confirmModal = container.querySelector(
+      "#privacy-confirm-modal",
+    ) as HTMLElement & {
+      showOverlay: ReturnType<typeof vi.fn>;
+      hideOverlay: ReturnType<typeof vi.fn>;
+    };
+    expect(confirmModal).not.toBeNull();
+    confirmModal.showOverlay = vi.fn();
+    confirmModal.hideOverlay = vi.fn();
+
+    const toggle = container.querySelector(
+      's-checkbox[name="storeRxInOrderCheckbox"]',
+    ) as (HTMLElement & { checked: boolean }) | null;
+    expect(toggle).not.toBeNull();
+    expect(toggle?.checked).toBe(false);
+
+    const hiddenStoreInput = container.querySelector(
+      'input[name="storeRxInOrder"]',
+    ) as HTMLInputElement | null;
+    const hiddenConfirmInput = container.querySelector(
+      'input[name="confirmStoreRxInOrder"]',
+    ) as HTMLInputElement | null;
+
+    // 1. User changes the checkbox to true -> modal opens, toggle is checked
+    fireEvent.input(toggle!, {
+      target: { checked: true },
+      currentTarget: { checked: true },
+    });
+    expect(confirmModal.showOverlay).toHaveBeenCalledTimes(1);
+    expect(toggle?.checked).toBe(true);
+
+    // 2. User dismisses via backdrop: modal emits hide event without confirmation
+    fireEvent.click(confirmModal);
+    fireEvent(confirmModal, new CustomEvent("hide"));
+
+    // Toggle property must be reset to off
+    expect(toggle?.checked).toBe(false);
+    expect(hiddenStoreInput?.value).toBe("false");
+    expect(hiddenConfirmInput?.value).toBe("false");
+
+    // 3. User clicks Save -> submits false, action writes false to db
+    const saveBtn = screen.getByText("Save");
+    fireEvent.click(saveBtn);
+
+    expect(requestSubmitSpy).toHaveBeenCalled();
+    expect(fetcherSubmitSpy).toHaveBeenCalledTimes(1);
+
+    const submittedFormData = fetcherSubmitSpy.mock.calls[0][0] as FormData;
+    expect(submittedFormData.get("storeRxInOrder")).toBe("false");
+    expect(submittedFormData.get("confirmStoreRxInOrder")).toBe("false");
+
+    const postRequest = new Request("https://app.test/app/settings", {
+      method: "POST",
+      body: submittedFormData,
+    });
+    const actionResult = await action(createActionArgs(postRequest));
+    const { status, data: result } = await unwrapResponse<{
+      ok: boolean;
+      settings?: { storeRxInOrder: boolean };
+    }>(actionResult);
+
+    expect(status).toBe(200);
+    expect(result.ok).toBe(true);
+    expect(result.settings?.storeRxInOrder).toBe(false);
+
+    const savedInDb = await getSettings(shopId, getTestPrisma());
+    expect(savedInDb.storeRxInOrder).toBe(false);
+  });
+
+  it("modal hide event: any dismissal that is not Confirm (Escape, backdrop, Cancel) resets toggle property to off; only Confirm keeps it on (R4-F1)", async () => {
+    const shopDomain = "privacy-all-dismissals.myshopify.com";
+    const shopId = await createShop(shopDomain);
+    mocks.currentShop = shopDomain;
+
+    const requestSubmitSpy = vi.spyOn(HTMLFormElement.prototype, "requestSubmit");
+    const fetcherSubmitSpy = vi.fn();
+
+    vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+      ...defaultLoaderData,
+      settings: {
+        ...defaultLoaderData.settings,
+        storeRxInOrder: false,
+      },
+    });
+    vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+      data: undefined,
+      state: "idle",
+      Form: ({
+        children,
+        onSubmit,
+        ...props
+      }: React.PropsWithChildren<
+        React.FormHTMLAttributes<HTMLFormElement>
+      >) => (
+        <form
+          {...props}
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit?.(e);
+            const formData = new FormData(e.currentTarget);
+            fetcherSubmitSpy(formData);
+          }}
+        >
+          {children}
+        </form>
+      ),
+      submit: fetcherSubmitSpy,
+      load: vi.fn(),
+    } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+    const { container } = render(<SettingsRoute />);
+
+    const confirmModal = container.querySelector(
+      "#privacy-confirm-modal",
+    ) as HTMLElement & {
+      showOverlay: ReturnType<typeof vi.fn>;
+      hideOverlay: ReturnType<typeof vi.fn>;
+    };
+    expect(confirmModal).not.toBeNull();
+    confirmModal.showOverlay = vi.fn();
+    confirmModal.hideOverlay = vi.fn();
+
+    const toggle = container.querySelector(
+      's-checkbox[name="storeRxInOrderCheckbox"]',
+    ) as (HTMLElement & { checked: boolean }) | null;
+    expect(toggle).not.toBeNull();
+    expect(toggle?.checked).toBe(false);
+
+    const hiddenStoreInput = container.querySelector(
+      'input[name="storeRxInOrder"]',
+    ) as HTMLInputElement | null;
+    const hiddenConfirmInput = container.querySelector(
+      'input[name="confirmStoreRxInOrder"]',
+    ) as HTMLInputElement | null;
+
+    // --- 1. Dismissal via Escape resets toggle to off ---
+    fireEvent.input(toggle!, {
+      target: { checked: true },
+      currentTarget: { checked: true },
+    });
+    expect(toggle?.checked).toBe(true);
+
+    fireEvent.keyDown(confirmModal, { key: "Escape" });
+    fireEvent(confirmModal, new CustomEvent("hide"));
+    expect(toggle?.checked).toBe(false);
+    expect(hiddenStoreInput?.value).toBe("false");
+    expect(hiddenConfirmInput?.value).toBe("false");
+
+    // --- 2. Dismissal via backdrop resets toggle to off ---
+    fireEvent.input(toggle!, {
+      target: { checked: true },
+      currentTarget: { checked: true },
+    });
+    expect(toggle?.checked).toBe(true);
+
+    fireEvent.click(confirmModal);
+    fireEvent(confirmModal, new CustomEvent("hide"));
+    expect(toggle?.checked).toBe(false);
+    expect(hiddenStoreInput?.value).toBe("false");
+    expect(hiddenConfirmInput?.value).toBe("false");
+
+    // --- 3. Dismissal via Cancel button resets toggle to off ---
+    fireEvent.input(toggle!, {
+      target: { checked: true },
+      currentTarget: { checked: true },
+    });
+    expect(toggle?.checked).toBe(true);
+
+    const cancelBtn = screen.getByText("Cancel");
+    fireEvent.click(cancelBtn);
+    fireEvent(confirmModal, new CustomEvent("hide"));
+    expect(toggle?.checked).toBe(false);
+    expect(hiddenStoreInput?.value).toBe("false");
+    expect(hiddenConfirmInput?.value).toBe("false");
+
+    // --- 4. Only Confirm keeps it on ---
+    fireEvent.input(toggle!, {
+      target: { checked: true },
+      currentTarget: { checked: true },
+    });
+    expect(toggle?.checked).toBe(true);
+
+    const confirmBtn = screen.getByText("Confirm");
+    fireEvent.click(confirmBtn);
+    fireEvent(confirmModal, new CustomEvent("hide"));
+    expect(toggle?.checked).toBe(true);
+    expect(hiddenStoreInput?.value).toBe("true");
+    expect(hiddenConfirmInput?.value).toBe("true");
+
+    // Save submits true
+    const saveBtn = screen.getByText("Save");
+    fireEvent.click(saveBtn);
+
+    expect(requestSubmitSpy).toHaveBeenCalled();
+    const submittedFormData = fetcherSubmitSpy.mock.calls[0][0] as FormData;
+    expect(submittedFormData.get("storeRxInOrder")).toBe("true");
+    expect(submittedFormData.get("confirmStoreRxInOrder")).toBe("true");
+
+    const postRequest = new Request("https://app.test/app/settings", {
+      method: "POST",
+      body: submittedFormData,
+    });
+    const actionResult = await action(createActionArgs(postRequest));
+    const { status, data: result } = await unwrapResponse<{
+      ok: boolean;
+      settings?: { storeRxInOrder: boolean };
+    }>(actionResult);
+
+    expect(status).toBe(200);
+    expect(result.ok).toBe(true);
+    expect(result.settings?.storeRxInOrder).toBe(true);
+
+    const savedInDb = await getSettings(shopId, getTestPrisma());
+    expect(savedInDb.storeRxInOrder).toBe(true);
+  });
+});
