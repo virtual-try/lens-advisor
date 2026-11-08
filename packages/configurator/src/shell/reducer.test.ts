@@ -128,6 +128,10 @@ describe("configuratorReducer", () => {
       },
     },
     {
+      name: "CLEAR_PRESCRIPTION",
+      action: { type: "CLEAR_PRESCRIPTION" },
+    },
+    {
       name: "SET_PRESCRIPTION_REF",
       action: { type: "SET_PRESCRIPTION_REF", prescriptionRef: "rx-ref-1" },
     },
@@ -191,6 +195,9 @@ describe("configuratorReducer", () => {
             expect(nextState.selection.rxType).toBe("SINGLE_VISION");
           } else if (action.type === "SET_PRESCRIPTION") {
             expect(nextState.prescription).toEqual(action.prescription);
+          } else if (action.type === "CLEAR_PRESCRIPTION") {
+            expect(nextState.prescription).toBeNull();
+            expect(nextState.prescriptionRef).toBeNull();
           } else if (action.type === "SET_PRESCRIPTION_REF") {
             expect(nextState.prescriptionRef).toBe("rx-ref-1");
             expect(nextState.selection.prescriptionRef).toBe("rx-ref-1");
@@ -369,6 +376,104 @@ describe("configuratorReducer", () => {
       expect(nextState.status).toBe("error");
       expect(nextState.error?.code).toBe("RATE_LIMITED");
       expect(nextState.error?.message).toBe("Too many requests");
+    });
+  });
+
+  describe("prescription clearing and gating (R2-F1, R2-F2)", () => {
+    it("CLEAR_PRESCRIPTION resets prescription and prescriptionRef in state and selection", () => {
+      const state: ConfiguratorState = {
+        ...createInitialState(),
+        prescription: {
+          od: { sph: -200 },
+          os: { sph: -200 },
+          pd: { single: 630 },
+        },
+        prescriptionRef: "rx-999",
+        selection: {
+          ...createInitialState().selection,
+          prescriptionRef: "rx-999",
+        },
+      };
+
+      const nextState = configuratorReducer(state, { type: "CLEAR_PRESCRIPTION" });
+      expect(nextState.prescription).toBeNull();
+      expect(nextState.prescriptionRef).toBeNull();
+      expect(nextState.selection.prescriptionRef).toBeUndefined();
+    });
+
+    it("SET_RX_TYPE with a different rxType clears prescription and prescriptionRef (R2-F2)", () => {
+      const state: ConfiguratorState = {
+        ...createInitialState(),
+        rxType: "SINGLE_VISION",
+        prescription: {
+          od: { sph: -200 },
+          os: { sph: -200 },
+          pd: { single: 630 },
+        },
+        prescriptionRef: "rx-999",
+        selection: {
+          ...createInitialState().selection,
+          rxType: "SINGLE_VISION",
+          prescriptionRef: "rx-999",
+        },
+      };
+
+      const nextState = configuratorReducer(state, {
+        type: "SET_RX_TYPE",
+        rxType: "PROGRESSIVE",
+      });
+      expect(nextState.rxType).toBe("PROGRESSIVE");
+      expect(nextState.prescription).toBeNull();
+      expect(nextState.prescriptionRef).toBeNull();
+      expect(nextState.selection.prescriptionRef).toBeUndefined();
+    });
+
+    it("SET_RX_TYPE with same rxType preserves existing prescription", () => {
+      const existingRx = { od: { sph: -200 }, os: { sph: -200 }, pd: { single: 630 } };
+      const state: ConfiguratorState = {
+        ...createInitialState(),
+        rxType: "SINGLE_VISION",
+        prescription: existingRx,
+        prescriptionRef: "rx-999",
+      };
+
+      const nextState = configuratorReducer(state, {
+        type: "SET_RX_TYPE",
+        rxType: "SINGLE_VISION",
+      });
+      expect(nextState.prescription).toBe(existingRx);
+      expect(nextState.prescriptionRef).toBe("rx-999");
+    });
+
+    it("GO_TO_STEP is blocked when an intermediate step is incomplete (R2-F1)", () => {
+      const steps = createMockSteps([
+        {
+          id: "step-1",
+          isComplete: () => true,
+        },
+        {
+          id: "step-2",
+          isComplete: () => false, // incomplete
+        },
+        {
+          id: "step-3",
+          isComplete: () => true,
+        },
+      ]);
+
+      const state: ConfiguratorState = {
+        ...createInitialState(),
+        status: "ready",
+        isOpen: true,
+        stepIndex: 1, // on incomplete step 2
+      };
+
+      const result = configuratorReducer(
+        state,
+        { type: "GO_TO_STEP", stepIndex: 2 },
+        steps,
+      );
+      expect(result.stepIndex).toBe(1); // blocked!
     });
   });
 

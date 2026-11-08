@@ -32,7 +32,7 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | 23 | [orders/create webhook → lab orders](./23-orders-webhook.md) | Done | 02, 08, 11, 22 | Heavy | — | PR #58 |
 | 24 | [Lab job ticket renderer (PDF and CSV)](./24-lab-ticket-renderer.md) | Done | 03, 12 | Standard | — | PR #41 |
 | 25 | [Compliance and uninstall webhooks](./25-compliance-webhooks.md) | Done | 02, 06, 07, 08 | Heavy | — | PR #50 |
-| 26 | [Configurator steps 1–2: Rx type and prescription](./26-step-rx-type-and-prescription.md) | Not started | 10, 16 | Standard | — |  |
+| 26 | [Configurator steps 1–2: Rx type and prescription](./26-step-rx-type-and-prescription.md) | Done | 10, 16 | Standard | — | PR #67 |
 | 27 | [Configurator steps 3–4: lens group and lens, with Rx limits](./27-step-lens-selection.md) | Done | 11, 13, 16 | Standard | — | PR #66 |
 | 28 | [Configurator steps 5–6: options, add-ons and price summary](./28-step-options-addons.md) | Done | 13, 16 | Standard | — | PR #65 |
 | 29 | [Configurator step 7: review and add to cart (nested lines)](./29-step-review-add-to-cart.md) | Not started | 13, 16, 28 | Heavy | — |  |
@@ -91,3 +91,4 @@ Not started · In progress · Blocked · Done
 - **2026-11-08** — Spec 30 merged (PR #61).
 - **2026-11-08** — Spec 28 merged (PR #65).
 - **2026-11-08** — Spec 27 merged (PR #66).
+- **2026-11-08** — Spec 26 merged (PR #67).
