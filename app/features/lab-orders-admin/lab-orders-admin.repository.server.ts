@@ -71,6 +71,21 @@ export async function listLabOrders(
   const client = db ?? getPrisma();
   const limit = options.limit ?? 50;
 
+  // Validate cursor belongs to this shop (INV-1, R1-F7)
+  if (options.cursor) {
+    const cursorRecord = await client.labOrder.findFirst({
+      where: { id: options.cursor, shopId },
+      select: { id: true },
+    });
+    if (!cursorRecord) {
+      return {
+        items: [],
+        hasNext: false,
+        nextCursor: null,
+      };
+    }
+  }
+
   const where: Prisma.LabOrderWhereInput = {
     shopId,
     ...(options.status ? { status: options.status } : {}),

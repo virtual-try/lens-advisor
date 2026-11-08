@@ -20,7 +20,11 @@ import {
 } from "../shared/http/errors.server";
 import { requireActivePlan } from "../features/billing/require-plan.server";
 import { fromOrderGid } from "../features/lab-orders/constants";
-import { formatLabOrderError } from "../features/lab-orders-admin/errors";
+import {
+  formatLabOrderError,
+  UNKNOWN_ERROR_MESSAGE,
+} from "../features/lab-orders-admin/errors";
+import { renderStatusBadge } from "../features/lab-orders-admin";
 import { formatPrescriptionSummary } from "../features/lab-orders-admin/summary";
 import {
   getLabOrderDetailService,
@@ -90,8 +94,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const intent = formData.get("intent");
 
   if (intent === "resend") {
-    await resendLabOrderService(shop.id, id);
-    return data({ ok: true, resent: true });
+    try {
+      await resendLabOrderService(shop.id, id);
+      return data({ ok: true, resent: true });
+    } catch (err: unknown) {
+      return errorResponse(err);
+    }
   }
 
   if (intent === "download-ticket") {
@@ -115,40 +123,23 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   );
 };
 
-function renderStatusBadge(order: LabOrderDetail) {
-  switch (order.status) {
-    case "PENDING":
-      return <s-badge tone="caution">Pending</s-badge>;
-    case "SENDING":
-      return <s-badge tone="info">Sending</s-badge>;
-    case "SENT":
-      return <s-badge tone="success">Sent</s-badge>;
-    case "FAILED":
-      return (
-        <s-stack direction="inline" gap="base">
-          <s-badge tone="critical">Failed</s-badge>
-          <s-text>{formatLabOrderError(order.lastErrorCode)}</s-text>
-          {order.lastErrorCode === "NO_LAB_EMAIL" && (
-            <s-link href="/app/settings">Settings</s-link>
-          )}
-        </s-stack>
-      );
-    default:
-      return <s-badge tone="info">{order.status}</s-badge>;
-  }
-}
-
 export default function LabOrderDetailRoute() {
-  const { order: initialOrder, shopId, storeHandle } =
+  const { order: initialOrder, storeHandle } =
     useLoaderData<typeof loader>();
-  const resendFetcher = useFetcher<{ ok?: boolean; resent?: boolean }>();
+  const resendFetcher = useFetcher<{
+    ok?: boolean;
+    resent?: boolean;
+    error?: { code?: string; message?: string };
+  }>();
   const downloadFetcher = useFetcher<{
     ok?: boolean;
     downloadUrl?: string;
-    error?: { message?: string };
+    error?: { code?: string; message?: string };
   }>();
   const isResending = resendFetcher.state !== "idle";
+  const isDownloading = downloadFetcher.state !== "idle";
   const resendModalRef = useRef<HTMLElementTagNameMap["s-modal"] | null>(null);
+  const pendingWindowRef = useRef<Window | null>(null);
 
   // If resend succeeded, locally reflect Pending status until revalidation completes
   const order: LabOrderDetail =
@@ -178,6 +169,13 @@ export default function LabOrderDetailRoute() {
   };
 
   const handleDownloadTicket = (ticketKey: string) => {
+    if (typeof window !== "undefined") {
+      try {
+        pendingWindowRef.current = window.open("", "_blank");
+      } catch {
+        pendingWindowRef.current = null;
+      }
+    }
     downloadFetcher.submit(
       { intent: "download-ticket", ticketKey },
       { method: "POST" },
@@ -185,27 +183,38 @@ export default function LabOrderDetailRoute() {
   };
 
   useEffect(() => {
-    if (downloadFetcher.data?.downloadUrl) {
-      if (typeof window !== "undefined") {
-        window.open(downloadFetcher.data.downloadUrl, "_blank");
+    if (downloadFetcher.state === "idle") {
+      if (downloadFetcher.data?.downloadUrl) {
+        if (pendingWindowRef.current) {
+          try {
+            pendingWindowRef.current.location.href =
+              downloadFetcher.data.downloadUrl;
+          } catch {
+            // fallback
+          }
+          pendingWindowRef.current = null;
+        } else if (typeof window !== "undefined") {
+          window.open(downloadFetcher.data.downloadUrl, "_blank");
+        }
+      } else if (downloadFetcher.data?.error) {
+        if (pendingWindowRef.current) {
+          try {
+            pendingWindowRef.current.close();
+          } catch {
+            // ignore
+          }
+          pendingWindowRef.current = null;
+        }
       }
     }
-  }, [downloadFetcher.data]);
+  }, [downloadFetcher.state, downloadFetcher.data]);
 
   const shopifyOrderUrl = `https://admin.shopify.com/store/${storeHandle}/orders/${fromOrderGid(
     order.shopifyOrderId,
   )}`;
 
-  // Determine ticket keys available for download
-  const ticketKeysToOffer: string[] =
-    order.ticketKeys && order.ticketKeys.length > 0
-      ? order.ticketKeys
-      : order.status === "SENT"
-        ? [
-            `shops/${shopId}/tickets/${order.id}.pdf`,
-            `shops/${shopId}/tickets/${order.id}.csv`,
-          ]
-        : [];
+  // Determine ticket keys available for download (R1-F4: offer only order.ticketKeys)
+  const ticketKeysToOffer: string[] = order.ticketKeys ?? [];
 
   const canResend = order.status === "FAILED" || order.status === "SENT";
 
@@ -219,6 +228,13 @@ export default function LabOrderDetailRoute() {
         {downloadFetcher.data?.error && (
           <s-banner tone="critical" heading="Download failed">
             {downloadFetcher.data.error.message ?? "Could not generate download URL"}
+          </s-banner>
+        )}
+
+        {resendFetcher.data?.error && (
+          <s-banner tone="critical" heading="Resend failed">
+            {formatLabOrderError(resendFetcher.data.error.code) ||
+              UNKNOWN_ERROR_MESSAGE}
           </s-banner>
         )}
 
@@ -308,6 +324,7 @@ export default function LabOrderDetailRoute() {
                   <s-button
                     key={ticketKey}
                     onClick={() => handleDownloadTicket(ticketKey)}
+                    {...(isDownloading ? { disabled: true } : {})}
                   >
                     {label}
                   </s-button>
@@ -321,7 +338,12 @@ export default function LabOrderDetailRoute() {
         {canResend && (
           <s-section heading="Actions">
             <s-stack direction="inline" gap="base">
-              <s-button onClick={handleOpenResendModal}>Resend to lab</s-button>
+              <s-button
+                onClick={handleOpenResendModal}
+                {...(isResending ? { disabled: true } : {})}
+              >
+                Resend to lab
+              </s-button>
             </s-stack>
           </s-section>
         )}

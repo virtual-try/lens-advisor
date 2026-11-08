@@ -14,7 +14,6 @@ export const LAB_ORDER_ERROR_MESSAGES: Record<string, string> = {
   LENS_NOT_FOUND: "Lens not found in catalog",
   OPTION_NOT_FOUND: "Selected option not found in catalog",
   RX_NOT_FOUND: "Prescription not found",
-  IN_PROGRESS: "Dispatch is currently in progress",
 };
 
 export const UNKNOWN_ERROR_MESSAGE = "Something went wrong";

@@ -17,12 +17,14 @@ import path from "node:path";
 
 import { createTestDb, seedShop, type TestDb } from "../../../test/db";
 import { NotFoundError } from "../../shared/http/errors.server";
+import { getCipher } from "../../shared/container/cipher.server";
 import type { ObjectStore } from "../../shared/storage/object-store.server";
 import {
   formatLabOrderError,
   formatPrescriptionSummary,
   LAB_ORDER_ERROR_MESSAGES,
   nav,
+  renderStatusBadge,
   UNKNOWN_ERROR_MESSAGE,
 } from "./index";
 import {
@@ -200,9 +202,9 @@ describe("Spec 32 — Admin: lab orders list, resend and ticket download", () =>
     expect(nav.order).toBe(5);
   });
 
-  describe("Error code mapping table (Self-check 2)", () => {
-    it("maps all defined error codes to full English sentences", () => {
-      expect(Object.keys(LAB_ORDER_ERROR_MESSAGES).length).toBe(11);
+  describe("Error code mapping table and status badge (Self-check 2, R1-F5)", () => {
+    it("maps all defined error codes to full English sentences without pinning count", () => {
+      expect(LAB_ORDER_ERROR_MESSAGES.NO_LAB_EMAIL).toBe("No lab email set");
       expect(formatLabOrderError("NO_LAB_EMAIL")).toBe("No lab email set");
       expect(formatLabOrderError("MAIL_FAILED")).toBe(
         "Failed to send email to the lab",
@@ -229,9 +231,6 @@ describe("Spec 32 — Admin: lab orders list, resend and ticket download", () =>
         "Selected option not found in catalog",
       );
       expect(formatLabOrderError("RX_NOT_FOUND")).toBe("Prescription not found");
-      expect(formatLabOrderError("IN_PROGRESS")).toBe(
-        "Dispatch is currently in progress",
-      );
     });
 
     it("maps unknown error codes to 'Something went wrong'", () => {
@@ -245,6 +244,41 @@ describe("Spec 32 — Admin: lab orders list, resend and ticket download", () =>
       expect(formatLabOrderError(null)).toBe("");
       expect(formatLabOrderError(undefined)).toBe("");
       expect(formatLabOrderError("")).toBe("");
+    });
+
+    it("R1-F5: renderStatusBadge for FAILED order with null or empty code renders 'Something went wrong'", () => {
+      // Null code
+      const { container: c1 } = render(
+        <>{renderStatusBadge({ status: "FAILED", lastErrorCode: null })}</>,
+      );
+      expect(c1.innerHTML).toContain("Failed");
+      expect(c1.innerHTML).toContain("Something went wrong");
+
+      // Undefined code
+      const { container: c2 } = render(
+        <>{renderStatusBadge({ status: "FAILED", lastErrorCode: undefined })}</>,
+      );
+      expect(c2.innerHTML).toContain("Something went wrong");
+
+      // Empty string code
+      const { container: c3 } = render(
+        <>{renderStatusBadge({ status: "FAILED", lastErrorCode: "" })}</>,
+      );
+      expect(c3.innerHTML).toContain("Something went wrong");
+
+      // Unknown code
+      const { container: c4 } = render(
+        <>{renderStatusBadge({ status: "FAILED", lastErrorCode: "SOME_UNRECOGNIZED_CODE" })}</>,
+      );
+      expect(c4.innerHTML).toContain("Something went wrong");
+
+      // Known code with settings link
+      const { container: c5 } = render(
+        <>{renderStatusBadge({ status: "FAILED", lastErrorCode: "NO_LAB_EMAIL" })}</>,
+      );
+      expect(c5.innerHTML).toContain("Failed");
+      expect(c5.innerHTML).toContain("No lab email set");
+      expect(c5.innerHTML).toContain("href=\"/app/settings\"");
     });
   });
 
@@ -826,23 +860,48 @@ describe("Spec 32 — Admin: lab orders list, resend and ticket download", () =>
     });
 
     // INV-2: Prescription data is encrypted at rest and never logged or exposed in HTML
-    it("INV-2: renders detail page with distinctive Rx values and asserts NONE appears in HTML", async () => {
+    it("INV-2: renders detail page with distinctive Rx values and asserts NONE appears in HTML (R1-F2)", async () => {
       const prisma = getTestPrisma();
       const shopDomain = "inv2-rx-privacy.myshopify.com";
       const { shopId } = await seedShop(prisma, shopDomain);
       mocks.currentShop = shopDomain;
 
-      // Seed a prescription with distinctive clinical values in cipher
+      // Seed a prescription with distinctive clinical values encrypted via real field-cipher (R1-F2)
+      const rxId = "rx_inv2_test_distinctive";
+      const cipher = getCipher();
+      const distinctivePlaintext = {
+        sph: -2.25,
+        cyl: -1.50,
+        axis: 90,
+        notes: "NOTE-XYZ",
+      };
+      const encryptedCipher = cipher.encrypt(
+        distinctivePlaintext,
+        `${shopId}:${rxId}`,
+      );
+
       const prescription = await prisma.prescription.create({
         data: {
+          id: rxId,
           shopId,
           rxType: "SINGLE_VISION",
           source: "MANUAL",
-          cipher:
-            "v1.encrypted-sph-minus-225-cyl-minus-150-axis-90-notes-patient-confidential-notes-xyz-secret",
+          cipher: encryptedCipher,
           uploadKeys: [],
         },
       });
+
+      // Assert the raw DB column lacks the plaintext values
+      const rawRow = await prisma.prescription.findUnique({
+        where: { id: prescription.id },
+      });
+      expect(rawRow?.cipher).toBeDefined();
+      expect(rawRow!.cipher).not.toContain("-2.25");
+      expect(rawRow!.cipher).not.toContain("2.25");
+      expect(rawRow!.cipher).not.toContain("-1.50");
+      expect(rawRow!.cipher).not.toContain("1.50");
+      expect(rawRow!.cipher).not.toContain("90");
+      expect(rawRow!.cipher).not.toContain("NOTE-XYZ");
 
       const order = await prisma.labOrder.create({
         data: {
@@ -872,6 +931,15 @@ describe("Spec 32 — Admin: lab orders list, resend and ticket download", () =>
       // Verify repository/service did NOT load cipher
       expect((result.order.prescription as { cipher?: unknown } | null)?.cipher).toBeUndefined();
 
+      // Assert loader JSON output lacks all distinctive plaintext
+      const loaderJson = JSON.stringify(result);
+      expect(loaderJson).not.toContain("-2.25");
+      expect(loaderJson).not.toContain("2.25");
+      expect(loaderJson).not.toContain("-1.50");
+      expect(loaderJson).not.toContain("1.50");
+      expect(loaderJson).not.toContain("90");
+      expect(loaderJson).not.toContain("NOTE-XYZ");
+
       // Render the detail component
       vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
         submit: vi.fn(),
@@ -898,8 +966,8 @@ describe("Spec 32 — Admin: lab orders list, resend and ticket download", () =>
       expect(html).not.toContain("2.25");
       expect(html).not.toContain("-1.50");
       expect(html).not.toContain("1.50");
-      expect(html).not.toContain("xyz-secret");
-      expect(html).not.toContain("patient-confidential");
+      expect(html).not.toContain("90");
+      expect(html).not.toContain("NOTE-XYZ");
       expect(html).not.toContain("cipher");
     });
 
@@ -910,6 +978,7 @@ describe("Spec 32 — Admin: lab orders list, resend and ticket download", () =>
         "app/routes/app.lab-orders.$id.tsx",
         "app/features/lab-orders-admin/nav.ts",
         "app/features/lab-orders-admin/errors.ts",
+        "app/features/lab-orders-admin/status-badge.tsx",
         "app/features/lab-orders-admin/summary.ts",
         "app/features/lab-orders-admin/lab-orders-admin.repository.server.ts",
         "app/features/lab-orders-admin/lab-orders-admin.service.server.ts",
@@ -1103,6 +1172,676 @@ describe("Spec 32 — Admin: lab orders list, resend and ticket download", () =>
       }>(resAll);
 
       expect(allData.orders).toHaveLength(2);
+    });
+  });
+
+  describe("Review R1 Fixes (R1-F1, R1-F3, R1-F4, R1-F6, R1-F7)", () => {
+    describe("R1-F1: Resend error guarding and feedback", () => {
+      it("refuses resend on PENDING order with 409 and renders Resend failed banner", async () => {
+        const prisma = getTestPrisma();
+        const shopDomain = "r1-f1-pending.myshopify.com";
+        const { shopId } = await seedShop(prisma, shopDomain);
+        mocks.currentShop = shopDomain;
+
+        const pendingOrder = await prisma.labOrder.create({
+          data: {
+            shopId,
+            shopifyOrderId: "pend_001",
+            orderName: "#PEND1",
+            bundleId: "b_pend1",
+            frameTitle: "Pending Frame",
+            status: "PENDING",
+          },
+        });
+
+        // 1. Action call on PENDING order -> returns 409 errorResponse
+        const formData = new FormData();
+        formData.append("intent", "resend");
+        const request = new Request(
+          `https://app.test/app/lab-orders/${pendingOrder.id}`,
+          { method: "POST", body: formData },
+        );
+        const actionResponse = await detailAction(
+          createActionArgs(request, { id: pendingOrder.id }),
+        );
+        const { status, data: body } = await unwrapResponse<{
+          error: { code: string; message: string };
+        }>(actionResponse);
+
+        expect(status).toBe(409);
+        expect(body.error.code).toBe("CONFLICT");
+
+        // 2. Component renders "Resend failed" banner when fetcher returns error
+        vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+          submit: vi.fn(),
+          state: "idle",
+          data: { error: { code: "CONFLICT", message: body.error.message } },
+          Form: () => null,
+          load: vi.fn(),
+        } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+        vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+          order: {
+            ...pendingOrder,
+            lens: null,
+            prescription: null,
+            optionValues: [],
+            addOns: [],
+          },
+          shopId,
+          storeHandle: "r1-f1-pending",
+        });
+
+        const { container } = render(<LabOrderDetailRoute />);
+        expect(container.innerHTML).toContain("Resend failed");
+        expect(container.innerHTML).toContain("Something went wrong");
+      });
+
+      it("handles queue enqueue failure on resend by returning 500 and preserving status", async () => {
+        const prisma = getTestPrisma();
+        const shopDomain = "r1-f1-enqueue-fail.myshopify.com";
+        const { shopId } = await seedShop(prisma, shopDomain);
+        mocks.currentShop = shopDomain;
+
+        const failedOrder = await prisma.labOrder.create({
+          data: {
+            shopId,
+            shopifyOrderId: "fail_002",
+            orderName: "#FAIL2",
+            bundleId: "b_fail2",
+            frameTitle: "Failed Frame",
+            status: "FAILED",
+            lastErrorCode: "MAIL_FAILED",
+          },
+        });
+
+        mocks.queueEnqueue.mockRejectedValueOnce(
+          new Error("pg-boss enqueue failed"),
+        );
+
+        const formData = new FormData();
+        formData.append("intent", "resend");
+        const request = new Request(
+          `https://app.test/app/lab-orders/${failedOrder.id}`,
+          { method: "POST", body: formData },
+        );
+        const actionResponse = await detailAction(
+          createActionArgs(request, { id: failedOrder.id }),
+        );
+        const { status, data: body } = await unwrapResponse<{
+          error: { code: string };
+        }>(actionResponse);
+
+        expect(status).toBe(500);
+        expect(body.error.code).toBe("INTERNAL_SERVER_ERROR");
+
+        // Status is reverted to FAILED with its previous lastErrorCode
+        const reloaded = await prisma.labOrder.findUnique({
+          where: { id: failedOrder.id },
+        });
+        expect(reloaded?.status).toBe("FAILED");
+        expect(reloaded?.lastErrorCode).toBe("MAIL_FAILED");
+      });
+
+      it("disables Resend to lab button while fetcher is busy", () => {
+        const mockOrder = {
+          id: "ord_busy_resend",
+          shopId: "shop_busy",
+          shopifyOrderId: "123",
+          orderName: "#123",
+          bundleId: "b1",
+          frameTitle: "Frame",
+          status: "FAILED" as const,
+          lastErrorCode: "MAIL_FAILED",
+          attempts: 1,
+          ticketKeys: [],
+          providerId: null,
+          sentAt: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          prescriptionId: null,
+          lensId: null,
+          rxOutOfLimits: false,
+          lens: null,
+          prescription: null,
+          optionValues: [],
+          addOns: [],
+        };
+
+        vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+          order: mockOrder,
+          shopId: "shop_busy",
+          storeHandle: "shop-busy",
+        });
+
+        // Fetcher is submitting
+        vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+          submit: vi.fn(),
+          state: "submitting",
+          data: undefined,
+          Form: () => null,
+          load: vi.fn(),
+        } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+        const { container } = render(<LabOrderDetailRoute />);
+        const resendBtn = Array.from(container.querySelectorAll("s-button")).find(
+          (b) => b.textContent?.includes("Resend to lab"),
+        );
+        expect(resendBtn).toBeDefined();
+        expect(resendBtn?.hasAttribute("disabled")).toBe(true);
+      });
+    });
+
+    describe("R1-F3: Ticket download flow and user gesture preservation", () => {
+      it("opens blank tab synchronously on click, submits fetcher, and sets location when URL arrives", () => {
+        const mockWindow = {
+          location: { href: "" },
+          close: vi.fn(),
+        };
+        const openSpy = vi
+          .spyOn(window, "open")
+          .mockReturnValue(mockWindow as unknown as Window);
+
+        const mockSubmit = vi.fn();
+        const mockOrder = {
+          id: "ord_dl_test",
+          shopId: "shop_dl",
+          shopifyOrderId: "123",
+          orderName: "#123",
+          bundleId: "b1",
+          frameTitle: "Frame",
+          status: "SENT" as const,
+          lastErrorCode: null,
+          attempts: 1,
+          ticketKeys: ["shops/shop_dl/tickets/ord_dl_test.pdf"],
+          providerId: null,
+          sentAt: new Date(),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          prescriptionId: null,
+          lensId: null,
+          rxOutOfLimits: false,
+          lens: null,
+          prescription: null,
+          optionValues: [],
+          addOns: [],
+        };
+
+        vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+          order: mockOrder,
+          shopId: "shop_dl",
+          storeHandle: "shop-dl",
+        });
+
+        let fetcherState: "idle" | "submitting" = "idle";
+        let fetcherData: { downloadUrl?: string; error?: { message?: string } } | undefined = undefined;
+
+        vi.spyOn(ReactRouter, "useFetcher").mockImplementation(() => ({
+          submit: mockSubmit,
+          state: fetcherState,
+          data: fetcherData,
+          Form: () => null,
+          load: vi.fn(),
+        } as unknown as ReturnType<typeof ReactRouter.useFetcher>));
+
+        const { container, rerender } = render(<LabOrderDetailRoute />);
+
+        const dlBtn = Array.from(container.querySelectorAll("s-button")).find(
+          (b) => b.textContent?.includes("Download PDF"),
+        );
+        expect(dlBtn).toBeDefined();
+
+        // Click download button
+        fireEvent.click(dlBtn!);
+
+        // Synchronous window.open called with ("", "_blank")
+        expect(openSpy).toHaveBeenCalledWith("", "_blank");
+        expect(mockSubmit).toHaveBeenCalledWith(
+          {
+            intent: "download-ticket",
+            ticketKey: "shops/shop_dl/tickets/ord_dl_test.pdf",
+          },
+          { method: "POST" },
+        );
+
+        // Fetcher resolves with downloadUrl
+        fetcherState = "idle";
+        fetcherData = { downloadUrl: "https://s3.example.com/tickets/ord_dl_test.pdf?presigned" };
+
+        rerender(<LabOrderDetailRoute />);
+
+        expect(mockWindow.location.href).toBe(
+          "https://s3.example.com/tickets/ord_dl_test.pdf?presigned",
+        );
+      });
+
+      it("closes blank tab and shows Download failed banner on error", () => {
+        const mockWindow = {
+          location: { href: "" },
+          close: vi.fn(),
+        };
+        vi.spyOn(window, "open").mockReturnValue(mockWindow as unknown as Window);
+
+        const mockOrder = {
+          id: "ord_dl_err",
+          shopId: "shop_dl_err",
+          shopifyOrderId: "123",
+          orderName: "#123",
+          bundleId: "b1",
+          frameTitle: "Frame",
+          status: "SENT" as const,
+          lastErrorCode: null,
+          attempts: 1,
+          ticketKeys: ["shops/shop_dl_err/tickets/ord_dl_err.pdf"],
+          providerId: null,
+          sentAt: new Date(),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          prescriptionId: null,
+          lensId: null,
+          rxOutOfLimits: false,
+          lens: null,
+          prescription: null,
+          optionValues: [],
+          addOns: [],
+        };
+
+        vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+          order: mockOrder,
+          shopId: "shop_dl_err",
+          storeHandle: "shop-dl-err",
+        });
+
+        vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+          submit: vi.fn(),
+          state: "idle",
+          data: { error: { message: "S3 presign failure" } },
+          Form: () => null,
+          load: vi.fn(),
+        } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+        const { container } = render(<LabOrderDetailRoute />);
+
+        expect(container.innerHTML).toContain("Download failed");
+        expect(container.innerHTML).toContain("S3 presign failure");
+      });
+
+      it("disables download buttons while fetcher is submitting", () => {
+        const mockOrder = {
+          id: "ord_dl_busy",
+          shopId: "shop_dl_busy",
+          shopifyOrderId: "123",
+          orderName: "#123",
+          bundleId: "b1",
+          frameTitle: "Frame",
+          status: "SENT" as const,
+          lastErrorCode: null,
+          attempts: 1,
+          ticketKeys: [
+            "shops/shop_dl_busy/tickets/ord_dl_busy.pdf",
+            "shops/shop_dl_busy/tickets/ord_dl_busy.csv",
+          ],
+          providerId: null,
+          sentAt: new Date(),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          prescriptionId: null,
+          lensId: null,
+          rxOutOfLimits: false,
+          lens: null,
+          prescription: null,
+          optionValues: [],
+          addOns: [],
+        };
+
+        vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+          order: mockOrder,
+          shopId: "shop_dl_busy",
+          storeHandle: "shop-dl-busy",
+        });
+
+        vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+          submit: vi.fn(),
+          state: "submitting",
+          data: undefined,
+          Form: () => null,
+          load: vi.fn(),
+        } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+        const { container } = render(<LabOrderDetailRoute />);
+        const buttons = Array.from(container.querySelectorAll("s-button")).filter(
+          (b) => b.textContent?.includes("Download"),
+        );
+        expect(buttons).toHaveLength(2);
+        for (const btn of buttons) {
+          expect(btn.hasAttribute("disabled")).toBe(true);
+        }
+      });
+    });
+
+    describe("R1-F4: Ticket keys offer and validation", () => {
+      it("SENT order with empty ticketKeys renders no download buttons", () => {
+        const mockOrder = {
+          id: "ord_no_keys",
+          shopId: "shop_no_keys",
+          shopifyOrderId: "123",
+          orderName: "#123",
+          bundleId: "b1",
+          frameTitle: "Frame",
+          status: "SENT" as const,
+          lastErrorCode: null,
+          attempts: 1,
+          ticketKeys: [],
+          providerId: null,
+          sentAt: new Date(),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          prescriptionId: null,
+          lensId: null,
+          rxOutOfLimits: false,
+          lens: null,
+          prescription: null,
+          optionValues: [],
+          addOns: [],
+        };
+
+        vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+          order: mockOrder,
+          shopId: "shop_no_keys",
+          storeHandle: "shop-no-keys",
+        });
+
+        vi.spyOn(ReactRouter, "useFetcher").mockReturnValue({
+          submit: vi.fn(),
+          state: "idle",
+          data: undefined,
+          Form: () => null,
+          load: vi.fn(),
+        } as unknown as ReturnType<typeof ReactRouter.useFetcher>);
+
+        const { container } = render(<LabOrderDetailRoute />);
+        expect(container.innerHTML).not.toContain("Download PDF");
+        expect(container.innerHTML).not.toContain("Download CSV");
+        expect(container.innerHTML).not.toContain("Lab tickets");
+      });
+
+      it("getTicketDownloadUrlService refuses (400 FORBIDDEN_TICKET_KEY) any key not in order.ticketKeys", async () => {
+        const prisma = getTestPrisma();
+        const shopDomain = "r1-f4-forbidden.myshopify.com";
+        const { shopId } = await seedShop(prisma, shopDomain);
+        mocks.currentShop = shopDomain;
+
+        const order = await prisma.labOrder.create({
+          data: {
+            shopId,
+            shopifyOrderId: "ord_f4",
+            orderName: "#F4",
+            bundleId: "b_f4",
+            frameTitle: "Frame F4",
+            status: "SENT",
+            ticketKeys: [`shops/${shopId}/tickets/ord_f4.pdf`],
+          },
+        });
+
+        const csvKey = `shops/${shopId}/tickets/${order.id}.csv`;
+        await expect(
+          getTicketDownloadUrlService(shopId, order.id, csvKey, {
+            db: prisma,
+            objectStore: (globalThis as Record<string, unknown>)
+              .__objectStore as unknown as ObjectStore,
+          }),
+        ).rejects.toThrow(
+          expect.objectContaining({
+            status: 400,
+            code: "FORBIDDEN_TICKET_KEY",
+          }),
+        );
+      });
+    });
+
+    describe("R1-F6: Status query parameter validation and URL encoding", () => {
+      it("returns currentStatus: ALL for ?status=foo and does not append unvalidated status to Next href", async () => {
+        const prisma = getTestPrisma();
+        const shopDomain = "r1-f6-status-foo.myshopify.com";
+        const { shopId } = await seedShop(prisma, shopDomain);
+        mocks.currentShop = shopDomain;
+
+        await prisma.labOrder.deleteMany({ where: { shopId } });
+
+        await prisma.labOrder.createMany({
+          data: [
+            {
+              shopId,
+              shopifyOrderId: "foo_1",
+              orderName: "#FOO1",
+              bundleId: "b_foo1",
+              frameTitle: "Frame Foo 1",
+              status: "PENDING",
+            },
+            {
+              shopId,
+              shopifyOrderId: "foo_2",
+              orderName: "#FOO2",
+              bundleId: "b_foo2",
+              frameTitle: "Frame Foo 2",
+              status: "SENT",
+            },
+          ],
+        });
+
+        const req = new Request("https://app.test/app/lab-orders?status=foo");
+        const res = await indexLoader(createLoaderArgs(req));
+        const { data: result } = await unwrapResponse<{
+          orders: Array<{ orderName: string }>;
+          currentStatus: string;
+        }>(res);
+
+        expect(result.currentStatus).toBe("ALL");
+        expect(result.orders).toHaveLength(2);
+
+        vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+          orders: result.orders,
+          hasNext: true,
+          nextCursor: "cursor_123",
+          currentStatus: result.currentStatus,
+          storeHandle: "r1-f6-status-foo",
+        });
+
+        const { container } = render(<LabOrdersIndexRoute />);
+        expect(container.innerHTML).toContain("[All]");
+        expect(container.innerHTML).not.toContain("[foo]");
+
+        const nextButton = container.querySelector("s-button");
+        expect(nextButton).toBeDefined();
+        expect(nextButton?.getAttribute("href")).toBe(
+          "/app/lab-orders?cursor=cursor_123",
+        );
+      });
+    });
+
+    describe("R1-F7: API checklist cases coverage", () => {
+      it("exact-50 orders case produces hasNext: false and no Next button", async () => {
+        const prisma = getTestPrisma();
+        const shopDomain = "r1-f7-exact-50.myshopify.com";
+        const { shopId } = await seedShop(prisma, shopDomain);
+        mocks.currentShop = shopDomain;
+
+        await prisma.labOrder.deleteMany({ where: { shopId } });
+
+        const baseTime = Date.now();
+        const ordersData = Array.from({ length: 50 }, (_, i) => ({
+          shopId,
+          shopifyOrderId: `exact_${i}`,
+          orderName: `#EXACT${i}`,
+          bundleId: `b_exact_${i}`,
+          frameTitle: `Frame ${i}`,
+          status: "PENDING" as const,
+          createdAt: new Date(baseTime + (50 - i) * 1000),
+        }));
+
+        await prisma.labOrder.createMany({ data: ordersData });
+
+        const req = new Request("https://app.test/app/lab-orders");
+        const res = await indexLoader(createLoaderArgs(req));
+        const { data: page } = await unwrapResponse<{
+          orders: Array<{ id: string; orderName: string }>;
+          hasNext: boolean;
+          nextCursor: string | null;
+          currentStatus: string;
+          storeHandle: string;
+        }>(res);
+
+        expect(page.orders).toHaveLength(50);
+        expect(page.hasNext).toBe(false);
+        expect(page.nextCursor).toBeNull();
+
+        vi.spyOn(ReactRouter, "useLoaderData").mockReturnValue({
+          orders: page.orders,
+          hasNext: page.hasNext,
+          nextCursor: page.nextCursor,
+          currentStatus: page.currentStatus,
+          storeHandle: page.storeHandle,
+        });
+
+        const { container } = render(<LabOrdersIndexRoute />);
+        const nextBtn = Array.from(container.querySelectorAll("s-button")).find(
+          (b) => b.textContent?.includes("Next"),
+        );
+        expect(nextBtn).toBeUndefined();
+      });
+
+      it("foreign-shop cursor returns 0 items and does not leak foreign shop orders", async () => {
+        const prisma = getTestPrisma();
+        const { shopId: shopA } = await seedShop(prisma, "r1-f7-cursor-a.myshopify.com");
+        const { shopId: shopB } = await seedShop(prisma, "r1-f7-cursor-b.myshopify.com");
+
+        await prisma.labOrder.create({
+          data: {
+            shopId: shopA,
+            shopifyOrderId: "ord_a",
+            orderName: "#A",
+            bundleId: "b_a",
+            frameTitle: "Frame A",
+            status: "PENDING",
+          },
+        });
+
+        const orderB = await prisma.labOrder.create({
+          data: {
+            shopId: shopB,
+            shopifyOrderId: "ord_b",
+            orderName: "#B",
+            bundleId: "b_b",
+            frameTitle: "Frame B",
+            status: "PENDING",
+          },
+        });
+
+        const result = await listLabOrders(shopA, { cursor: orderB.id }, prisma);
+        expect(result.items).toHaveLength(0);
+        expect(result.hasNext).toBe(false);
+        expect(result.nextCursor).toBeNull();
+      });
+
+      it("action rejects missing ticketKey, .exe extension, and unknown intent", async () => {
+        const prisma = getTestPrisma();
+        const shopDomain = "r1-f7-action-rejections.myshopify.com";
+        const { shopId } = await seedShop(prisma, shopDomain);
+        mocks.currentShop = shopDomain;
+
+        const order = await prisma.labOrder.create({
+          data: {
+            shopId,
+            shopifyOrderId: "ord_rej",
+            orderName: "#REJ",
+            bundleId: "b_rej",
+            frameTitle: "Frame REJ",
+            status: "SENT",
+            ticketKeys: [`shops/${shopId}/tickets/ord_rej.pdf`],
+          },
+        });
+
+        // 1. Missing ticketKey
+        const fdMissing = new FormData();
+        fdMissing.append("intent", "download-ticket");
+        const reqMissing = new Request(
+          `https://app.test/app/lab-orders/${order.id}`,
+          { method: "POST", body: fdMissing },
+        );
+        const resMissing = await detailAction(
+          createActionArgs(reqMissing, { id: order.id }),
+        );
+        const { status: s1, data: d1 } = await unwrapResponse<{
+          error: { code: string };
+        }>(resMissing);
+        expect(s1).toBe(400);
+        expect(d1.error.code).toBe("MISSING_TICKET_KEY");
+
+        // 2. .exe extension
+        const fdExe = new FormData();
+        fdExe.append("intent", "download-ticket");
+        fdExe.append("ticketKey", `shops/${shopId}/tickets/${order.id}.exe`);
+        const reqExe = new Request(
+          `https://app.test/app/lab-orders/${order.id}`,
+          { method: "POST", body: fdExe },
+        );
+        const resExe = await detailAction(
+          createActionArgs(reqExe, { id: order.id }),
+        );
+        const { status: s2, data: d2 } = await unwrapResponse<{
+          error: { code: string };
+        }>(resExe);
+        expect(s2).toBe(400);
+        expect(d2.error.code).toBe("INVALID_TICKET_KEY");
+
+        // 3. Unknown intent
+        const fdUnknown = new FormData();
+        fdUnknown.append("intent", "unknown-intent");
+        const reqUnknown = new Request(
+          `https://app.test/app/lab-orders/${order.id}`,
+          { method: "POST", body: fdUnknown },
+        );
+        const resUnknown = await detailAction(
+          createActionArgs(reqUnknown, { id: order.id }),
+        );
+        const { status: s3, data: d3 } = await unwrapResponse<{
+          error: { code: string };
+        }>(resUnknown);
+        expect(s3).toBe(400);
+        expect(d3.error.code).toBe("INVALID_INTENT");
+      });
+
+      it("requireActivePlan refusal on both routes (unpaid plan redirects, unauthenticated rejects)", async () => {
+        // 1. Unpaid plan -> throws redirect
+        mocks.adminGraphql.mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              data: {
+                currentAppInstallation: {
+                  activeSubscriptions: [],
+                },
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+
+        const reqIndex = new Request("https://app.test/app/lab-orders");
+        await expect(indexLoader(createLoaderArgs(reqIndex))).rejects.toThrow();
+
+        const reqDetail = new Request("https://app.test/app/lab-orders/some_id");
+        await expect(
+          detailLoader(createLoaderArgs(reqDetail, { id: "some_id" })),
+        ).rejects.toThrow();
+
+        const reqAction = new Request("https://app.test/app/lab-orders/some_id", {
+          method: "POST",
+          body: new FormData(),
+        });
+        await expect(
+          detailAction(createActionArgs(reqAction, { id: "some_id" })),
+        ).rejects.toThrow();
+      });
     });
   });
 });

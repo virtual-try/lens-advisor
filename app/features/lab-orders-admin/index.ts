@@ -5,6 +5,11 @@ export {
   formatLabOrderError,
 } from "./errors";
 export {
+  LabOrderStatusBadge,
+  renderStatusBadge,
+  type StatusBadgeOrder,
+} from "./status-badge";
+export {
   formatPrescriptionSummary,
   type PrescriptionSummaryInput,
 } from "./summary";

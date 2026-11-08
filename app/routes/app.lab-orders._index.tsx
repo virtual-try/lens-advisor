@@ -6,9 +6,8 @@ import type { LabOrderStatus } from "@prisma/client";
 import { getPrisma } from "../shared/container/prisma.server";
 import { requireActivePlan } from "../features/billing/require-plan.server";
 import { fromOrderGid } from "../features/lab-orders/constants";
-import { formatLabOrderError } from "../features/lab-orders-admin/errors";
+import { renderStatusBadge } from "../features/lab-orders-admin";
 import { listLabOrdersService } from "../features/lab-orders-admin/lab-orders-admin.service.server";
-import type { LabOrderListItem } from "../features/lab-orders-admin/lab-orders-admin.repository.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await requireActivePlan(request);
@@ -49,33 +48,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     orders: items,
     hasNext,
     nextCursor,
-    currentStatus: rawStatus ?? "ALL",
+    currentStatus: status ?? "ALL",
     storeHandle,
   });
 };
-
-function renderStatusBadge(order: LabOrderListItem) {
-  switch (order.status) {
-    case "PENDING":
-      return <s-badge tone="caution">Pending</s-badge>;
-    case "SENDING":
-      return <s-badge tone="info">Sending</s-badge>;
-    case "SENT":
-      return <s-badge tone="success">Sent</s-badge>;
-    case "FAILED":
-      return (
-        <s-stack direction="inline" gap="base">
-          <s-badge tone="critical">Failed</s-badge>
-          <s-text>{formatLabOrderError(order.lastErrorCode)}</s-text>
-          {order.lastErrorCode === "NO_LAB_EMAIL" && (
-            <s-link href="/app/settings">Settings</s-link>
-          )}
-        </s-stack>
-      );
-    default:
-      return <s-badge tone="info">{order.status}</s-badge>;
-  }
-}
 
 export default function LabOrdersIndexRoute() {
   const { orders, hasNext, nextCursor, currentStatus, storeHandle } =
@@ -164,7 +140,7 @@ export default function LabOrdersIndexRoute() {
                 <s-button
                   href={`/app/lab-orders?cursor=${encodeURIComponent(
                     nextCursor,
-                  )}${currentStatus !== "ALL" ? `&status=${currentStatus}` : ""}`}
+                  )}${currentStatus !== "ALL" ? `&status=${encodeURIComponent(currentStatus)}` : ""}`}
                 >
                   Next
                 </s-button>

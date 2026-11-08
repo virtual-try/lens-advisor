@@ -98,6 +98,14 @@ export async function getTicketDownloadUrlService(
     throw new NotFoundError("Lab order not found", "NOT_FOUND");
   }
 
+  // Refuse any ticket key not in order.ticketKeys (R1-F4)
+  if (!order.ticketKeys || !order.ticketKeys.includes(ticketKey)) {
+    throw new BadRequestError(
+      "Ticket key does not belong to this order's generated tickets",
+      "FORBIDDEN_TICKET_KEY",
+    );
+  }
+
   const objectStore = deps.objectStore ?? getObjectStore();
   const downloadUrl = await objectStore.presignDownload(ticketKey);
 

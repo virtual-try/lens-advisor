@@ -102,4 +102,19 @@ Real, used now: 06, 09, 30. Tests: `testConfig()` routes on the real test DB, in
   - `pnpm lint`: exit 0 (0 errors, 0 warnings).
   - `pnpm build`: exit 0.
   - `git diff --check`: clean.
-- **2026-11-08** — Evidence (orchestro spec verify, tree 8a2617c3): install pass · typecheck pass · lint pass · build pass · test pass 1149/0/0
+- **2026-11-08** — Review R1 fixes implemented:
+  - R1-F1: Wrapped `resendLabOrderService` in try/catch in `$id` action, returning `errorResponse(err)`. Rendered `resendFetcher.data.error` banner mapped to sentence, and disabled Resend while fetcher is busy. Tested 409 on PENDING, enqueue failure rollback, and busy state.
+  - R1-F2: Seeded INV-2 prescription using real `field-cipher` encrypt with distinctive plaintext (SPH -2.25, CYL -1.50, AXIS 90, notes NOTE-XYZ). Asserted raw DB column, loader JSON, and rendered HTML all lack the plaintext.
+  - R1-F3: Preserved user gesture for ticket download: synchronous `window.open("", "_blank")` in click handler, setting `location.href` on arrival or closing tab on error with "Download failed" banner. Disabled buttons while fetcher is submitting. Tested click -> URL opened, error banner, and busy state.
+  - R1-F4: Offered only `order.ticketKeys` in detail route. Updated `getTicketDownloadUrlService` to refuse (400 FORBIDDEN_TICKET_KEY) any key not in `order.ticketKeys`. Tested both.
+  - R1-F5: Extracted `renderStatusBadge` to `status-badge.tsx` in feature folder. For FAILED orders, show `formatLabOrderError(code) || UNKNOWN_ERROR_MESSAGE` ("Something went wrong" for null/empty). Trimmed error table to emitted codes (Spec 30 dispatch codes + intake codes; removed `IN_PROGRESS`) and removed exact-count pinning test. Tested null code.
+  - R1-F6: Validated `status` in `_index.tsx` loader returning `currentStatus: status ?? "ALL"`. Built Next href using `encodeURIComponent`. Tested `?status=foo`.
+  - R1-F7: Added tests for exact-50 orders (no Next button), foreign-shop cursor (returns 0 items / no leak), action rejections (missing ticketKey, .exe, unknown intent), and `requireActivePlan` refusal on both routes.
+- **2026-11-08** — Gates verified after R1 fixes:
+  - `pnpm vitest run app/features/lab-orders-admin`: 1 test file, 35/35 passed.
+  - `pnpm test`: 62 test files, 1163/1163 passed, 0 failures.
+  - `pnpm typecheck`: exit 0.
+  - `pnpm lint`: exit 0 (0 errors, 0 warnings).
+  - `pnpm build`: exit 0.
+  - `git diff --check`: clean.
+- **2026-11-08** — Evidence (orchestro spec verify, tree b6eae37d): install pass · typecheck pass · lint pass · build pass · test pass 1163/0/0
