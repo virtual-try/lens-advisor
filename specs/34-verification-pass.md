@@ -161,14 +161,14 @@ every place it was not. This spec observes and reports; anything found becomes a
       - `strings` (`packages/configurator/src/*/strings.ts`): Accepted-why: localized strings dictionary per component satisfying INV-9.
       - `nav` (`app/features/*/nav.ts`): Accepted-why: Polaris navigation configuration per admin feature.
       - Repository/Service pairs (`createLens`, `updateLens`, etc. in `app/features/catalog/`): Accepted-why: standard layered service pattern wrapping repository operations with validation and shop scoping.
-- **2026-11-09** — Earlier specs Done-when walk (Specs 00–33, R1-F2):
-  - Walked every checkbox in `## Done when` across all earlier specs (00–33). Restricting the recheck strictly to specs 00–33 yields exactly 267 checkboxes across 34 specs (253 holding, 14 owner-gated open, 0 not holding).
+- **2026-11-09** — Earlier specs Done-when walk (Specs 00–33, R1-F2, R2-F1):
+  - Walked every checkbox in `## Done when` across all earlier specs (00–33). Restricting the recheck strictly to specs 00–33 yields exactly 267 checkboxes across 34 specs (252 holding, 14 owner-gated open, 1 not holding).
   - Per-spec breakdown table:
 
 | Spec | Title | Boxes | Held | Owner-gated open (with reason) | Not holding |
 |---|---|---|---|---|---|
 | 00 | Stack, storage, testing and design decision | 3 | 3 | 0 | 0 |
-| 01 | App scaffold, workspace and unit harness | 8 | 7 | 1 (`[requires: Shopify Partner account, dev store — owner provides]`) | 0 |
+| 01 | App scaffold, workspace and unit harness | 8 | 6 | 1 (`[requires: Shopify Partner account, dev store — owner provides]`) | 1 (`rg 'process.env' app packages --glob '!app/shared/config.server.ts'` returns 15 hits in `app/shared/storage/object-store.server.test.ts`) |
 | 02 | Database schema and first migration | 10 | 10 | 0 | 0 |
 | 03 | rx-core domain types and schemas | 9 | 9 | 0 | 0 |
 | 04 | Configurator package, tokens and theme app block | 10 | 9 | 1 (`[requires: Shopify dev store]`) | 0 |
@@ -201,22 +201,22 @@ every place it was not. This spec observes and reports; anything found becomes a
 | 31 | Admin home and setup checklist | 7 | 7 | 0 | 0 |
 | 32 | Admin: lab orders list, resend and ticket download | 8 | 8 | 0 | 0 |
 | 33 | End-to-end suite | 6 | 5 | 1 (`[requires: Shopify dev store with app installed and block placed, E2E_STORE_URL/PASSWORD, running app URL]`) | 0 |
-| **Total** | **Specs 00–33 (34 specs)** | **267** | **253** | **14** | **0** |
+| **Total** | **Specs 00–33 (34 specs)** | **267** | **252** | **14** | **1** |
 
 - **2026-11-09** — Invariants verification by ID:
-  - `INV-1` (Tenancy): Every repository query strictly filters by `shopId`; two-shop isolation tests present and passing.
+  - `INV-1` (Tenancy): Not fully holding. Repository function `getLabOrderShopId` in `app/features/lab-dispatch/lab-dispatch.repository.server.ts` performs an unscoped lookup (`findUnique({ where: { id: labOrderId } })`) without `shopId` filtering to resolve the owning shop from a `{ labOrderId }` queue payload. Follow-up Spec 37 filed to scope the lookup with owning `shopId` or document and test the trusted internal queue boundary.
   - `INV-2` (Encryption & Logging): AES-256-GCM cipher with per-record AAD; S3 SSE-KMS storage; 0 logger statements pass Rx data; error envelopes redact data.
   - `INV-3` (Shopify Rx Leak Prevention): `storeRxInOrder` defaults false; only `_rx_ref` and human summary in cart line item properties; 0 plaintext Rx strings in cart properties.
   - `INV-4` (Integer Money): Minor units int + currency; `parseFloat`/`toFixed` grep finds 0 occurrences on money fields across `app/` and `packages/`.
   - `INV-5` (Diopter Units): Integer hundredths for SPH/CYL/ADD and integer tenths of mm for PD enforced in zod schemas and domain models.
-  - `INV-6` (Verification at Boundary): All proxy endpoints authenticate with `authenticate.public.appProxy`; webhooks authenticate with `authenticate.webhook`; request bodies parsed through zod schemas before executing domain logic.
+  - `INV-6` (Verification at Boundary): Not holding for two webhook routes: `app/routes/webhooks.app.scopes_update.tsx` (unvalidated cast `payload.current as string[]` without Zod validation before database update) and `app/routes/webhooks.products.update.tsx` (logs raw unvalidated payload via `console.log(JSON.stringify(payload, null, 2))` instead of validating with Zod and logging safe IDs only). Follow-up Spec 38 filed to Zod-validate both payloads and log IDs only.
   - `INV-7` (Tokens & Design): Grep `#[0-9a-fA-F]{3,8}\b|rgb\(|[0-9]+px|[0-9]+ms` finds 0 occurrences in `packages/configurator` outside `tokens.css`. Admin routes use Polaris web components with 0 custom CSS or color styles.
   - `INV-8` (Webhooks & Jobs): Webhooks enqueue jobs by ID and return 200 immediately; handlers are idempotent; duplicate job delivery verified in tests.
   - `INV-9` (Storefront Strings): Storefront configurator copy lives in `strings.ts` files; 0 raw JSX text literals in step components.
   - `INV-10` (Redaction Cleanup): `shop/redact` cascades across all Prisma models containing `shopId` (dynamically checked against Prisma DMMF) and cleans S3 `shops/<shopId>/` prefix.
 - **2026-11-09** — Structural invariants verification (`ARCHITECTURE.md`):
-  - Invariant 1: Routes call services; grep confirms 0 imports of `react-router` in `*.service.server.ts`.
-  - Invariant 2: In production code, grep confirms `process.env` appears exclusively in `app/shared/config.server.ts`. (Test file `object-store.server.test.ts` has 13 hits addressed in Spec 35).
+  - Invariant 1: Routes call services; services never import `react-router`. Not holding: while grep confirms 0 imports of `react-router` in `*.service.server.ts`, grepping route files for direct database access (`rg 'db\.server|prisma' app/routes`) reveals that `app/routes/webhooks.app.scopes_update.tsx` directly imports `db from "../db.server"` and writes Prisma persistence (`db.session.update`) directly from the route handler instead of calling a service. Follow-up Spec 38 filed to move persistence behind a service.
+  - Invariant 2: In production code, grep confirms `process.env` appears exclusively in `app/shared/config.server.ts`. (Test file `object-store.server.test.ts` has 15 hits addressed in Spec 36).
   - Invariant 3: Grep confirms `new PrismaClient`, `new S3Client`, `new Resend`, and `new PgBoss` are instantiated exclusively in `app/shared/container/` and all are lazy getters.
   - Invariant 4: `packages/rx-core/package.json` has only `zod` in `dependencies`.
   - Invariant 5: Every route in `routes/proxy.*` and `routes/webhooks.*` verifies signature at invocation start.
@@ -268,9 +268,11 @@ every place it was not. This spec observes and reports; anything found becomes a
   - Finding: `packages/configurator/src/steps/02-prescription/prescription.css:408` uses invalid token `--la-radius-full` instead of canonical `--la-radius-pill`. Done-when box 8 left unticked; follow-up Spec 35 filed.
 - **2026-11-09** — CLI tooling check (Step 8):
   - Ran `pnpm exec shopify app deploy --dry-run`: Command "shopify" not found. `@shopify/cli` is not a dependency in `package.json`; per Hard Rule 7 (no machine-level installs), CLI execution is deferred to dev store runner.
-- **2026-11-09** — Findings and follow-up specs filed:
-  - Filed `specs/35-verification-findings.md` covering:
-    1. Replace invalid token `--la-radius-full` with `--la-radius-pill` in `packages/configurator/src/steps/02-prescription/prescription.css`.
-    2. Replace direct `process.env` mutations with `vi.stubEnv` in `app/shared/storage/object-store.server.test.ts:577-608`.
-  - Added Spec 35 row to `specs/README.md` and `specs/PROGRESS.md`.
-- **2026-11-08** — Evidence (orchestro spec verify, tree 0694b569): install pass · typecheck pass · lint pass · build pass · test pass 1307/0/0
+- **2026-11-09** — Findings and follow-up specs filed (R2-F1, R2-F2, R2-F3, R2-F4, R2-F6):
+  - Split findings into separate uniquely numbered follow-up specs (Specs 35–38), each with the full template and a Log:
+    - Spec 35 (`specs/35-tokens-css.md`): Replace invalid token `--la-radius-full` with `--la-radius-pill` in `packages/configurator/src/steps/02-prescription/prescription.css:408`.
+    - Spec 36 (`specs/36-storage-test-env.md`): Replace direct `process.env` mutations with `vi.stubEnv` in `app/shared/storage/object-store.server.test.ts:577-608` (15 hits violating Spec 01 gate).
+    - Spec 37 (`specs/37-lab-order-tenancy.md`): Scope `getLabOrderShopId` in `app/features/lab-dispatch/lab-dispatch.repository.server.ts` or document/test trusted internal queue boundary (INV-1).
+    - Spec 38 (`specs/38-webhook-hardening.md`): Add Zod schema validation to `webhooks.app.scopes_update.tsx` and `webhooks.products.update.tsx` (log IDs only) (INV-6), and decouple `webhooks.app.scopes_update.tsx` from direct `db.server` persistence (Structural Invariant 1).
+  - Updated `specs/README.md` spec list, wave count (11 waves), critical path, and dependency table.
+- **2026-11-08** — Evidence (orchestro spec verify, tree 8435e2da): install pass · typecheck pass · lint pass · build pass · test pass 1307/0/0

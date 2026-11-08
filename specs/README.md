@@ -16,7 +16,7 @@ prefer; `00` is the decision everything else depends on.
   configurator (v1 gpt-taste → v2 animate → v3 impeccable), in the VirtualTry brand system. The admin
   uses Polaris web components and has no custom design.
 - **Research and raw planning:** [`../docs/`](../docs/).
-- **Size:** 35 specs (00–34), about 58% of ai-gallery's 60.
+- **Size:** 39 specs (00–38), about 65% of ai-gallery's 60.
 
 Track progress in [PROGRESS.md](./PROGRESS.md).
 
@@ -74,7 +74,10 @@ and run once, in spec 33. `Model` is the tier; per-provider ids are on each spec
 | 32 | [Admin: lab orders list, resend and ticket download](./32-admin-lab-orders.md) | 7 | Standard | Admin lab orders list, detail, resend, ticket download |
 | 33 | [End-to-end suite](./33-e2e-suite.md) | 8 | Heavy | Installs Playwright, one test per flow (server + dev-store storefront), runs them. |
 | 34 | [Verification pass](./34-verification-pass.md) | 9 | Heavy | Final gate: clean build, both suites, every done-when re-checked, duplication sweep. |
-| 35 | [Fix verification findings](./35-verification-findings.md) | 10 | Light | Fix invalid token --la-radius-full and object-store test process.env references |
+| 35 | [Configurator design token fix](./35-tokens-css.md) | 10 | Light | Replace invalid token --la-radius-full with --la-radius-pill in prescription.css |
+| 36 | [Storage test process.env isolation](./36-storage-test-env.md) | 10 | Light | Replace literal process.env in object-store.server.test.ts with vi.stubEnv |
+| 37 | [Lab order dispatch tenancy scoping](./37-lab-order-tenancy.md) | 10 | Standard | Scope getLabOrderShopId or document/test trusted internal queue boundary (INV-1) |
+| 38 | [Webhook payload validation and route persistence decoupling](./38-webhook-hardening.md) | 10 | Standard | Zod-validate webhook payloads, log IDs only (INV-6), and move route persistence behind service |
 
 ## Waves
 
@@ -89,10 +92,10 @@ W6: 30
 W7: 32
 W8: 33 (e2e)
 W9: 34 (verification)
-W10: 35
+W10: 35 36 37 38
 ```
 
-Critical path: 00 → 01 → 03 → 10 → 22 → 23 → 30 → 32 → 33 → 34 (10 waves). Check it against
+Critical path: 00 → 01 → 03 → 10 → 22 → 23 → 30 → 32 → 33 → 34 → 35, 36, 37, 38 (11 waves). Check it against
 `orchestro specs graph specs/` — if they disagree, this list is wrong.
 
 ## Dependency order
@@ -135,6 +138,9 @@ Critical path: 00 → 01 → 03 → 10 → 22 → 23 → 30 → 32 → 33 → 34
 | 33 | 18, 19, 20, 21, 22, 25, 26, 27, 29, 31, 32 |
 | 34 | 33 |
 | 35 | 34 |
+| 36 | 34 |
+| 37 | 34 |
+| 38 | 34 |
 
 ## Status shorthand
 

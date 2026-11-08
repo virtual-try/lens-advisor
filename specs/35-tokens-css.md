@@ -1,0 +1,64 @@
+# Spec 35 — Configurator design token fix
+
+**Status:** Not started
+**Depends on:** Spec 34
+**Model:** Light — `claude-haiku-5-5` · `gpt-6-luna` · `gemini-3.5-flash-lite`
+**Issue:** —
+**Owns:** `packages/configurator/src/steps/02-prescription/prescription.css`
+**Reuses:** `DESIGN-SYSTEM.md`, `INVARIANTS.md`, `ARCHITECTURE.md`
+**Kind:** bugfix
+**Invariants:** INV-7
+
+## Goal
+
+Resolve the design system token defect found during the Spec 34 verification pass by replacing the non-existent token `--la-radius-full` in `prescription.css` with the canonical design system token `--la-radius-pill`.
+
+## Scope
+
+- In `packages/configurator/src/steps/02-prescription/prescription.css:408`, update `border-radius: var(--la-radius-full);` on `.la-progress` to `border-radius: var(--la-radius-pill);`.
+- Rebuild the configurator bundle and verify all checks pass.
+
+## Explicit non-scope
+
+- Introducing new tokens into `DESIGN-SYSTEM.md`.
+- Modifying token values in `packages/configurator/src/styles/tokens.css`.
+- Changes to production application code outside the scoped CSS token fix in `packages/configurator/src/steps/02-prescription/prescription.css`.
+- New features or unrelated refactoring.
+
+## Reuse first
+
+- `DESIGN-SYSTEM.md` token list and definitions.
+- `packages/configurator/src/styles/tokens.css` `--la-radius-pill`.
+
+## Wiring
+
+Real, used now: configurator bundle. In tests: component tests. Stubbed: none. Consumers: storefront theme app block.
+
+## Examples
+
+| Context | Current CSS | Required CSS |
+|---|---|---|
+| `.la-progress` border radius | `border-radius: var(--la-radius-full);` | `border-radius: var(--la-radius-pill);` |
+
+## Steps
+
+1. In `packages/configurator/src/steps/02-prescription/prescription.css`, replace `--la-radius-full` with `--la-radius-pill`.
+2. Run `pnpm --filter @lens-advisor/configurator build` to rebuild the bundle.
+3. Run `rg "radius-full" packages/configurator/` to confirm 0 hits.
+4. Run `pnpm typecheck`, `pnpm lint`, `pnpm build`, and `pnpm test`.
+
+## Self-check
+
+1. `rg "radius-full" packages/configurator/` returns 0 hits.
+2. `packages/configurator` builds cleanly with no errors.
+
+## Done when
+
+- [ ] `packages/configurator/src/steps/02-prescription/prescription.css` uses `--la-radius-pill`; `rg "radius-full" packages/configurator/` returns 0 hits. [static]
+- [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
+- [ ] `pnpm build` passes. [static]
+- [ ] `pnpm test` passes with 0 failures. [unit]
+
+## Log
+
+- **2026-11-09** — Spec created to address design token finding R2-F6 / Spec 34 verification pass.
