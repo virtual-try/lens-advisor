@@ -130,6 +130,9 @@ export function OptionValueForm({
           details="Additional price for this option in the shop currency's normal units (e.g. 35.00 or 0 for included)."
         />
 
+        {initialData?.optionGroupId && (
+          <input type="hidden" name="optionGroupId" value={initialData.optionGroupId} />
+        )}
         {currency && <input type="hidden" name="currency" value={currency} />}
         <input type="hidden" name="codeType" value={codeType} />
 
@@ -186,7 +189,7 @@ export function OptionValueForm({
             value={swatch}
             onInput={(e) => setSwatch(e.currentTarget.value)}
             error={errors.swatch}
-            details="Merchant colour value (e.g. #1a1a1a or black). Stored as data."
+            details="Merchant colour value (e.g. black). Stored as data."
           />
         )}
 

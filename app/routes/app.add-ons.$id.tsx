@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   ActionFunctionArgs,
   HeadersFunction,
@@ -13,6 +13,7 @@ import {
   useRouteError,
   Form,
 } from "react-router";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
 
@@ -255,13 +256,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       );
     }
 
-    let currency =
-      typeof payload.currency === "string" && payload.currency.trim()
-        ? payload.currency.trim().toUpperCase()
-        : existing?.price.currency;
-
-    if (!currency) {
+    let currency: string;
+    if (id === "new") {
       currency = await getShopCurrency(admin);
+    } else {
+      currency =
+        typeof payload.currency === "string" && payload.currency.trim()
+          ? payload.currency.trim().toUpperCase()
+          : (existing?.price.currency ?? (await getShopCurrency(admin)));
     }
 
     let priceMinor = 0;
@@ -354,6 +356,20 @@ export default function AddOnRoute() {
   const { addOn, currency: shopCurrency } = useLoaderData<typeof loader>();
   const actionResult = useActionData<typeof action>();
   const navigate = useNavigate();
+  const shopify = useAppBridge();
+
+  const lastActionRef = useRef<typeof actionResult | undefined>(undefined);
+
+  useEffect(() => {
+    if (actionResult && actionResult !== lastActionRef.current) {
+      lastActionRef.current = actionResult;
+      const res = actionResult as { ok?: boolean; syncFailed?: boolean };
+      if (res.ok && !res.syncFailed) {
+        shopify.toast.show("Saved");
+        navigate("/app/options");
+      }
+    }
+  }, [actionResult, navigate, shopify]);
 
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting" || navigation.state === "loading";

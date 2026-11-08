@@ -90,7 +90,22 @@ Real, used now: 14, 17, 09. Tests: `testConfig()` loader/action calls, fake admi
     - `pnpm lint` -> exit 0 (0 errors, 0 warnings)
     - `pnpm build` -> exit 0
     - `git diff --check` -> exit 0
-- **2026-11-08** — Evidence (orchestro spec verify, tree 0c34f01a): install pass · typecheck pass · lint pass · build pass · test pass 715/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree af474f62): install pass · typecheck pass · lint pass · build pass · test pass 723/0/0
+- **2026-11-08** — Addressed Review R5 findings:
+  - R5-F1: Upon successful save without syncFailed, navigate back to `/app/options` and display 'Saved' toast via App Bridge; when syncFailed is true, remain on the form and display the sync failed badge (both `app.options.$id.tsx` and `app.add-ons.$id.tsx`).
+  - R5-F3: Reworded swatch help example in `OptionValueForm` to colour name 'black', removing the raw hex literal `#1a1a1a` to satisfy INV-7.
+  - R5-F4: For new options and add-ons (`id === "new"`), ignored any posted currency field and used shop currency from `getShopCurrency(admin)`.
+  - R5-F5: Added hidden `optionGroupId` input in `OptionValueForm` sourced from `initialData.optionGroupId`, ensuring `/app/options/new` without `?groupId` saves under the group shown.
+  - Added tests in `app/features/catalog/admin-options.test.tsx` for R5-F1, R5-F3, R5-F4, and R5-F5.
+  - Gates:
+    - `pnpm vitest run app/features/catalog/admin-options.test.tsx` -> 61 passed (61)
+    - `pnpm test` -> 43 files passed (43), 723 tests passed (723)
+    - `rg '#[0-9a-fA-F]{3,8}\b' app/routes/app.options* app/routes/app.add-ons* app/features/catalog-options/ app/features/catalog/components/option-value-form.tsx` -> 0 matches (exit 1)
+    - `rg 'style=|className=|<style' app/routes/app.options* app/routes/app.add-ons* app/features/catalog/components/option-value-form.tsx` -> 0 matches (exit 1)
+    - `pnpm typecheck` -> exit 0 (0 errors)
+    - `pnpm lint` -> exit 0 (0 errors, 0 warnings)
+    - `pnpm build` -> exit 0
+    - `git diff --check` -> exit 0
 - **2026-11-08** — Addressed Review R4 findings:
   - R4-F1: Retain `shopifyVariantId` on price update `syncItem` failures, return `syncFailed: true`, and show badge with Retry; updated R3-F1 test to assert ID retention and that Retry calls update rather than create (both routes).
   - R4-F2: Removed `requestSubmit` `onClick` handlers from submit buttons, using native submit alone; tested that one click triggers exactly one action call.
