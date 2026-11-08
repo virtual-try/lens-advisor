@@ -1,6 +1,6 @@
 # Spec 12 — Lab code compiler
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 03
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —
@@ -89,4 +89,4 @@ with no tokens compiles to itself for any selections.
   - `pnpm typecheck` exit 0
   - `pnpm lint` (`eslint . --max-warnings 0`) exit 0
   - `pnpm build` exit 0
-- **2026-11-08** — Evidence (orchestro spec verify, tree 6fd9e965): install pass · typecheck pass · lint pass · build pass · test pass 269/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 7b952d82): install pass · typecheck pass · lint pass · build pass · test pass 427/0/0
