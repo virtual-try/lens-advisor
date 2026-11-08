@@ -64,14 +64,32 @@ Real, used now: 02, 06, 07, 08. Tests: fake object store and mailer; real DB and
 
 ## Done when
 
-- [ ] `pnpm vitest run app/features/compliance` passes: every Examples row is a case. [unit]
-- [ ] INV-1: shop/redact for A leaves every B row intact. [unit]
-- [ ] INV-2: captured logs for data_request contain no Rx value; the job payload holds ids only. [unit]
-- [ ] INV-6: each topic returns 401 on a forged HMAC. [unit]
-- [ ] INV-8: duplicate request ids produce one job. [unit]
-- [ ] INV-10: a test enumerates every shop-owned model from the DMMF and asserts zero rows after shop/redact. [unit]
+- [x] `pnpm vitest run app/features/compliance` passes: every Examples row is a case. [unit]
+- [x] INV-1: shop/redact for A leaves every B row intact. [unit]
+- [x] INV-2: captured logs for data_request contain no Rx value; the job payload holds ids only. [unit]
+- [x] INV-6: each topic returns 401 on a forged HMAC. [unit]
+- [x] INV-8: duplicate request ids produce one job. [unit]
+- [x] INV-10: a test enumerates every shop-owned model from the DMMF and asserts zero rows after shop/redact. [unit]
 - [ ] `shopify app webhook trigger` for each compliance topic returns 200 against the dev app. [requires: Shopify CLI, dev app]
-- [ ] `pnpm test` passes with 0 failures. [unit]
-- [ ] `specs/inventory/25-compliance-webhooks.md` lists routes and jobs. [static]
-- [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
-- [ ] `pnpm build` passes. [static]
+- [x] `pnpm test` passes with 0 failures. [unit]
+- [x] `specs/inventory/25-compliance-webhooks.md` lists routes and jobs. [static]
+- [x] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
+- [x] `pnpm build` passes. [static]
+
+## Log
+
+- **2026-11-08** — Spec 25 implemented in this worktree. Not committed.
+- **2026-11-08** — Routes `app/routes/webhooks.compliance.ts` and `app/routes/webhooks.app.uninstalled.ts` (the template `.tsx` uninstall route is replaced by the `.ts` file, same URL). Jobs `compliance.customers-redact`, `compliance.customers-data-request`, and `compliance.shop-redact` live in `app/features/compliance/jobs.server.ts` and are discovered with the other feature jobs. Shop redaction walks the Prisma DMMF. Inventory: `specs/inventory/25-compliance-webhooks.md`.
+- **2026-11-08** — Valid HMAC tests do not use the app session table. The suite checks the HMAC with the app secret, then returns `{ topic, shop, webhookId, payload }` and runs the real handler, jobs, and `createTestDb` database. A forged HMAC still calls the real `authenticate.webhook` (the 401 test logs `[shopify-api/INFO]`). Removed the `compliance-webhook-debug` line. Renamed the test helper `useStore` to `loadMemoryStore`.
+- **2026-11-08** — Self-check 1: holds. `shopOwnedModels` reads the DMMF at runtime. The shop/redact test lists those models itself and asserts each count is 0 for shop A.
+- **2026-11-08** — Self-check 2: holds. Delete order comes from DMMF `relationFromFields` (LabOrder before Prescription and Lens, Shop last). `runShopRedact` deletes inside one `$transaction`. The rollback test throws on the second `deleteMany` and asserts the shop snapshot is unchanged and no prefix was deleted.
+- **2026-11-08** — Self-check 3: holds. Forged HMAC is 401 and writes nothing. Bodies go through zod. Job payloads and the data_request log are ids only. The email attachment carries the decrypted prescription. S3 goes through `deletePrefix`.
+- **2026-11-08** — Sabotage, then restored: `deleteMany({ where: { shopId } })` became `deleteMany({ where: {} })`. `pnpm vitest run app/features/compliance/compliance.test.ts -t "leaves B"` → 1 failed. Shop B's ShopSettings, Prescription, LabOrder, Lens, and the other shop-owned counts went from 1 to 0. Restored the `shopId` filter.
+- **2026-11-08** — `shopify app webhook trigger` left open. It needs a Shopify dev store. Not run.
+- **2026-11-08** — Gates after the last code change, with `TEST_DATABASE_URL` pointed at the shared Postgres (`127.0.0.1:54316`, db `lens_test`). The worktree `.env` value is `localhost:5432`, and nothing is listening there.
+  - `pnpm typecheck` exit 0
+  - `pnpm lint` (`eslint . --max-warnings 0`) exit 0
+  - `pnpm vitest run app/features/compliance` → `Test Files  1 passed (1)` / `Tests  11 passed (11)`
+  - `pnpm test` → `Test Files  39 passed (39)` / `Tests  571 passed (571)`
+  - `pnpm build` exit 0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 7965d99d): install pass · typecheck pass · lint pass · build pass · test pass 571/0/0
