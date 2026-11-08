@@ -79,7 +79,9 @@ export async function runWorker(argv: readonly string[] = []): Promise<WorkerHan
     });
     await queue.registerAll(definitions);
     for (const definition of definitions) {
-      await queue.work(definition);
+      if (definition.handler) {
+        await queue.work(definition);
+      }
     }
   } catch (error) {
     try {

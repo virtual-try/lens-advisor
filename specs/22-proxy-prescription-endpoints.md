@@ -64,12 +64,56 @@ Stubbed: none. Consumers: configurator steps (26, 29) via spec 16's client; spec
 
 ## Done when
 
-- [ ] `pnpm vitest run app/features/prescriptions` passes (route tests live in `app/features/prescriptions/routes.test.ts`): every Examples row is a case. [unit]
-- [ ] INV-1: repository functions tested with two shops; a cross-shop upload key is refused. [unit]
-- [ ] INV-2: a test reads the raw `cipher` column and asserts the submitted SPH text is absent; captured logs contain no Rx value. [unit]
-- [ ] INV-6: unsigned and malformed requests return 401/400 and write nothing. [unit]
+- [x] `pnpm vitest run app/features/prescriptions` passes (route tests live in `app/features/prescriptions/routes.test.ts`): every Examples row is a case. [unit]
+- [x] INV-1: repository functions tested with two shops; a cross-shop upload key is refused. [unit]
+- [x] INV-2: a test reads the raw `cipher` column and asserts the submitted SPH text is absent; captured logs contain no Rx value. [unit]
+- [x] INV-6: unsigned and malformed requests return 401/400 and write nothing. [unit]
 - [ ] A real upload from a phone browser on a dev store lands in S3 encrypted. [requires: Shopify dev store, AWS bucket]
-- [ ] `pnpm test` passes with 0 failures. [unit]
-- [ ] `specs/inventory/22-proxy-prescription-endpoints.md` lists endpoints and the repository. [static]
-- [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
-- [ ] `pnpm build` passes. [static]
+- [x] `pnpm test` passes with 0 failures. [unit]
+- [x] `specs/inventory/22-proxy-prescription-endpoints.md` lists endpoints and the repository. [static]
+- [x] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
+- [x] `pnpm build` passes. [static]
+
+## Log
+
+- **2026-11-08** — Spec 22 implemented by coder agy-3 (engine agy) in worktree `spec-22` on branch `spec/22-proxy-prescription-endpoints`. No git writes (lead commits). GitHub issue skipped: dispatch brief forbids git writes.
+- **2026-11-08** — Real upload to phone browser box left unticked per Ruling R7: requires live Shopify dev store and live AWS S3 bucket with KMS key provided by owner.
+- **2026-11-08** — Implemented repository `app/features/prescriptions/prescriptions.repository.server.ts`:
+  - `findShopByDomain(db, domain)`: resolves Shop id by verified shop domain.
+  - `createPrescription(db, shopId, input)`: creates shop-scoped prescription row with unguessable UUID.
+  - `getPrescriptionById(db, shopId, id)`: shop-scoped lookup via `@@unique([shopId, id])` (INV-1).
+  - `attachOrder(db, shopId, prescriptionId, orderId)`: shop-scoped order attachment.
+  - `updatePrescriptionUpload(db, shopId, id, data)`: updates rxType and uploadKeys for draft upload rows.
+- **2026-11-08** — Implemented in-memory rate limiter `app/features/prescriptions/rate-limiter.server.ts`:
+  - `MemoryRateLimiter` rolling-window limiter (20 requests / 60 seconds / shop+IP); throws `RateLimitedError` with 429 status and `RATE_LIMITED` code on 21st request.
+- **2026-11-08** — Implemented domain service `app/features/prescriptions/prescriptions.service.server.ts`:
+  - `requestUploadUrl(shopId, input)`: validates content type (`image/jpeg`, `image/png`, `image/heic`, `application/pdf`), bounds file size to 10 MB, creates draft `Prescription` row (source `UPLOAD`) when `draftId` is not supplied, constructs canonical key `shops/<shopId>/rx/<draftId>/<uuid>.<ext>`, and requests presigned upload URL with SSE-KMS from `ObjectStore`.
+  - `submitPrescription(shopId, input)`:
+    - MANUAL: validates through `validatePrescription` (spec 10), returns 400 with `fields: [{ path, code }]` on validation failure, normalizes Rx via `normalizePrescription`, generates UUID `prescriptionId`, encrypts payload with AES-256-GCM using AAD `${shopId}:${prescriptionId}` (spec 05, INV-2), and writes row.
+    - UPLOAD: verifies `draftId` exists for `shopId` (INV-1), validates every key starts with `shops/<shopId>/rx/<draftId>/` (INV-1, rejects cross-shop with `INVALID_UPLOAD_KEY`), checks object existence in storage via `headObject` (rejects missing with `UPLOAD_MISSING`), and updates prescription row.
+  - Returns `{ rxRef }` (unguessable UUID). Zero `react-router` imports, zero Request/Response knowledge.
+- **2026-11-08** — Implemented proxy routes `app/routes/proxy.upload-url.ts` and `app/routes/proxy.prescriptions.ts`:
+  - Validates HMAC signature via `authenticate.public.appProxy` before performing any work; unsigned or forged requests return 401 `UNAUTHORIZED` and write nothing to database (INV-6).
+  - Takes `shopDomain` strictly from verified HMAC proxy context (INV-1).
+  - Enforces rate limiting per shop+IP (429 `RATE_LIMITED`).
+  - Validates request body with zod schemas from `packages/rx-core` (`uploadUrlRequestSchema` and `prescriptionSubmitBodySchema`); malformed JSON or invalid shapes return 400 `BAD_REQUEST` with zero database writes.
+  - Zero request body logging; errors return code and path without Rx values (INV-2).
+- **2026-11-08** — Created inventory fragment `specs/inventory/22-proxy-prescription-endpoints.md`.
+- **2026-11-08** — Self-checks verified:
+  1. INV-2: request body logging is off; errors carry `{ path, code }` without values; captured console logs during prescription submission contain no Rx values. Holds.
+  2. AAD uses server-generated id created before encryption (`prescriptionId = idGenerator()`, AAD `${shopId}:${prescriptionId}`), avoiding any update-after-encrypt race. Holds.
+  3. Security + api + storage checklists (`spec-quality.md` §8) verified and hold.
+- **2026-11-08** — Sabotage verifications:
+  1. In `prescriptions.service.server.ts`: bypassed cross-shop key prefix check (`false as boolean && !key.startsWith(expectedPrefix)`) → `pnpm vitest run app/features/prescriptions/prescriptions.service.server.test.ts -t "another shop's prefix"` failed: expected `INVALID_UPLOAD_KEY`, received `UPLOAD_MISSING`. Restored → green.
+  2. In `app/routes/proxy.prescriptions.ts`: bypassed `authenticate.public.appProxy` rejection throw → `pnpm vitest run app/features/prescriptions/routes.test.ts -t "Row 6: unsigned request"` failed: expected 401, received 500. Restored → green.
+- **2026-11-08** — Gates after final code changes:
+  - `pnpm vitest run app/features/prescriptions`: Test Files 3 passed (3), Tests 25 passed (25).
+  - `pnpm test`: Test Files 31 passed (31), Tests 380 passed (380), 0 failures.
+  - `pnpm typecheck`: exit 0.
+  - `pnpm lint` (`eslint . --max-warnings 0`): exit 0.
+  - `pnpm build`: exit 0.
+  - `git diff --check`: clean.
+- **2026-11-08** — Evidence (orchestro spec verify, tree e47f2538): install pass · typecheck pass · lint pass · build pass · test pass 752/0/0
+- **2026-11-08** — Fix round R4 by coder agy-3:
+  - R4-F1: Enforced mutual exclusion between MANUAL and UPLOAD modes at spec 22 boundary (`app/features/prescriptions/schema.ts`, `PrescriptionsService.submitPrescription`). Ambiguous inputs mixing typed Rx and upload fields return 400 `AMBIGUOUS_RX_SOURCE` without modifying draft state. No edits made to `packages/rx-core`. Tested in service and route tests.
+  - R4-F2: Moved verified-domain shop resolution into prescription service (`resolveShopByDomain`, `requestUploadUrlByDomain`, `submitPrescriptionByDomain`). Proxy routes (`app/routes/proxy.prescriptions.ts`, `app/routes/proxy.upload-url.ts`) authenticate, rate-limit, parse body, and call one service function with zero repository imports. Retained tests proving malformed/unsigned requests invoke no repository operations. Tested in service and route tests.

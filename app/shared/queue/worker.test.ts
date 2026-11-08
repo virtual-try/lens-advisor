@@ -109,4 +109,39 @@ describe("worker startup error handling (R4-F2)", () => {
       await dropTestSchema(schema);
     }
   });
+
+  it("skips handler-less job definitions without calling queue.work (R2-F3)", async () => {
+    const workSpy = vi.spyOn(Queue.prototype, "work");
+    const { defineJob } = await import("./define-job");
+    const { z } = await import("zod");
+    const handlerLessJob = defineJob({
+      name: "test.worker-skip-no-handler",
+      schema: z.object({ orderId: z.string() }),
+    });
+
+    const discovery = await import("./discovery.server");
+    vi.spyOn(discovery, "discoverJobs").mockResolvedValueOnce([handlerLessJob]);
+
+    const schema = uniqueSchema();
+    const databaseUrl = requireTestDatabaseUrl();
+
+    let workerHandle: Awaited<ReturnType<typeof runWorker>> | undefined;
+    try {
+      workerHandle = await runWorker([
+        "--schema",
+        schema,
+        "--database-url",
+        databaseUrl,
+        "--features-dir",
+        FIXTURES_DIR,
+      ]);
+
+      expect(workSpy).not.toHaveBeenCalledWith(handlerLessJob);
+    } finally {
+      if (workerHandle) {
+        await workerHandle.stop();
+      }
+      await dropTestSchema(schema);
+    }
+  });
 });

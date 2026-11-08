@@ -705,4 +705,17 @@ describe("Queue on a real Postgres", () => {
       expect(jobId).toEqual(expect.any(String));
     });
   });
+
+  it("Queue.work throws without a handler (R2-F3)", async () => {
+    await withTestQueue(async (queue) => {
+      const name = jobName("work-no-handler");
+      const definition = defineJob({
+        name,
+        schema: z.object({ orderId: z.string() }),
+      });
+      await expect(queue.work(definition)).rejects.toThrowError(
+        `Cannot work job "${name}" without a handler`
+      );
+    });
+  });
 });
