@@ -35,7 +35,8 @@ export function AddOnsStep({ state, dispatch }: StepProps): JSX.Element | null {
             addOn.price.amountMinor === 0
               ? strings.included
               : strings.priceDelta(
-                  formatMoney(addOn.price.amountMinor, addOn.price.currency),
+                  formatMoney(Math.abs(addOn.price.amountMinor), addOn.price.currency),
+                  addOn.price.amountMinor,
                 );
 
           return (

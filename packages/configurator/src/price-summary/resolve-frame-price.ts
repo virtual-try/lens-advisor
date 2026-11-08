@@ -1,7 +1,6 @@
-import type { CatalogResponse, Money } from "../../../rx-core/src/index.js";
-import { parseMoneyText } from "../../../rx-core/src/pricing/index.js";
+import type { CatalogResponse, Money, Selection } from "../../../rx-core/src/index.js";
 import type { ConfiguratorState } from "../shell/types";
-import { parseProductData } from "../shared/types";
+import { parseProductData, type ProductData } from "../shared/types";
 
 export function findCatalogCurrency(catalog?: CatalogResponse | null): string {
   if (!catalog) return "USD";
@@ -25,9 +24,54 @@ export function findCatalogCurrency(catalog?: CatalogResponse | null): string {
   return "USD";
 }
 
+export function getCurrencyFractionDigits(currency: string): number {
+  try {
+    const digits = new Intl.NumberFormat("en", {
+      style: "currency",
+      currency,
+    }).resolvedOptions().maximumFractionDigits;
+    if (typeof digits === "number" && Number.isInteger(digits) && digits >= 0) {
+      return digits;
+    }
+  } catch {
+    // fallback
+  }
+  return 2;
+}
+
+/**
+ * Normalises Shopify Liquid prices into integer minor units using integer math only (INV-4).
+ *
+ * Shopify Liquid money filter documentation (https://shopify.dev/docs/api/liquid/filters/money):
+ * Liquid money values are always in hundredths of the currency unit, whatever the currency:
+ * the money filters divide by 100, so ¥1,500 arrives as 150000, $120.00 arrives as 12000, and
+ * 1.500 KWD arrives as 150.
+ *
+ * Formula using integer arithmetic:
+ * priceMinor = round(liquid * 10^digits / 100), where digits is the currency's fraction digits
+ * (JPY 0, USD 2, KWD 3).
+ *   - digits === 2: liquid unchanged (e.g. 12000 -> 12000)
+ *   - digits === 0 (JPY): liquid / 100 (e.g. 150000 -> 1500)
+ *   - digits === 3 (KWD): liquid * 10 (e.g. 150 -> 1500)
+ */
+export function normalizeShopifyLiquidPrice(liquidAmount: number, currency: string): number {
+  const digits = getCurrencyFractionDigits(currency);
+  if (digits === 2) {
+    return liquidAmount;
+  }
+  if (digits > 2) {
+    const factor = Math.pow(10, digits - 2);
+    return Math.round(liquidAmount * factor);
+  }
+  const divisor = Math.pow(10, 2 - digits);
+  return Math.round(liquidAmount / divisor);
+}
+
 export interface ResolveFramePriceOptions {
   explicitFramePrice?: Money;
+  product?: ProductData | null;
   state?: ConfiguratorState | null;
+  selection?: Selection | null;
   catalog?: CatalogResponse | null;
   mount?: HTMLElement | null;
 }
@@ -35,20 +79,10 @@ export interface ResolveFramePriceOptions {
 /**
  * Resolves the frame price in integer minor units without float arithmetic (INV-4).
  *
- * Shopify Liquid money-unit convention (select-lenses.liquid):
- * In Shopify Liquid, `variant.price` and `product.price` represent the price in the customer's
- * currency's smallest/minor unit:
- *   - 2-decimal currencies (USD, EUR, GBP): cents (e.g. 12000 for $120.00).
- *   - 0-decimal currencies (JPY, KRW): integer units (e.g. 1500 for ¥1,500).
- *   - 3-decimal currencies (KWD, BHD): minor units/fils (e.g. 1500 for 1.500 KWD).
- * Therefore, `priceMinor` in `data-product-json` is already in integer minor units and must never
- * be multiplied by 100.
- *
- * If any decimal text is parsed, it is parsed strictly using rx-core `parseMoneyText(text, currency)`.
- *
  * Scoping: DOM resolution looks strictly at the active mount passed by the shell (or
  * `[data-la-mount][data-la-state="open"]`), never taking the first `[data-product-json]` on the document.
- * If the frame price cannot be resolved, returns `null` so an authoritative-looking 0 total is never produced.
+ * If the frame price cannot be resolved (or frameVariantId is set and missing), returns `null`
+ * so an authoritative-looking 0 total is never produced.
  */
 export function resolveFramePrice(options: ResolveFramePriceOptions): Money | null {
   if (
@@ -61,33 +95,11 @@ export function resolveFramePrice(options: ResolveFramePriceOptions): Money | nu
     return options.explicitFramePrice;
   }
 
-  const stateAny = options.state as Record<string, unknown> | null | undefined;
-  if (stateAny?.framePrice) {
-    const fp = stateAny.framePrice as Money;
-    if (
-      typeof fp.amountMinor === "number" &&
-      Number.isSafeInteger(fp.amountMinor) &&
-      typeof fp.currency === "string"
-    ) {
-      return fp;
-    }
-  }
-
-  const selectionAny = options.state?.selection as Record<string, unknown> | undefined;
-  if (selectionAny?.framePrice) {
-    const fp = selectionAny.framePrice as Money;
-    if (
-      typeof fp.amountMinor === "number" &&
-      Number.isSafeInteger(fp.amountMinor) &&
-      typeof fp.currency === "string"
-    ) {
-      return fp;
-    }
-  }
-
   const catalogCurrency = findCatalogCurrency(options.catalog ?? options.state?.catalog);
 
-  if (typeof document !== "undefined") {
+  let product: ProductData | null = options.product ?? null;
+
+  if (!product && typeof document !== "undefined") {
     // Resolve from the active mount passed by the shell, or document active mount.
     // Never document.querySelector('[data-product-json]') which could match an inactive block.
     const activeMount =
@@ -100,27 +112,35 @@ export function resolveFramePrice(options: ResolveFramePriceOptions): Money | nu
         activeMount.querySelector<HTMLElement>("[data-product-json]")?.getAttribute("data-product-json");
 
       if (rawJson) {
-        const product = parseProductData(rawJson);
-        if (product) {
-          const frameVariantId = options.state?.selection.frameVariantId;
-          const matchingVariant = product.variants?.find((v) => v.id === frameVariantId);
-          const rawAmount =
-            matchingVariant?.priceMinor ??
-            product.priceMinor ??
-            product.variants?.[0]?.priceMinor;
-          const currency = product.currency || catalogCurrency;
-
-          if (typeof rawAmount === "number" && Number.isSafeInteger(rawAmount)) {
-            return { amountMinor: rawAmount, currency };
-          }
-          if (typeof rawAmount === "string") {
-            const parsed = parseMoneyText(rawAmount, currency);
-            if (parsed.ok) {
-              return { amountMinor: parsed.amountMinor, currency };
-            }
-          }
-        }
+        product = parseProductData(rawJson) ?? null;
       }
+    }
+  }
+
+  if (product) {
+    const frameVariantId =
+      options.selection?.frameVariantId ?? options.state?.selection?.frameVariantId;
+    let rawAmount: number | undefined;
+
+    if (frameVariantId && product.variants && product.variants.length > 0) {
+      const matchingVariant = product.variants.find((v) => v.id === frameVariantId);
+      if (!matchingVariant || typeof matchingVariant.priceMinor !== "number") {
+        return null;
+      }
+      rawAmount = matchingVariant.priceMinor;
+    } else if (frameVariantId && product.variants && product.variants.length === 0) {
+      return null;
+    } else {
+      rawAmount =
+        typeof product.priceMinor === "number"
+          ? product.priceMinor
+          : product.variants?.[0]?.priceMinor;
+    }
+
+    if (typeof rawAmount === "number" && Number.isSafeInteger(rawAmount)) {
+      const currency = product.currency || catalogCurrency;
+      const amountMinor = normalizeShopifyLiquidPrice(rawAmount, currency);
+      return { amountMinor, currency };
     }
   }
 

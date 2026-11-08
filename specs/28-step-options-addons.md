@@ -74,7 +74,7 @@ Real, used now: 16, 13. Tests: fixture catalog. Stubbed: none.
 - **2026-11-08** — Spec 28 implemented by agy-6 in worktree `spec-28` (branch `spec/28-step-options-addons`). No git writes (lead commits).
 - **2026-11-08** — Landed `packages/configurator/src/price-summary/`:
   - `strings.ts`: Centralized user-visible strings for price summary (INV-9).
-  - `resolve-frame-price.ts`: Resolves frame price from explicit props, configurator state, or DOM data attributes (`data-frame`, `data-product-json`), falling back to 0 minor units with catalog currency.
+  - `resolve-frame-price.ts`: Resolves frame price from explicit props, parsed product data, or active mount `data-product-json`, returning `null` if unavailable (no `data-frame`; returns `null`).
   - `price-summary.css`: Shadow DOM styles transcribed using only `--la-*` tokens without raw hex, rgb, or px values (INV-7).
   - `PriceSummary.tsx`: Preact component supporting compact (footer running total with line parts and live total amount) and expanded (sheet itemized breakdown list) variants. Formats prices using `formatMoney` without float arithmetic, displaying zero deltas as "Included" (INV-4).
   - `PriceSummary.test.tsx`: Unit tests verifying Row 1 (frame $120, lens $80, 1.67 (+$35) -> lines 120 / 80 / 35, total $235.00), Row 2 (zero delta renders "Included"), Row 5 (JPY currency ¥1,500 without decimals), expanded variant breakdown, missing catalog/selection safety, and DOM frame price resolution.
@@ -108,4 +108,4 @@ Real, used now: 16, 13. Tests: fixture catalog. Stubbed: none.
   - `pnpm lint`: exit 0 (`--max-warnings 0`).
   - `pnpm build`: exit 0 (`loader.js` 1314 B <= 10 KB limit, `configurator.js` 116588 B).
   - `git diff --check`: clean (exit 0).
-- **2026-11-08** — Evidence (orchestro spec verify, tree ca5a723e): install pass · typecheck pass · lint pass · build pass · test pass 1010/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree 7737a042): install pass · typecheck pass · lint pass · build pass · test pass 1014/0/0

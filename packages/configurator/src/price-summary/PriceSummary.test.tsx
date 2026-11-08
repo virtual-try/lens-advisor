@@ -261,7 +261,8 @@ describe("PriceSummary", () => {
       document.body.removeChild(mountUsd);
     }
 
-    // 2. JPY: 1500 minor units (¥1,500, zero decimals - NOT multiplied by 100)
+    // 2. JPY: Shopify Liquid sends 150000 (hundredths of yen for ¥1,500)
+    // Normalised with integer math (round(liquid * 10^0 / 100)) to 1500 minor units
     const mountJpy = document.createElement("div");
     mountJpy.setAttribute("data-la-mount", "");
     mountJpy.setAttribute("data-la-state", "open");
@@ -269,7 +270,7 @@ describe("PriceSummary", () => {
       "data-product-json",
       JSON.stringify({
         productId: "prod-jpy",
-        priceMinor: 1500,
+        priceMinor: 150000,
         currency: "JPY",
       }),
     );
@@ -295,14 +296,15 @@ describe("PriceSummary", () => {
         <PriceSummary catalog={catalogJpy} selection={selectionJpy} mount={mountJpy} />,
       );
       expect(cJpy.textContent).toContain("¥1,500");
-      // Total: 1500 + 800 = 2300 JPY (¥2,300, not ¥150,000!)
+      // Total: 1500 + 800 = 2300 JPY (¥2,300)
       expect(cJpy.textContent).toContain("¥2,300");
       expect(cJpy.textContent).not.toContain("150,000");
     } finally {
       document.body.removeChild(mountJpy);
     }
 
-    // 3. KWD: 1500 minor units (1.500 KWD, 3 decimals)
+    // 3. KWD: Shopify Liquid sends 150 (hundredths of KWD for 1.500 KWD)
+    // Normalised with integer math (liquid * 10) to 1500 fils (3 decimals)
     const mountKwd = document.createElement("div");
     mountKwd.setAttribute("data-la-mount", "");
     mountKwd.setAttribute("data-la-state", "open");
@@ -310,7 +312,7 @@ describe("PriceSummary", () => {
       "data-product-json",
       JSON.stringify({
         productId: "prod-kwd",
-        priceMinor: 1500,
+        priceMinor: 150,
         currency: "KWD",
       }),
     );
@@ -477,5 +479,86 @@ describe("PriceSummary", () => {
     expect(errorEl).not.toBeNull();
     expect(errorEl?.getAttribute("role")).toBe("alert");
     expect(container.textContent).toContain(strings.pricingError);
+  });
+
+  it("returns null when frameVariantId is set and matches no variant in product data (R2-F2)", () => {
+    const catalog = createFixtureCatalog("USD");
+    const selection: Selection = {
+      frameVariantId: "variant-missing-999",
+      rxType: "SINGLE_VISION",
+      lensId: "lens-standard",
+      optionValueIds: [],
+      addOnIds: [],
+    };
+    const product = {
+      productId: "prod-1",
+      priceMinor: 12000,
+      currency: "USD",
+      variants: [{ id: "variant-existing", priceMinor: 12000 }],
+    };
+
+    const resolved = resolveFramePrice({
+      catalog,
+      state: {
+        stepIndex: 0,
+        rxType: "SINGLE_VISION",
+        prescription: null,
+        prescriptionRef: null,
+        catalog,
+        selection,
+        status: "ready",
+        error: null,
+        isOpen: true,
+      },
+      product,
+    });
+    expect(resolved).toBeNull();
+
+    const { container } = render(
+      <PriceSummary catalog={catalog} selection={selection} product={product} />,
+    );
+    // Unavailable state shown instead of default variant's $120.00
+    expect(container.textContent).toContain(strings.framePriceUnavailable);
+    expect(container.textContent).not.toContain("$200.00");
+  });
+
+  it("resolves frame price from parsed product passed down without querying DOM (R2-F3)", () => {
+    const catalog = createFixtureCatalog("USD");
+    const selection: Selection = {
+      frameVariantId: "var-1",
+      rxType: "SINGLE_VISION",
+      lensId: "lens-standard",
+      optionValueIds: [],
+      addOnIds: [],
+    };
+    const product = {
+      productId: "prod-prop",
+      currency: "USD",
+      priceMinor: 12000,
+      variants: [{ id: "var-1", priceMinor: 12000 }],
+    };
+
+    const resolved = resolveFramePrice({
+      catalog,
+      state: {
+        stepIndex: 0,
+        rxType: "SINGLE_VISION",
+        prescription: null,
+        prescriptionRef: null,
+        catalog,
+        selection,
+        status: "ready",
+        error: null,
+        isOpen: true,
+      },
+      product,
+    });
+    expect(resolved).toEqual({ amountMinor: 12000, currency: "USD" });
+
+    const { container } = render(
+      <PriceSummary catalog={catalog} selection={selection} product={product} />,
+    );
+    expect(container.textContent).toContain("$120.00");
+    expect(container.textContent).toContain("$200.00");
   });
 });

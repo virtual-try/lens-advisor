@@ -83,9 +83,10 @@ export function OptionsStep({ state, dispatch }: StepProps): JSX.Element | null 
                       ? strings.included
                       : strings.priceDelta(
                           formatMoney(
-                            val.priceDelta.amountMinor,
+                            Math.abs(val.priceDelta.amountMinor),
                             val.priceDelta.currency,
                           ),
+                          val.priceDelta.amountMinor,
                         );
 
                   const chipStyle = val.swatch
@@ -128,9 +129,10 @@ export function OptionsStep({ state, dispatch }: StepProps): JSX.Element | null 
                       ? strings.included
                       : strings.priceDelta(
                           formatMoney(
-                            val.priceDelta.amountMinor,
+                            Math.abs(val.priceDelta.amountMinor),
                             val.priceDelta.currency,
                           ),
+                          val.priceDelta.amountMinor,
                         );
 
                   return (

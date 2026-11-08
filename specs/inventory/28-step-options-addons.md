@@ -1,7 +1,7 @@
 # Inventory fragment — Spec 28 (Configurator steps 5–6: options, add-ons and price summary)
 
 ### `price-summary`
-`packages/configurator/src/price-summary/PriceSummary.tsx` & `packages/configurator/src/price-summary/index.ts` — Preact component for displaying price breakdowns and running totals calculated via `priceSelection(selection, catalog, framePrice)` from `packages/rx-core/src/pricing/`. Supports `compact` (footer running total with itemized lines and live total amount) and `expanded` (sheet / review itemized list) variants. Resolves frame price from explicit props, configurator state, or DOM data attributes (`data-frame`, `data-product-json`). Formats integer minor units via `formatMoney` with zero-delta values displayed as "Included". Reused by step 5, step 6, step 7 (review), and footer.
+`packages/configurator/src/price-summary/PriceSummary.tsx` & `packages/configurator/src/price-summary/index.ts` — Preact component for displaying price breakdowns and running totals calculated via `priceSelection(selection, catalog, framePrice)` from `packages/rx-core/src/pricing/`. Supports `compact` (footer running total with itemized lines and live total amount) and `expanded` (sheet / review itemized list) variants. Resolves frame price from explicit props, parsed product data, or active mount `data-product-json`, returning `null` if unavailable. Formats integer minor units via `formatMoney` with zero-delta values displayed as "Included". Reused by step 5, step 6, step 7 (review), and footer.
 **Use instead of:** Writing custom price calculators or duplicating price breakdown display logic.
 **Added by:** spec 28.
 

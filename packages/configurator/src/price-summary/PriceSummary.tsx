@@ -3,6 +3,7 @@ import type { CatalogResponse, Money, Selection } from "../../../rx-core/src/ind
 import { priceSelection, type PriceBreakdown } from "../../../rx-core/src/pricing/index.js";
 import { formatMoney } from "../shared/format";
 import type { ApiClient } from "../shared/api";
+import type { ProductData } from "../shared/types";
 import type { ConfiguratorAction, ConfiguratorState } from "../shell/types";
 import priceSummaryCss from "./price-summary.css?inline";
 import { findCatalogCurrency, resolveFramePrice } from "./resolve-frame-price";
@@ -17,6 +18,7 @@ export interface PriceSummaryProps {
   selection?: Selection;
   catalog?: CatalogResponse;
   mount?: HTMLElement | null;
+  product?: ProductData | null;
 }
 
 export function PriceSummary({
@@ -26,6 +28,7 @@ export function PriceSummary({
   selection: explicitSelection,
   catalog: explicitCatalog,
   mount,
+  product,
 }: PriceSummaryProps): JSX.Element | null {
   const selection = explicitSelection ?? state?.selection;
   const catalog = explicitCatalog ?? state?.catalog;
@@ -41,7 +44,9 @@ export function PriceSummary({
 
   const framePrice = resolveFramePrice({
     explicitFramePrice,
+    product,
     state,
+    selection,
     catalog,
     mount,
   });

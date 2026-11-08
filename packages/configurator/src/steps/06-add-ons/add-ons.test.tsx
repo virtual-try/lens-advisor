@@ -222,6 +222,32 @@ describe("AddOnsStep (Step 6)", () => {
     expect(view.getByText("+$15.00")).not.toBeNull();
   });
 
+  it("displays negative price delta with leading '-' without '+-' (R2-F4)", () => {
+    const catalog: CatalogResponse = {
+      ...createFixtureCatalog(),
+      addOns: [
+        {
+          id: "addon-discount",
+          name: "Promotional credit",
+          price: { amountMinor: -500, currency: "USD" },
+          shopifyVariantId: "var-disc",
+          position: 0,
+        },
+      ],
+    };
+    const state: ConfiguratorState = {
+      ...createInitialState("frame-1"),
+      catalog,
+    };
+
+    const dispatch = vi.fn();
+    const api = createApiClient();
+    const view = render(<AddOnsStep state={state} dispatch={dispatch} api={api} />);
+
+    expect(view.container.textContent).toContain("-$5.00");
+    expect(view.container.textContent).not.toContain("+-$5.00");
+  });
+
   it("satisfies step contract exports and applicability", () => {
     expect(addOnsStep.id).toBe("add-ons");
     expect(addOnsStep.titleKey).toBe(strings.title);
