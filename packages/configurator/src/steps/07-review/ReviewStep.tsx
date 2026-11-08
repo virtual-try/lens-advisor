@@ -11,7 +11,7 @@ import { formatMoney } from "../../shared/format";
 import type { StepProps } from "../../shell/types";
 import { PriceSummary } from "../../price-summary";
 import { findCatalogCurrency, resolveFramePrice } from "../../price-summary/resolve-frame-price";
-import { addBundle, refreshCartOrRedirect, type AddBundleResult } from "../../cart";
+import { addBundle, AddBundleError, refreshCartOrRedirect, type AddBundleResult } from "../../cart";
 import { strings } from "./strings";
 import reviewCss from "./review.css?inline";
 
@@ -20,6 +20,63 @@ export interface ReviewStepProps extends StepProps {
   fetchFn?: typeof fetch;
   routesRoot?: string;
   onRedirect?: (url: string) => void;
+}
+
+interface StepReference {
+  id: string;
+  folder?: string;
+  isApplicable: (state: ConfiguratorState) => boolean;
+}
+
+type ConfiguratorState = StepProps["state"];
+
+const DEFAULT_STEPS: StepReference[] = [
+  { id: "vision", folder: "01-rx-type", isApplicable: () => true },
+  { id: "prescription", folder: "02-prescription", isApplicable: (s) => s.rxType !== "NON_PRESCRIPTION" },
+  { id: "lens", folder: "03-lens", isApplicable: () => true },
+  { id: "options", folder: "05-options", isApplicable: () => true },
+  { id: "add-ons", folder: "06-add-ons", isApplicable: () => true },
+  { id: "review", folder: "07-review", isApplicable: () => true },
+];
+
+function findStepIndex(
+  stepList: Array<{ id: string; folder?: string }>,
+  candidateIds: string[],
+): number {
+  return stepList.findIndex((s) =>
+    candidateIds.some(
+      (id) =>
+        s.id === id ||
+        s.folder === id ||
+        s.folder?.endsWith(id) ||
+        s.folder?.includes(id),
+    ),
+  );
+}
+
+function mapAddBundleError(err: unknown): string {
+  if (err instanceof AddBundleError) {
+    if (
+      err.code === "ROLLBACK_FAILED" ||
+      (!err.rolledBack && (err.code === "CHILD_ADD_FAILED" || err.code === "UNKNOWN_LENS"))
+    ) {
+      return strings.errorRollbackFailed;
+    }
+    if (err.code === "NETWORK_ERROR") {
+      return strings.errorNetwork;
+    }
+    if (
+      err.code === "FRAME_ADD_FAILED" ||
+      err.code === "FRAME_RESPONSE_INVALID" ||
+      err.code === "FRAME_KEY_MISSING"
+    ) {
+      return strings.errorFrameAddFailed;
+    }
+    if (err.code === "CHILD_ADD_FAILED" || err.code === "UNKNOWN_LENS") {
+      return strings.errorChildAddFailed;
+    }
+  }
+  return strings.errorGeneric;
 }
 
 function findLens(catalog?: CatalogResponse | null, lensId?: string): Lens | undefined {
@@ -46,20 +103,33 @@ function findOptionValue(catalog?: CatalogResponse | null, valueId?: string): Op
   return undefined;
 }
 
-export function ReviewStep({
-  state,
-  dispatch,
-  product,
-  mount,
-  onSuccess,
-  fetchFn,
-  routesRoot,
-  onRedirect,
-}: ReviewStepProps): JSX.Element {
+export function ReviewStep(props: ReviewStepProps): JSX.Element {
+  const {
+    state,
+    dispatch,
+    product,
+    mount,
+    onSuccess,
+    fetchFn,
+    routesRoot,
+    onRedirect,
+    steps: providedSteps,
+  } = props;
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const storeRxInOrder = state.catalog?.settings?.storeRxInOrder ?? false;
+
+  const stepList = providedSteps && providedSteps.length > 0 ? providedSteps : DEFAULT_STEPS;
+  const visionIndex = findStepIndex(stepList, ["vision", "rx-type", "01-rx-type", "rxType"]);
+  const rxIndex = findStepIndex(stepList, ["prescription", "02-prescription"]);
+  const lensIndex = findStepIndex(stepList, ["lens", "03-lens", "lens-selection"]);
+  const optionsIndex = findStepIndex(stepList, ["options", "05-options"]);
+  const extrasIndex = findStepIndex(stepList, ["add-ons", "addons", "extras", "06-add-ons"]);
+
+  const rxStep = rxIndex >= 0 ? stepList[rxIndex] : undefined;
+  const isRxApplicable = rxStep ? rxStep.isApplicable(state) : state.rxType !== "NON_PRESCRIPTION";
 
   const framePrice = resolveFramePrice({
     product,
@@ -92,16 +162,22 @@ export function ReviewStep({
 
   const handleAddToCart = async () => {
     if (isSubmitting) return; // Prevent double click
-    if (!state.catalog) return;
+    if (!state.catalog || !formattedTotal) return;
 
     setIsSubmitting(true);
     setError(null);
 
+    const isNonRx = state.rxType === "NON_PRESCRIPTION";
+    const effectiveSelection =
+      isNonRx && state.selection.prescriptionRef
+        ? { ...state.selection, prescriptionRef: undefined }
+        : state.selection;
+
     try {
       const result = await addBundle({
-        selection: state.selection,
+        selection: effectiveSelection,
         catalog: state.catalog,
-        prescription: state.prescription,
+        prescription: isNonRx ? undefined : (state.prescription ?? undefined),
         storeRxInOrder,
         fetch: fetchFn,
         routesRoot,
@@ -118,9 +194,9 @@ export function ReviewStep({
         routesRoot,
         redirectFn: onRedirect,
       });
-    } catch {
+    } catch (err) {
       setIsSubmitting(false);
-      setError(strings.errorChildAddFailed);
+      setError(mapAddBundleError(err));
     }
   };
 
@@ -147,13 +223,13 @@ export function ReviewStep({
   // 3. Prescription
   let rxValueText: string;
   let rxSubText = "";
-  if (!storeRxInOrder) {
+  if (visionType === "NON_PRESCRIPTION") {
+    rxValueText = strings.rx.nonPrescription;
+  } else if (!storeRxInOrder) {
     rxValueText = strings.rx.onFile;
     rxSubText = visionTitle;
   } else {
-    if (visionType === "NON_PRESCRIPTION") {
-      rxValueText = strings.rx.nonPrescription;
-    } else if (state.prescription) {
+    if (state.prescription) {
       rxValueText = strings.rx.enteredByUser;
       rxSubText = `${strings.rx.pdPrefix}${formatPd(state.prescription.pd)}${strings.rx.pdUnit}`;
     } else if (state.prescriptionRef) {
@@ -235,14 +311,6 @@ export function ReviewStep({
             {framePriceFormatted ? (
               <span class="la-review__price">{framePriceFormatted}</span>
             ) : null}
-            <button
-              type="button"
-              class="la-link"
-              onClick={() => dispatch({ type: "GO_TO_STEP", stepIndex: 0 })}
-            >
-              {strings.change}
-              <span class="la-sr">{strings.sr.frame}</span>
-            </button>
           </div>
         </div>
 
@@ -252,14 +320,22 @@ export function ReviewStep({
           <p class="la-review__value">{visionTitle}</p>
           {visionSub ? <p class="la-review__sub">{visionSub}</p> : null}
           <div class="la-review__aside">
-            <button
-              type="button"
-              class="la-link"
-              onClick={() => dispatch({ type: "GO_TO_STEP", stepIndex: 0 })}
-            >
-              {strings.edit}
-              <span class="la-sr">{strings.sr.vision}</span>
-            </button>
+            {visionIndex >= 0 && (
+              <button
+                type="button"
+                class="la-link"
+                onClick={() =>
+                  dispatch({
+                    type: "GO_TO_STEP",
+                    stepIndex: visionIndex,
+                    steps: providedSteps,
+                  })
+                }
+              >
+                {strings.edit}
+                <span class="la-sr">{strings.sr.vision}</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -269,17 +345,25 @@ export function ReviewStep({
           <p class="la-review__value">{rxValueText}</p>
           {rxSubText ? <p class="la-review__sub">{rxSubText}</p> : null}
           <div class="la-review__aside">
-            <button
-              type="button"
-              class="la-link"
-              onClick={() => dispatch({ type: "GO_TO_STEP", stepIndex: 1 })}
-            >
-              {strings.edit}
-              <span class="la-sr">{strings.sr.prescription}</span>
-            </button>
+            {isRxApplicable && rxIndex >= 0 && (
+              <button
+                type="button"
+                class="la-link"
+                onClick={() =>
+                  dispatch({
+                    type: "GO_TO_STEP",
+                    stepIndex: rxIndex,
+                    steps: providedSteps,
+                  })
+                }
+              >
+                {strings.edit}
+                <span class="la-sr">{strings.sr.prescription}</span>
+              </button>
+            )}
           </div>
 
-          {storeRxInOrder && state.prescription && (
+          {storeRxInOrder && visionType !== "NON_PRESCRIPTION" && state.prescription && (
             <table class="la-rxtable">
               <caption class="la-sr">{strings.rx.table.caption}</caption>
               <thead>
@@ -346,14 +430,22 @@ export function ReviewStep({
             {lensPriceFormatted ? (
               <span class="la-review__price">{lensPriceFormatted}</span>
             ) : null}
-            <button
-              type="button"
-              class="la-link"
-              onClick={() => dispatch({ type: "GO_TO_STEP", stepIndex: 3 })}
-            >
-              {strings.edit}
-              <span class="la-sr">{strings.sr.lens}</span>
-            </button>
+            {lensIndex >= 0 && (
+              <button
+                type="button"
+                class="la-link"
+                onClick={() =>
+                  dispatch({
+                    type: "GO_TO_STEP",
+                    stepIndex: lensIndex,
+                    steps: providedSteps,
+                  })
+                }
+              >
+                {strings.edit}
+                <span class="la-sr">{strings.sr.lens}</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -366,14 +458,22 @@ export function ReviewStep({
             {optionsPriceFormatted ? (
               <span class="la-review__price">{optionsPriceFormatted}</span>
             ) : null}
-            <button
-              type="button"
-              class="la-link"
-              onClick={() => dispatch({ type: "GO_TO_STEP", stepIndex: 4 })}
-            >
-              {strings.edit}
-              <span class="la-sr">{strings.sr.options}</span>
-            </button>
+            {optionsIndex >= 0 && (
+              <button
+                type="button"
+                class="la-link"
+                onClick={() =>
+                  dispatch({
+                    type: "GO_TO_STEP",
+                    stepIndex: optionsIndex,
+                    steps: providedSteps,
+                  })
+                }
+              >
+                {strings.edit}
+                <span class="la-sr">{strings.sr.options}</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -385,14 +485,22 @@ export function ReviewStep({
             {addOnsPriceFormatted ? (
               <span class="la-review__price">{addOnsPriceFormatted}</span>
             ) : null}
-            <button
-              type="button"
-              class="la-link"
-              onClick={() => dispatch({ type: "GO_TO_STEP", stepIndex: 5 })}
-            >
-              {strings.edit}
-              <span class="la-sr">{strings.sr.extras}</span>
-            </button>
+            {extrasIndex >= 0 && (
+              <button
+                type="button"
+                class="la-link"
+                onClick={() =>
+                  dispatch({
+                    type: "GO_TO_STEP",
+                    stepIndex: extrasIndex,
+                    steps: providedSteps,
+                  })
+                }
+              >
+                {strings.edit}
+                <span class="la-sr">{strings.sr.extras}</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -428,16 +536,23 @@ export function ReviewStep({
 
       {/* Primary Add to cart button */}
       <div class="la-review__action">
+        {!formattedTotal && (
+          <p class="la-review__price-unavailable" role="status">
+            {strings.priceUnavailable}
+          </p>
+        )}
         <button
           type="button"
           class="la-btn la-btn--primary la-btn--block"
-          disabled={isSubmitting}
+          disabled={isSubmitting || !formattedTotal}
           aria-busy={isSubmitting}
           onClick={handleAddToCart}
         >
           {isSubmitting
             ? strings.addingToCart
-            : strings.addToCart(formattedTotal ?? "")}
+            : formattedTotal
+              ? strings.addToCart(formattedTotal)
+              : strings.addToCart(strings.priceUnavailable)}
         </button>
       </div>
     </div>

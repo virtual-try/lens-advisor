@@ -115,4 +115,15 @@ Stubbed: none.
   - `pnpm lint`: exit 0 (`eslint . --max-warnings 0`).
   - `pnpm build`: exit 0 (`loader.js` 1314 B <= 10 KB limit, `configurator.js` 135788 B, `loader.css` 3319 B).
   - `git diff --check`: clean (exit 0).
-- **2026-11-08** — Evidence (orchestro spec verify, tree ee623525): install pass · typecheck pass · lint pass · build pass · test pass 1173/0/0
+- **2026-11-08** — Evidence (orchestro spec verify, tree cfe24951): install pass · typecheck pass · lint pass · build pass · test pass 1185/0/0
+- **2026-11-08** — Fix round R1 addressing findings R1-F1 through R1-F9:
+  - R1-F1: `rollbackFrame` returns boolean (`res.ok`) and surfaces distinct `ROLLBACK_FAILED` code with warning message when removal fails. Tested non-OK (500) and throwing `/cart/change.js`.
+  - R1-F2: On `FRAME_RESPONSE_INVALID` or `FRAME_KEY_MISSING` after 200, re-reads `/cart.js` and rolls back newest frame line for variant by `_bundle_id`, reporting `rolledBack` truthfully. Tested both frame-failure paths and `UNKNOWN_LENS` rollback.
+  - R1-F3: Pass `prescription` and `rxRef` only when `rxType !== "NON_PRESCRIPTION"`. Tested that no `_rx_*` properties reach cart call for non-prescription bundles.
+  - R1-F4: Show `strings.rx.nonPrescription` for `NON_PRESCRIPTION` regardless of `storeRxInOrder`, and hide Edit button when Rx step does not apply. Tested with setting on and off.
+  - R1-F5: Resolve Edit targets dynamically by step ID from registered steps list (never hard-coded numbers). Dropped frame "Change" button. Tested Edit link navigation with arbitrary step ordering.
+  - R1-F6: Removed invented `cart:refresh`/`cart:updated` events and drawer selector guessing. Navigates to `/cart` reliably unless explicit theme hook is configured (`options.onCartUpdate` or `window.LensAdvisor.onCartUpdate`). Tested.
+  - R1-F7: Disabled Add to cart button and displayed `strings.priceUnavailable` when total cannot be computed (no catalog, null frame price, `priceSelection` throws). Tested no-catalog, null frame price, and pricing error states.
+  - R1-F8: Mapped `AddBundleError.code` to distinct localized sentences in `strings.ts` (frame failed, lenses failed and rolled back, rollback failed, network), with generic sentence fallback. Tested all 4 mappings.
+  - R1-F9: Drove the real reducer in Row 7 test and asserted `GO_TO_STEP` preserves full selection.
+  - Gates: `pnpm test` (67 test files, 1185 tests passed), `pnpm lint` (0 errors, 0 warnings), `pnpm typecheck` (pass), `pnpm build` (`loader.js` 1314 B, `configurator.js` 138423 B), `git diff --check` (clean).

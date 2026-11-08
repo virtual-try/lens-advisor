@@ -3,10 +3,29 @@ import { describe, expect, it, vi } from "vitest";
 import type { CatalogResponse, Prescription, Selection } from "../../../../rx-core/src/index.js";
 import type { ApiClient } from "../../shared/api";
 import type { ProductData } from "../../shared/types";
-import type { ConfiguratorState } from "../../shell/types";
+import { configuratorReducer } from "../../shell/reducer";
+import type { ConfiguratorAction, ConfiguratorState, StepDefinition } from "../../shell/types";
 import { ReviewStep } from "./ReviewStep";
 import { reviewStep, isReviewStepApplicable, isReviewStepComplete } from "./index";
 import { strings } from "./strings";
+
+const testSteps: StepDefinition[] = [
+  { id: "vision", titleKey: "vision", folder: "01-rx-type", isComplete: () => true, isApplicable: () => true, Component: () => null },
+  { id: "prescription", titleKey: "prescription", folder: "02-prescription", isComplete: () => true, isApplicable: (s) => s.rxType !== "NON_PRESCRIPTION", Component: () => null },
+  { id: "lens", titleKey: "lens", folder: "03-lens", isComplete: () => true, isApplicable: () => true, Component: () => null },
+  { id: "options", titleKey: "options", folder: "05-options", isComplete: () => true, isApplicable: () => true, Component: () => null },
+  { id: "add-ons", titleKey: "add-ons", folder: "06-add-ons", isComplete: () => true, isApplicable: () => true, Component: () => null },
+  { id: "review", titleKey: "review", folder: "07-review", isComplete: () => true, isApplicable: () => true, Component: () => null },
+];
+
+const shuffledSteps: StepDefinition[] = [
+  { id: "lens", titleKey: "lens", folder: "03-lens", isComplete: () => true, isApplicable: () => true, Component: () => null },
+  { id: "vision", titleKey: "vision", folder: "01-rx-type", isComplete: () => true, isApplicable: () => true, Component: () => null },
+  { id: "prescription", titleKey: "prescription", folder: "02-prescription", isComplete: () => true, isApplicable: (s) => s.rxType !== "NON_PRESCRIPTION", Component: () => null },
+  { id: "options", titleKey: "options", folder: "05-options", isComplete: () => true, isApplicable: () => true, Component: () => null },
+  { id: "add-ons", titleKey: "add-ons", folder: "06-add-ons", isComplete: () => true, isApplicable: () => true, Component: () => null },
+  { id: "review", titleKey: "review", folder: "07-review", isComplete: () => true, isApplicable: () => true, Component: () => null },
+];
 
 const mockApi = {} as ApiClient;
 
@@ -274,33 +293,42 @@ describe("Spec 29 — ReviewStep (packages/configurator/src/steps/07-review)", (
     });
   });
 
-  it("Row 7: Edit on 'Lens' row -> goes to step 4 with the selection kept", () => {
-    const state = createReviewState();
-    const dispatch = vi.fn();
+  it("Row 7 (R1-F9): Edit on 'Lens' row -> dispatches GO_TO_STEP and real reducer preserves selection", () => {
+    let currentState = createReviewState();
+    const dispatch = vi.fn((action: ConfiguratorAction) => {
+      currentState = configuratorReducer(currentState, action, testSteps);
+    });
 
     render(
       <ReviewStep
-        state={state}
+        state={currentState}
         dispatch={dispatch}
         api={mockApi}
         product={fixtureProduct}
+        steps={testSteps}
       />,
     );
 
     const editLensButton = screen.getByRole("button", { name: "Edit lens" });
     fireEvent.click(editLensButton);
 
-    // 0-based index 3 corresponds to Step 4 ("Lens")
+    // Lens is at index 2 in testSteps
     expect(dispatch).toHaveBeenCalledWith({
       type: "GO_TO_STEP",
-      stepIndex: 3,
+      stepIndex: 2,
+      steps: testSteps,
     });
-    // Selection in state is untouched
-    expect(state.selection.lensId).toBe("lens-sv");
-    expect(state.selection.optionValueIds).toEqual(["val-167", "val-clear"]);
+
+    // Real reducer was driven: stepIndex moved to 2, selection is kept intact
+    expect(currentState.stepIndex).toBe(2);
+    expect(currentState.selection.lensId).toBe("lens-sv");
+    expect(currentState.selection.optionValueIds).toEqual(["val-167", "val-clear"]);
+    expect(currentState.selection.addOnIds).toEqual(["addon-case"]);
+    expect(currentState.selection.frameVariantId).toBe("var-frame-harlow");
+    expect(currentState.selection.rxType).toBe("PROGRESSIVE");
   });
 
-  it("Edit on other rows dispatches GO_TO_STEP for respective steps", () => {
+  it("R1-F5: resolves Edit targets dynamically by step id and drops frame Change button", () => {
     const state = createReviewState();
     const dispatch = vi.fn();
 
@@ -310,28 +338,256 @@ describe("Spec 29 — ReviewStep (packages/configurator/src/steps/07-review)", (
         dispatch={dispatch}
         api={mockApi}
         product={fixtureProduct}
+        steps={shuffledSteps}
       />,
     );
 
-    // Vision -> Step 1 (index 0)
+    // Frame Change button must NOT exist
+    expect(screen.queryByRole("button", { name: /Change frame|Change/ })).toBeNull();
+
+    // In shuffledSteps:
+    // Lens -> index 0
+    fireEvent.click(screen.getByRole("button", { name: "Edit lens" }));
+    expect(dispatch).toHaveBeenLastCalledWith({
+      type: "GO_TO_STEP",
+      stepIndex: 0,
+      steps: shuffledSteps,
+    });
+
+    // Vision -> index 1
     fireEvent.click(screen.getByRole("button", { name: "Edit vision" }));
-    expect(dispatch).toHaveBeenCalledWith({ type: "GO_TO_STEP", stepIndex: 0 });
+    expect(dispatch).toHaveBeenLastCalledWith({
+      type: "GO_TO_STEP",
+      stepIndex: 1,
+      steps: shuffledSteps,
+    });
 
-    // Prescription -> Step 2 (index 1)
+    // Prescription -> index 2
     fireEvent.click(screen.getByRole("button", { name: "Edit prescription" }));
-    expect(dispatch).toHaveBeenCalledWith({ type: "GO_TO_STEP", stepIndex: 1 });
+    expect(dispatch).toHaveBeenLastCalledWith({
+      type: "GO_TO_STEP",
+      stepIndex: 2,
+      steps: shuffledSteps,
+    });
 
-    // Options -> Step 5 (index 4)
+    // Options -> index 3
     fireEvent.click(screen.getByRole("button", { name: "Edit options" }));
-    expect(dispatch).toHaveBeenCalledWith({ type: "GO_TO_STEP", stepIndex: 4 });
+    expect(dispatch).toHaveBeenLastCalledWith({
+      type: "GO_TO_STEP",
+      stepIndex: 3,
+      steps: shuffledSteps,
+    });
 
-    // Extras -> Step 6 (index 5)
+    // Extras -> index 4
     fireEvent.click(screen.getByRole("button", { name: "Edit extras" }));
-    expect(dispatch).toHaveBeenCalledWith({ type: "GO_TO_STEP", stepIndex: 5 });
+    expect(dispatch).toHaveBeenLastCalledWith({
+      type: "GO_TO_STEP",
+      stepIndex: 4,
+      steps: shuffledSteps,
+    });
+  });
 
-    // Frame Change -> Step 1 (index 0)
-    fireEvent.click(screen.getByRole("button", { name: "Change frame" }));
-    expect(dispatch).toHaveBeenCalledWith({ type: "GO_TO_STEP", stepIndex: 0 });
+  it("R1-F4: displays 'Non-prescription' and hides Edit button when rxType is NON_PRESCRIPTION (storeRxInOrder off)", () => {
+    const state = createReviewState({
+      rxType: "NON_PRESCRIPTION",
+      catalog: {
+        ...fixtureCatalog,
+        settings: {
+          ...fixtureCatalog.settings,
+          storeRxInOrder: false,
+        },
+      },
+    });
+
+    render(
+      <ReviewStep
+        state={state}
+        dispatch={vi.fn()}
+        api={mockApi}
+        product={fixtureProduct}
+        steps={testSteps}
+      />,
+    );
+
+    // Displays Non-prescription for both Vision and Prescription rows
+    expect(screen.getAllByText("Non-prescription").length).toBe(2);
+    // Does not claim Prescription on file
+    expect(screen.queryByText("Prescription on file")).toBeNull();
+    // Edit prescription button is hidden
+    expect(screen.queryByRole("button", { name: "Edit prescription" })).toBeNull();
+  });
+
+  it("R1-F4: displays 'Non-prescription' and hides Edit button when rxType is NON_PRESCRIPTION (storeRxInOrder on)", () => {
+    const state = createReviewState({
+      rxType: "NON_PRESCRIPTION",
+      catalog: {
+        ...fixtureCatalog,
+        settings: {
+          ...fixtureCatalog.settings,
+          storeRxInOrder: true,
+        },
+      },
+    });
+
+    const { container } = render(
+      <ReviewStep
+        state={state}
+        dispatch={vi.fn()}
+        api={mockApi}
+        product={fixtureProduct}
+        steps={testSteps}
+      />,
+    );
+
+    expect(screen.getAllByText("Non-prescription").length).toBe(2);
+    expect(screen.queryByRole("button", { name: "Edit prescription" })).toBeNull();
+    // Table must not be rendered for non-prescription even if stale prescription exists
+    expect(container.querySelector(".la-rxtable")).toBeNull();
+  });
+
+  it("R1-F7: disables button and displays price-unavailable message when catalog is null (no-catalog state)", () => {
+    const state = createReviewState({ catalog: null });
+
+    render(
+      <ReviewStep
+        state={state}
+        dispatch={vi.fn()}
+        api={mockApi}
+        product={fixtureProduct}
+      />,
+    );
+
+    expect(screen.getByText("Price unavailable")).toBeTruthy();
+    const button = screen.getByRole("button", { name: /^Add to cart/ });
+    expect(button.getAttribute("disabled")).not.toBeNull();
+  });
+
+  it("R1-F7: disables button and displays price-unavailable message when frame price is null", () => {
+    const state = createReviewState();
+
+    render(
+      <ReviewStep
+        state={state}
+        dispatch={vi.fn()}
+        api={mockApi}
+        product={{ ...fixtureProduct, priceMinor: undefined, variants: [] }}
+      />,
+    );
+
+    expect(screen.getByText("Price unavailable")).toBeTruthy();
+    const button = screen.getByRole("button", { name: /^Add to cart/ });
+    expect(button.getAttribute("disabled")).not.toBeNull();
+  });
+
+  it("R1-F7: disables button and displays price-unavailable message when priceSelection throws", () => {
+    const state = createReviewState({
+      selection: {
+        ...fixtureSelection,
+        lensId: "unknown-lens",
+      },
+      catalog: {
+        ...fixtureCatalog,
+        lensGroups: [], // causes priceSelection to fail
+      },
+    });
+
+    render(
+      <ReviewStep
+        state={state}
+        dispatch={vi.fn()}
+        api={mockApi}
+        product={fixtureProduct}
+      />,
+    );
+
+    expect(screen.getByText("Price unavailable")).toBeTruthy();
+    const button = screen.getByRole("button", { name: /^Add to cart/ });
+    expect(button.getAttribute("disabled")).not.toBeNull();
+  });
+
+  it("R1-F8: maps AddBundleError codes to distinct localized strings", async () => {
+    const state = createReviewState();
+
+    // 1. Frame add failed
+    const fetchFrameFail = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ message: "Frame sold out" }), { status: 422 }),
+    );
+    const { unmount: unmount1 } = render(
+      <ReviewStep
+        state={state}
+        dispatch={vi.fn()}
+        api={mockApi}
+        product={fixtureProduct}
+        fetchFn={fetchFrameFail as unknown as typeof fetch}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Add to cart/ }));
+    await waitFor(() => {
+      expect(screen.getByText("Couldn't add your frame")).toBeTruthy();
+    });
+    unmount1();
+
+    // 2. Child failed and rolled back
+    let callIdx2 = 0;
+    const fetchChildFail = vi.fn().mockImplementation(() => {
+      callIdx2++;
+      if (callIdx2 === 1) return Promise.resolve(new Response(JSON.stringify({ key: "k1" }), { status: 200 }));
+      if (callIdx2 === 2) return Promise.resolve(new Response("{}", { status: 422 })); // child fail
+      return Promise.resolve(new Response("{}", { status: 200 })); // rollback ok
+    });
+    const { unmount: unmount2 } = render(
+      <ReviewStep
+        state={state}
+        dispatch={vi.fn()}
+        api={mockApi}
+        product={fixtureProduct}
+        fetchFn={fetchChildFail as unknown as typeof fetch}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Add to cart/ }));
+    await waitFor(() => {
+      expect(screen.getByText("Couldn't add your lenses")).toBeTruthy();
+    });
+    unmount2();
+
+    // 3. Rollback failed
+    let callIdx3 = 0;
+    const fetchRollbackFail = vi.fn().mockImplementation(() => {
+      callIdx3++;
+      if (callIdx3 === 1) return Promise.resolve(new Response(JSON.stringify({ key: "k2" }), { status: 200 }));
+      if (callIdx3 === 2) return Promise.resolve(new Response("{}", { status: 422 })); // child fail
+      return Promise.resolve(new Response("{}", { status: 500 })); // rollback fails!
+    });
+    const { unmount: unmount3 } = render(
+      <ReviewStep
+        state={state}
+        dispatch={vi.fn()}
+        api={mockApi}
+        product={fixtureProduct}
+        fetchFn={fetchRollbackFail as unknown as typeof fetch}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Add to cart/ }));
+    await waitFor(() => {
+      expect(screen.getByText("Couldn't add your lenses. The frame may still be in your cart.")).toBeTruthy();
+    });
+    unmount3();
+
+    // 4. Network error
+    const fetchNetFail = vi.fn().mockRejectedValue(new TypeError("Network down"));
+    render(
+      <ReviewStep
+        state={state}
+        dispatch={vi.fn()}
+        api={mockApi}
+        product={fixtureProduct}
+        fetchFn={fetchNetFail as unknown as typeof fetch}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Add to cart/ }));
+    await waitFor(() => {
+      expect(screen.getByText("Network error. Please check your connection and try again.")).toBeTruthy();
+    });
   });
 
   it("INV-3: storeRxInOrder off -> no property or rendered element contains a formatted Rx number", () => {

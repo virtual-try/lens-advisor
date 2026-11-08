@@ -145,6 +145,13 @@
   margin-top: var(--la-space-5);
 }
 
+.la-review__price-unavailable {
+  margin: 0 0 var(--la-space-2);
+  font-size: var(--la-text-sm);
+  color: var(--la-muted);
+  text-align: center;
+}
+
 .la-review__action .la-btn--block {
   width: 100%;
   min-height: var(--la-target);

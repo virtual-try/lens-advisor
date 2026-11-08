@@ -64,52 +64,38 @@ export function getCartEndpoint(path: string, routesRoot?: string): string {
   return `${cleanRoot}${cleanPath}`;
 }
 
-export function refreshCartOrRedirect(options?: {
+export interface RefreshCartOptions {
   routesRoot?: string;
   redirectFn?: (url: string) => void;
-}): void {
+  onCartUpdate?: () => void | Promise<void>;
+}
+
+export function refreshCartOrRedirect(options?: RefreshCartOptions): void {
   if (typeof window === "undefined") {
     return;
   }
-  const cartUrl = getCartEndpoint("/cart", options?.routesRoot);
 
-  const hasThemeDrawer =
-    typeof document !== "undefined" &&
-    Boolean(
-      document.querySelector(
-        "cart-drawer, [data-cart-drawer], cart-notification, .cart-drawer, #cart-drawer"
-      ) ||
-      (window as unknown as { theme?: { cart?: unknown } }).theme?.cart ||
-      (window as unknown as { Shopify?: { onCartUpdate?: unknown } }).Shopify?.onCartUpdate
-    );
+  const explicitHook =
+    options?.onCartUpdate ??
+    (window as unknown as { LensAdvisor?: { onCartUpdate?: () => void } }).LensAdvisor?.onCartUpdate;
 
-  let eventDispatched = false;
-  if (typeof document !== "undefined") {
-    const refreshEvent = new CustomEvent("cart:refresh", {
-      bubbles: true,
-      cancelable: true,
-    });
-    const updateEvent = new CustomEvent("cart:updated", {
-      bubbles: true,
-      cancelable: true,
-    });
-    document.dispatchEvent(refreshEvent);
-    document.dispatchEvent(updateEvent);
-
-    if (refreshEvent.defaultPrevented || updateEvent.defaultPrevented) {
-      eventDispatched = true;
+  if (typeof explicitHook === "function") {
+    try {
+      explicitHook();
+      return;
+    } catch {
+      // Fall through to redirect
     }
   }
 
-  if (!hasThemeDrawer && !eventDispatched) {
-    if (options?.redirectFn) {
-      options.redirectFn(cartUrl);
-    } else {
-      try {
-        window.location.href = cartUrl;
-      } catch {
-        // In environments like jsdom, navigation is not implemented
-      }
+  const cartUrl = getCartEndpoint("/cart", options?.routesRoot);
+  if (options?.redirectFn) {
+    options.redirectFn(cartUrl);
+  } else {
+    try {
+      window.location.href = cartUrl;
+    } catch {
+      // In environments like jsdom, navigation is not implemented
     }
   }
 }
@@ -140,9 +126,9 @@ async function rollbackFrame(
   fetchFn: typeof fetch,
   changeUrl: string,
   frameLineKey: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
-    await fetchFn(changeUrl, {
+    const res = await fetchFn(changeUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -153,8 +139,47 @@ async function rollbackFrame(
         quantity: 0,
       }),
     });
+    return res.ok;
   } catch {
-    // Swallow rollback network errors so original error is propagated
+    return false;
+  }
+}
+
+async function rollbackFrameByBundleId(
+  fetchFn: typeof fetch,
+  cartUrl: string,
+  changeUrl: string,
+  frameVariantId: string,
+  bundleId: string,
+): Promise<boolean> {
+  try {
+    const cartRes = await fetchFn(cartUrl, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+    if (!cartRes.ok) return false;
+    const cartData = (await cartRes.json()) as {
+      items?: Array<{
+        id?: string | number;
+        variant_id?: string | number;
+        key?: string;
+        properties?: Record<string, unknown>;
+      }>;
+    };
+    const items = cartData?.items ?? [];
+    const matchingItem = [...items].reverse().find((item) => {
+      const matchesVariant =
+        String(item.id) === String(frameVariantId) ||
+        String(item.variant_id) === String(frameVariantId);
+      const matchesBundle = item.properties?._bundle_id === bundleId;
+      return matchesVariant && matchesBundle;
+    });
+    if (matchingItem?.key) {
+      return await rollbackFrame(fetchFn, changeUrl, matchingItem.key);
+    }
+    return false;
+  } catch {
+    return false;
   }
 }
 
@@ -204,6 +229,7 @@ export async function addBundle(
 
   const addUrl = getCartEndpoint("/cart/add.js", options.routesRoot);
   const changeUrl = getCartEndpoint("/cart/change.js", options.routesRoot);
+  const cartUrl = getCartEndpoint("/cart.js", options.routesRoot);
 
   // 1. Frame line item properties
   const frameProperties = buildBundleLineProperties({
@@ -233,7 +259,7 @@ export async function addBundle(
     });
   } catch (err) {
     throw new AddBundleError({
-      code: "FRAME_ADD_FAILED",
+      code: "NETWORK_ERROR",
       message: "Couldn't add your frame",
       rolledBack: false,
       cause: err,
@@ -253,20 +279,38 @@ export async function addBundle(
   try {
     frameData = await frameResponse.json();
   } catch (err) {
+    const rolledBack = await rollbackFrameByBundleId(
+      fetchFn,
+      cartUrl,
+      changeUrl,
+      selection.frameVariantId,
+      bundleId,
+    );
     throw new AddBundleError({
       code: "FRAME_RESPONSE_INVALID",
-      message: "Invalid response adding frame",
-      rolledBack: false,
+      message: rolledBack
+        ? "Invalid response adding frame"
+        : "Invalid response adding frame. The frame may still be in your cart.",
+      rolledBack,
       cause: err,
     });
   }
 
   const frameLineKey = frameData.key ?? frameData.items?.[0]?.key;
   if (!frameLineKey) {
+    const rolledBack = await rollbackFrameByBundleId(
+      fetchFn,
+      cartUrl,
+      changeUrl,
+      selection.frameVariantId,
+      bundleId,
+    );
     throw new AddBundleError({
       code: "FRAME_KEY_MISSING",
-      message: "Frame line key missing from response",
-      rolledBack: false,
+      message: rolledBack
+        ? "Frame line key missing from response"
+        : "Frame line key missing from response. The frame may still be in your cart.",
+      rolledBack,
     });
   }
 
@@ -282,7 +326,15 @@ export async function addBundle(
   if (selection.lensId) {
     const lens = findLens(catalog, selection.lensId);
     if (!lens) {
-      await rollbackFrame(fetchFn, changeUrl, frameLineKey);
+      const rolledBack = await rollbackFrame(fetchFn, changeUrl, frameLineKey);
+      if (!rolledBack) {
+        throw new AddBundleError({
+          code: "ROLLBACK_FAILED",
+          message: `Lens not found: ${selection.lensId}. The frame may still be in your cart.`,
+          rolledBack: false,
+          frameLineKey,
+        });
+      }
       throw new AddBundleError({
         code: "UNKNOWN_LENS",
         message: `Lens not found: ${selection.lensId}`,
@@ -291,15 +343,16 @@ export async function addBundle(
       });
     }
 
+    const isNonRx = selection.rxType === "NON_PRESCRIPTION";
     const lensProperties = buildBundleLineProperties({
       role: "lens",
       bundleId,
       itemId: lens.id,
       optionIds: selection.optionValueIds,
       addonIds: selection.addOnIds,
-      rxRef: selection.prescriptionRef,
+      rxRef: isNonRx ? undefined : selection.prescriptionRef,
       storeRxInOrder,
-      prescription: options.prescription ?? undefined,
+      prescription: isNonRx ? undefined : (options.prescription ?? undefined),
     });
 
     childItems.push({
@@ -369,7 +422,28 @@ export async function addBundle(
 
     if (!childResponse || !childResponse.ok) {
       // Rollback frame
-      await rollbackFrame(fetchFn, changeUrl, frameLineKey);
+      const rolledBack = await rollbackFrame(fetchFn, changeUrl, frameLineKey);
+
+      if (!rolledBack) {
+        throw new AddBundleError({
+          code: "ROLLBACK_FAILED",
+          message: "Couldn't add your lenses. The frame may still be in your cart.",
+          status: childResponse?.status,
+          rolledBack: false,
+          frameLineKey,
+          cause: childError,
+        });
+      }
+
+      if (childError) {
+        throw new AddBundleError({
+          code: "NETWORK_ERROR",
+          message: "Network error adding your lenses",
+          rolledBack: true,
+          frameLineKey,
+          cause: childError,
+        });
+      }
 
       throw new AddBundleError({
         code: "CHILD_ADD_FAILED",
@@ -377,7 +451,6 @@ export async function addBundle(
         status: childResponse?.status,
         rolledBack: true,
         frameLineKey,
-        cause: childError,
       });
     }
   }

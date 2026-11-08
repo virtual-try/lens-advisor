@@ -359,7 +359,7 @@ describe("Spec 29 — addBundle (packages/configurator/src/cart)", () => {
     expect(thrownError).toBeInstanceOf(AddBundleError);
     const bundleErr = thrownError as AddBundleError;
     expect(bundleErr.rolledBack).toBe(true);
-    expect(bundleErr.code).toBe("CHILD_ADD_FAILED");
+    expect(bundleErr.code).toBe("NETWORK_ERROR");
 
     // Assert rollback call happened
     expect(calls).toHaveLength(3);
@@ -368,6 +368,279 @@ describe("Spec 29 — addBundle (packages/configurator/src/cart)", () => {
       id: "frame-net-fail-key",
       quantity: 0,
     });
+  });
+
+  it("R1-F1: rollbackFrame fails (non-OK 500) -> rolledBack is false and distinct ROLLBACK_FAILED surfaced", async () => {
+    const { fetchFn, calls } = createFakeFetch((_call, callIndex) => {
+      if (callIndex === 0) {
+        return { status: 200, json: { key: "frame-key-fail-change" } };
+      }
+      if (callIndex === 1) {
+        return { status: 422, json: { message: "Lens out of stock" } };
+      }
+      if (callIndex === 2) {
+        // change.js fails with 500
+        return { status: 500, json: { message: "Internal server error" } };
+      }
+      return { status: 500 };
+    });
+
+    let thrownError: unknown;
+    try {
+      await addBundle({
+        selection: fixtureSelection,
+        catalog: fixtureCatalog,
+        fetch: fetchFn as unknown as typeof fetch,
+      });
+    } catch (err) {
+      thrownError = err;
+    }
+
+    expect(thrownError).toBeInstanceOf(AddBundleError);
+    const bundleErr = thrownError as AddBundleError;
+    expect(bundleErr.code).toBe("ROLLBACK_FAILED");
+    expect(bundleErr.rolledBack).toBe(false);
+    expect(bundleErr.message).toContain("frame may still be in your cart");
+    expect(calls).toHaveLength(3);
+  });
+
+  it("R1-F1: rollbackFrame fails (network throw) -> rolledBack is false and ROLLBACK_FAILED surfaced", async () => {
+    const { fetchFn, calls } = createFakeFetch((_call, callIndex) => {
+      if (callIndex === 0) {
+        return { status: 200, json: { key: "frame-key-throw-change" } };
+      }
+      if (callIndex === 1) {
+        return { throwError: new TypeError("Network offline") };
+      }
+      if (callIndex === 2) {
+        return { throwError: new TypeError("Rollback network throw") };
+      }
+      return { status: 500 };
+    });
+
+    let thrownError: unknown;
+    try {
+      await addBundle({
+        selection: fixtureSelection,
+        catalog: fixtureCatalog,
+        fetch: fetchFn as unknown as typeof fetch,
+      });
+    } catch (err) {
+      thrownError = err;
+    }
+
+    expect(thrownError).toBeInstanceOf(AddBundleError);
+    const bundleErr = thrownError as AddBundleError;
+    expect(bundleErr.code).toBe("ROLLBACK_FAILED");
+    expect(bundleErr.rolledBack).toBe(false);
+    expect(bundleErr.message).toContain("frame may still be in your cart");
+    expect(calls).toHaveLength(3);
+  });
+
+  it("R1-F2: FRAME_RESPONSE_INVALID after 200 -> re-reads /cart.js and rolls back newest frame line", async () => {
+    let callCount = 0;
+    const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const method = init?.method ?? "GET";
+      callCount++;
+
+      if (callCount === 1) {
+        // Frame add returns 200 but invalid JSON
+        return new Response("INVALID_JSON", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (callCount === 2) {
+        // Re-read /cart.js
+        expect(url).toBe("/cart.js");
+        expect(method).toBe("GET");
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                id: "var-frame-harlow",
+                key: "line-key-from-cart-js",
+                properties: { _bundle_id: "test-bundle-id", _bundle_role: "frame" },
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (callCount === 3) {
+        // Rollback /cart/change.js
+        expect(url).toBe("/cart/change.js");
+        expect(method).toBe("POST");
+        const body = JSON.parse(init?.body as string);
+        expect(body).toEqual({ id: "line-key-from-cart-js", quantity: 0 });
+        return new Response(JSON.stringify({ items: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    let thrownError: unknown;
+    try {
+      await addBundle({
+        selection: fixtureSelection,
+        catalog: fixtureCatalog,
+        bundleId: "test-bundle-id",
+        fetch: fetchFn as unknown as typeof fetch,
+      });
+    } catch (err) {
+      thrownError = err;
+    }
+
+    expect(thrownError).toBeInstanceOf(AddBundleError);
+    const bundleErr = thrownError as AddBundleError;
+    expect(bundleErr.code).toBe("FRAME_RESPONSE_INVALID");
+    expect(bundleErr.rolledBack).toBe(true);
+    expect(callCount).toBe(3);
+  });
+
+  it("R1-F2: FRAME_KEY_MISSING after 200 -> re-reads /cart.js and rolls back newest frame line", async () => {
+    let callCount = 0;
+    const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const method = init?.method ?? "GET";
+      callCount++;
+
+      if (callCount === 1) {
+        // Frame add returns 200 with no key
+        return new Response(JSON.stringify({ items: [{ id: "var-frame-harlow" }] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (callCount === 2) {
+        // Re-read /cart.js
+        expect(url).toBe("/cart.js");
+        expect(method).toBe("GET");
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                id: "var-frame-harlow",
+                key: "key-from-cart-js-missing",
+                properties: { _bundle_id: "bundle-key-missing", _bundle_role: "frame" },
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (callCount === 3) {
+        // Rollback
+        expect(url).toBe("/cart/change.js");
+        const body = JSON.parse(init?.body as string);
+        expect(body).toEqual({ id: "key-from-cart-js-missing", quantity: 0 });
+        return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    let thrownError: unknown;
+    try {
+      await addBundle({
+        selection: fixtureSelection,
+        catalog: fixtureCatalog,
+        bundleId: "bundle-key-missing",
+        fetch: fetchFn as unknown as typeof fetch,
+      });
+    } catch (err) {
+      thrownError = err;
+    }
+
+    expect(thrownError).toBeInstanceOf(AddBundleError);
+    const bundleErr = thrownError as AddBundleError;
+    expect(bundleErr.code).toBe("FRAME_KEY_MISSING");
+    expect(bundleErr.rolledBack).toBe(true);
+    expect(callCount).toBe(3);
+  });
+
+  it("R1-F2: UNKNOWN_LENS rolls back frame and throws UNKNOWN_LENS with rolledBack: true", async () => {
+    const { fetchFn, calls } = createFakeFetch((_call, callIndex) => {
+      if (callIndex === 0) {
+        return { status: 200, json: { key: "frame-key-unknown-lens" } };
+      }
+      if (callIndex === 1) {
+        // Rollback change.js
+        return { status: 200, json: { items: [] } };
+      }
+      return { status: 500 };
+    });
+
+    let thrownError: unknown;
+    try {
+      await addBundle({
+        selection: {
+          ...fixtureSelection,
+          lensId: "nonexistent-lens-id",
+        },
+        catalog: fixtureCatalog,
+        fetch: fetchFn as unknown as typeof fetch,
+      });
+    } catch (err) {
+      thrownError = err;
+    }
+
+    expect(thrownError).toBeInstanceOf(AddBundleError);
+    const bundleErr = thrownError as AddBundleError;
+    expect(bundleErr.code).toBe("UNKNOWN_LENS");
+    expect(bundleErr.rolledBack).toBe(true);
+    expect(calls).toHaveLength(2);
+    expect(calls[1].url).toBe("/cart/change.js");
+    expect(calls[1].body).toEqual({
+      id: "frame-key-unknown-lens",
+      quantity: 0,
+    });
+  });
+
+  it("R1-F3: NON_PRESCRIPTION rxType writes no _rx_* properties, even with stale state.prescription", async () => {
+    const { fetchFn, calls } = createFakeFetch((_call, callIndex) => {
+      if (callIndex === 0) return { status: 200, json: { key: "frame-non-rx-key" } };
+      return { status: 200, json: { items: [] } };
+    });
+
+    const catalogWithSettingOn: CatalogResponse = {
+      ...fixtureCatalog,
+      settings: {
+        ...fixtureCatalog.settings,
+        storeRxInOrder: true,
+      },
+    };
+
+    await addBundle({
+      selection: {
+        ...fixtureSelection,
+        rxType: "NON_PRESCRIPTION",
+        prescriptionRef: "stale-rx-ref-999",
+      },
+      catalog: catalogWithSettingOn,
+      prescription: distinctivePrescription,
+      storeRxInOrder: true,
+      fetch: fetchFn as unknown as typeof fetch,
+    });
+
+    expect(calls).toHaveLength(2);
+    const childItems = calls[1].body.items as Array<Record<string, unknown>>;
+    const lensItem = childItems.find((i) => i.id === "var-lens-sv")!;
+    const lensProps = lensItem.properties as Record<string, string>;
+
+    expect(lensProps._rx_od).toBeUndefined();
+    expect(lensProps._rx_os).toBeUndefined();
+    expect(lensProps._rx_pd).toBeUndefined();
+    expect(lensProps._rx_ref).toBeUndefined();
+    expect(lensProps.Prescription).toBeUndefined();
+
+    // Verify distinctive Rx numbers are nowhere in the request body
+    const bodyStr = JSON.stringify(calls);
+    expect(bodyStr).not.toContain("-7.75");
+    expect(bodyStr).not.toContain("-6.50");
+    expect(bodyStr).not.toContain("stale-rx-ref-999");
   });
 
   it("Row 4 (INV-3): storeRxInOrder off -> no property value contains a formatted Rx number", async () => {
@@ -479,25 +752,41 @@ describe("Spec 29 — addBundle (packages/configurator/src/cart)", () => {
     expect(getCartEndpoint("/cart/change.js", "/fr")).toBe("/fr/cart/change.js");
   });
 
-  it("refreshCartOrRedirect dispatches cart:refresh event or redirects to /cart", () => {
+  it("R1-F6: refreshCartOrRedirect navigates to /cart reliably, unless explicit theme hook is configured", () => {
     const redirectFn = vi.fn();
-
-    // Case 1: no cart drawer in DOM -> redirects to /cart
-    refreshCartOrRedirect({ routesRoot: "/en", redirectFn });
-    expect(redirectFn).toHaveBeenCalledWith("/en/cart");
-
-    // Case 2: cart drawer present in DOM -> dispatches event, does not redirect
-    const drawerEl = document.createElement("cart-drawer");
-    document.body.appendChild(drawerEl);
-    const redirectFn2 = vi.fn();
     const eventSpy = vi.fn();
     document.addEventListener("cart:refresh", eventSpy);
+    document.addEventListener("cart:updated", eventSpy);
 
-    refreshCartOrRedirect({ routesRoot: "/en", redirectFn: redirectFn2 });
-    expect(eventSpy).toHaveBeenCalled();
+    // Case 1: default redirects to /cart, does not fire invented events even if drawer DOM exists
+    const drawerEl = document.createElement("cart-drawer");
+    document.body.appendChild(drawerEl);
+
+    refreshCartOrRedirect({ routesRoot: "/en", redirectFn });
+    expect(redirectFn).toHaveBeenCalledWith("/en/cart");
+    expect(eventSpy).not.toHaveBeenCalled();
+
+    drawerEl.remove();
+
+    // Case 2: explicit hook in options is invoked, redirect is skipped
+    const hookFn = vi.fn();
+    const redirectFn2 = vi.fn();
+    refreshCartOrRedirect({ onCartUpdate: hookFn, redirectFn: redirectFn2 });
+    expect(hookFn).toHaveBeenCalledTimes(1);
     expect(redirectFn2).not.toHaveBeenCalled();
 
+    // Case 3: explicit hook on window.LensAdvisor.onCartUpdate is invoked
+    const globalHook = vi.fn();
+    (window as unknown as { LensAdvisor?: { onCartUpdate?: () => void } }).LensAdvisor = {
+      onCartUpdate: globalHook,
+    };
+    const redirectFn3 = vi.fn();
+    refreshCartOrRedirect({ redirectFn: redirectFn3 });
+    expect(globalHook).toHaveBeenCalledTimes(1);
+    expect(redirectFn3).not.toHaveBeenCalled();
+    delete (window as unknown as { LensAdvisor?: unknown }).LensAdvisor;
+
     document.removeEventListener("cart:refresh", eventSpy);
-    drawerEl.remove();
+    document.removeEventListener("cart:updated", eventSpy);
   });
 });

@@ -1,6 +1,6 @@
 # Spec 26 — Configurator steps 1–2: Rx type and prescription
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 10, Spec 16
 **Model:** Standard — `claude-sonnet-5-5` · `gpt-6.1-sol` · `gemini-3.8-flash`
 **Issue:** —

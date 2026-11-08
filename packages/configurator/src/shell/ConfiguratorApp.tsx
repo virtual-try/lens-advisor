@@ -411,6 +411,7 @@ export function ConfiguratorApp({
                   api={api}
                   mount={mountElement}
                   product={safeProduct}
+                  steps={steps}
                 />
               )}
             </div>
