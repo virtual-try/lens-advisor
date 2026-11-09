@@ -1297,6 +1297,17 @@ describe("02-prescription step", () => {
     expect(prescriptionCss).toMatch(/\.la-help dd\s*\{[^}]*font-size:\s*var\(--la-text-sm\);/);
   });
 
+  // R1-F1 (Spec 35): .la-progress rule uses --la-radius-pill and excludes non-existent radius token
+  it("R1-F1: asserts .la-progress rule uses --la-radius-pill and excludes invalid token", () => {
+    const invalidRadiusToken = ["radius", "full"].join("-");
+    const progressRuleMatch = prescriptionCss.match(/\.la-progress\s*\{([^}]+)\}/);
+    expect(progressRuleMatch).not.toBeNull();
+    const progressRule = progressRuleMatch![1]!;
+    expect(progressRule).toMatch(/border-radius:\s*var\(--la-radius-pill\);/);
+    expect(progressRule).not.toContain(invalidRadiusToken);
+    expect(prescriptionCss).not.toContain(invalidRadiusToken);
+  });
+
   // R2-F5: unmapped server 400 field errors and unknown od.*/os.* paths show form-level error, not SPH
   it("R2-F5: sets submitError to VALIDATION_FAILED when server 400 has unmapped fields (e.g. rxType)", async () => {
     const state: ConfiguratorState = {

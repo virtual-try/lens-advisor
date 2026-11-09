@@ -1,6 +1,6 @@
 # Spec 36 — Storage test process.env isolation
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 34
 **Model:** Light — `claude-haiku-5-5` · `gpt-6-luna` · `gemini-3.5-flash-lite`
 **Issue:** —
