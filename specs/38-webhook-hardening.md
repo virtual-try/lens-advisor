@@ -1,6 +1,6 @@
 # Spec 38 — Webhook payload validation and route persistence decoupling
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 34
 **Model:** Standard — `claude-sonnet-4-5` · `gpt-5-codex` · `gemini-2.5-pro`
 **Issue:** —
@@ -99,4 +99,4 @@ Real, used now: `app/routes/webhooks.app.scopes_update.tsx`, `app/routes/webhook
     - `pnpm test`: 75 test files passed, 1345 tests passed, 0 failures.
     - `pnpm test:e2e --project=server`: 30 passed, 0 failures.
     - `pnpm build`: passed.
-- **2026-11-08** — Evidence (orchestro spec verify, tree e4df5b0c): install pass · typecheck pass · lint pass · build pass · test pass 1351/0/0
+- **2026-11-09** — Evidence (orchestro spec verify, tree 7a33e8f1): install pass · typecheck pass · lint pass · build pass · test pass 1353/0/0
