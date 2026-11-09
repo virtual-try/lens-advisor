@@ -41,7 +41,7 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | 32 | [Admin: lab orders list, resend and ticket download](./32-admin-lab-orders.md) | Done | 06, 09, 30 | Standard | — | PR #70 |
 | 33 | [End-to-end suite](./33-e2e-suite.md) | Done | 18, 19, 20, 21, 22, 25, 26, 27, 29, 31, 32 | Heavy | — | PR #73 |
 | 34 | [Verification pass](./34-verification-pass.md) | Done | 33 | Heavy | — | PR #75 |
-| 35 | [Configurator design token fix](./35-tokens-css.md) | Not started | 34 | Light | — | From spec 34 |
+| 35 | [Configurator design token fix](./35-tokens-css.md) | Done | 34 | Light | — | PR #84 |
 | 36 | [Storage test process.env isolation](./36-storage-test-env.md) | Done | 34 | Light | — | PR #85 |
 | 37 | [Lab order dispatch tenancy scoping](./37-lab-order-tenancy.md) | Done | 34 | Standard | — | PR #81 |
 | 38 | [Webhook payload validation and route persistence decoupling](./38-webhook-hardening.md) | Done | 34 | Standard | — | PR #80 |
@@ -104,3 +104,4 @@ Not started · In progress · Blocked · Done
 - **2026-11-09** — Spec 37 merged (PR #81).
 - **2026-11-09** — Spec 38 merged (PR #80).
 - **2026-11-09** — Spec 36 merged (PR #85).
+- **2026-11-09** — Spec 35 merged (PR #84).

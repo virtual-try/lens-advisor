@@ -405,7 +405,7 @@
 .la-progress {
   width: 100%;
   height: var(--la-space-2);
-  border-radius: var(--la-radius-full);
+  border-radius: var(--la-radius-pill);
   appearance: none;
   border: none;
   background: var(--la-hairline);
