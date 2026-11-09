@@ -1,6 +1,6 @@
 # Spec 35 — Configurator design token fix
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 34
 **Model:** Light — `claude-haiku-5-5` · `gpt-6-luna` · `gemini-3.5-flash-lite`
 **Issue:** —
@@ -71,6 +71,6 @@ Real, used now: configurator bundle. In tests: component tests. Stubbed: none. C
     - `pnpm build`: cleanly built (assets: `configurator.js` 202.38 kB / 197.64 KB, `loader.css` 3.32 kB, `loader.js` 1.31 kB).
     - `pnpm test`: 75 test files passed, 1353 tests passed, 0 failures.
     - `pnpm test:e2e --project=server`: 30 passed, 0 failures.
-- **2026-11-09** — Evidence (orchestro spec verify, tree 64ce2a90): install pass · typecheck pass · lint pass · build pass · test pass 1354/0/0
+- **2026-11-09** — Evidence (orchestro spec verify, tree bc313d13): install pass · typecheck pass · lint pass · build pass · test pass 1354/0/0
 - **2026-11-09** — Review fix round R1:
   - R1-F1: Added CSS regression test in `packages/configurator/src/steps/02-prescription/prescription.test.tsx` asserting `.la-progress` rule uses `--la-radius-pill` and excludes `radius-full` (reverting to `--la-radius-full` fails the test).
