@@ -44,7 +44,7 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | 35 | [Configurator design token fix](./35-tokens-css.md) | Not started | 34 | Light | — | From spec 34 |
 | 36 | [Storage test process.env isolation](./36-storage-test-env.md) | Not started | 34 | Light | — | From spec 34 |
 | 37 | [Lab order dispatch tenancy scoping](./37-lab-order-tenancy.md) | Done | 34 | Standard | — | PR #81 |
-| 38 | [Webhook payload validation and route persistence decoupling](./38-webhook-hardening.md) | Not started | 34 | Standard | — | From spec 34 (INV-6) |
+| 38 | [Webhook payload validation and route persistence decoupling](./38-webhook-hardening.md) | Done | 34 | Standard | — | PR #80 |
 
 `Notes` is a **one-line pointer**, not a summary — the real detail lives in each spec's own Log. `Model`
 is the tier from the spec's own `**Model:**` line. `Issue` is `—` until a session opens the GitHub issue,
@@ -102,3 +102,4 @@ Not started · In progress · Blocked · Done
 - **2026-11-08** — Spec 34 merged (PR #75).
 - **2026-11-09** — Withdrawn spec 35 (glob fix) removed (PR #76). Spec 34's findings filed as specs 35–38; superseded combined file `35-verification-findings.md` removed.
 - **2026-11-09** — Spec 37 merged (PR #81).
+- **2026-11-09** — Spec 38 merged (PR #80).
