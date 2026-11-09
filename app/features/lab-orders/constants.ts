@@ -19,9 +19,11 @@ export function fromOrderGid(gidOrId: string): string {
 
 /**
  * Payload schema for lab-orders.dispatch.
+ * INV-1: Payloads carry shopId and labOrderId for multi-tenant isolation.
  * INV-2: Payloads carry only ids/enums. All string fields end in *Id.
  */
 export const dispatchJobPayloadSchema = z.object({
+  shopId: z.string(),
   labOrderId: z.string(),
 });
 export type DispatchJobPayload = z.infer<typeof dispatchJobPayloadSchema>;

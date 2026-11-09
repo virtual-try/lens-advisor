@@ -16,24 +16,30 @@ export { DISPATCH_JOB_NAME, dispatchJobPayloadSchema, type DispatchJobPayload };
 
 /**
  * Creates the dispatch job worker handler with optional injected dependencies.
- * Production path enqueues { labOrderId } without shopId (R1-F4).
- * Uses repository function getLabOrderShopId to resolve the owning shop by id,
- * then scopes all subsequent repository calls strictly to that shopId (INV-1).
+ * Consumes { shopId, labOrderId } from verified job payload (INV-1).
+ * Verifies tenant ownership via getLabOrderShopId(shopId, labOrderId, db)
+ * before processing the dispatch.
  */
 export function createDispatchHandler(deps: DispatchServiceDeps = {}) {
   return async (payload: DispatchJobPayload): Promise<void> => {
     const db = deps.db ?? getPrisma();
 
-    // R1-F4: Resolve owning shop by id through repository function
-    const targetShopId = await getLabOrderShopId(payload.labOrderId, db);
+    // Verify tenant ownership via scoped query { id, shopId } (INV-1)
+    const targetShopId = await getLabOrderShopId(
+      payload.shopId,
+      payload.labOrderId,
+      db,
+    );
     if (!targetShopId) {
-      // Lab order not found: log ID only (INV-2)
-      console.warn(`[lab-dispatch] labOrder ${payload.labOrderId} not found`);
+      // Lab order not found for this shop: log IDs only (INV-2)
+      console.warn(
+        `[lab-dispatch] labOrder ${payload.labOrderId} not found for shop ${payload.shopId}`,
+      );
       return;
     }
 
     try {
-      await processDispatch(targetShopId, payload.labOrderId, deps);
+      await processDispatch(payload.shopId, payload.labOrderId, deps);
     } catch (err: unknown) {
       if (err instanceof DispatchInProgressError) {
         // R3-F1: Worker met fresh SENDING lease. Delayed dispatch was enqueued
