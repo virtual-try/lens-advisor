@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   S3Client,
   PutObjectCommand,
@@ -574,11 +574,17 @@ describe("Spec 06 — S3 Storage Adapter", () => {
     beforeEach(() => {
       resetConfigCache();
       resetObjectStore();
-      delete process.env.S3_BUCKET;
-      delete process.env.S3_REGION;
-      delete process.env.S3_KMS_KEY_ID;
-      delete process.env.AWS_ACCESS_KEY_ID;
-      delete process.env.AWS_SECRET_ACCESS_KEY;
+      vi.stubEnv("S3_BUCKET", undefined as unknown as string);
+      vi.stubEnv("S3_REGION", undefined as unknown as string);
+      vi.stubEnv("S3_KMS_KEY_ID", undefined as unknown as string);
+      vi.stubEnv("AWS_ACCESS_KEY_ID", undefined as unknown as string);
+      vi.stubEnv("AWS_SECRET_ACCESS_KEY", undefined as unknown as string);
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      resetConfigCache();
+      resetObjectStore();
     });
 
     it("throws ConfigError when S3 environment variables are missing", () => {
@@ -586,11 +592,11 @@ describe("Spec 06 — S3 Storage Adapter", () => {
     });
 
     it("returns singleton ObjectStore when configured", () => {
-      process.env.S3_BUCKET = "my-configured-bucket";
-      process.env.S3_REGION = "us-west-2";
-      process.env.S3_KMS_KEY_ID = "arn:aws:kms:us-west-2:111122223333:key/abc";
-      process.env.AWS_ACCESS_KEY_ID = "AKIAEXAMPLE";
-      process.env.AWS_SECRET_ACCESS_KEY = "SECRETEXAMPLE";
+      vi.stubEnv("S3_BUCKET", "my-configured-bucket");
+      vi.stubEnv("S3_REGION", "us-west-2");
+      vi.stubEnv("S3_KMS_KEY_ID", "arn:aws:kms:us-west-2:111122223333:key/abc");
+      vi.stubEnv("AWS_ACCESS_KEY_ID", "AKIAEXAMPLE");
+      vi.stubEnv("AWS_SECRET_ACCESS_KEY", "SECRETEXAMPLE");
 
       const store1 = getObjectStore();
       expect(store1.bucket).toBe("my-configured-bucket");
@@ -601,11 +607,11 @@ describe("Spec 06 — S3 Storage Adapter", () => {
     });
 
     it("R1-F1: getObjectStore() client uses requestChecksumCalculation WHEN_REQUIRED so presigned URLs carry no empty-body CRC32", async () => {
-      process.env.S3_BUCKET = "my-configured-bucket";
-      process.env.S3_REGION = "us-west-2";
-      process.env.S3_KMS_KEY_ID = "arn:aws:kms:us-west-2:111122223333:key/abc";
-      process.env.AWS_ACCESS_KEY_ID = "AKIAEXAMPLE";
-      process.env.AWS_SECRET_ACCESS_KEY = "SECRETEXAMPLE";
+      vi.stubEnv("S3_BUCKET", "my-configured-bucket");
+      vi.stubEnv("S3_REGION", "us-west-2");
+      vi.stubEnv("S3_KMS_KEY_ID", "arn:aws:kms:us-west-2:111122223333:key/abc");
+      vi.stubEnv("AWS_ACCESS_KEY_ID", "AKIAEXAMPLE");
+      vi.stubEnv("AWS_SECRET_ACCESS_KEY", "SECRETEXAMPLE");
 
       const store = getObjectStore();
       const url = await store.presignUpload({

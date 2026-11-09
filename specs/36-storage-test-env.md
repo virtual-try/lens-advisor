@@ -1,6 +1,6 @@
 # Spec 36 — Storage test process.env isolation
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 34
 **Model:** Light — `claude-haiku-5-5` · `gpt-6-luna` · `gemini-3.5-flash-lite`
 **Issue:** —
@@ -54,11 +54,22 @@ Real, used now: unit test suite. In tests: stubbed env variables. Stubbed: none.
 
 ## Done when
 
-- [ ] `app/shared/storage/object-store.server.test.ts` uses `vi.stubEnv` / `vi.unstubAllEnvs()`; `rg 'process\.env' app packages --glob '!app/shared/config.server.ts'` finds nothing. [static]
-- [ ] `pnpm vitest run app/shared/storage/object-store.server.test.ts` passes with 0 failures. [unit]
-- [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
+- [x] `app/shared/storage/object-store.server.test.ts` uses `vi.stubEnv` / `vi.unstubAllEnvs()`; `rg 'process\.env' app packages --glob '!app/shared/config.server.ts'` finds nothing. [static]
+- [x] `pnpm vitest run app/shared/storage/object-store.server.test.ts` passes with 0 failures. [unit]
+- [x] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
 
 ## Log
 
+- **2026-11-09** — Replaced direct `process.env` mutations in `app/shared/storage/object-store.server.test.ts` with `vi.stubEnv` and `vi.unstubAllEnvs()` in `afterEach`.
+  - Self-check:
+    - `rg 'process\.env' app packages --glob '!app/shared/config.server.ts'`: 0 matches (exit 1).
+    - `app/shared/storage/object-store.server.test.ts`: 27 tests passed.
+  - Gates:
+    - `pnpm typecheck`: exit 0 (0 errors across 3 workspace projects).
+    - `pnpm lint`: exit 0 (0 errors, 0 warnings).
+    - `pnpm vitest run app/shared/storage/object-store.server.test.ts`: 1 test file passed, 27 tests passed, 0 failures.
+    - `pnpm test`: 75 test files passed, 1353 tests passed, 0 failures.
+    - `pnpm build`: exit 0.
 - **2026-11-09** — Corrected invariant header to `—` (removing false INV-2 claim) while retaining ARCHITECTURE structural invariant 2 reference (R3-F3).
 - **2026-11-09** — Spec created to address Spec 01 process.env gate violation in storage tests (R2-F1, R2-F6).
+- **2026-11-09** — Evidence (orchestro spec verify, tree ab019c79): install pass · typecheck pass · lint pass · build pass · test pass 1353/0/0
