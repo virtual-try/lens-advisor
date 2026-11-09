@@ -119,7 +119,7 @@ async function enqueueDelayedDispatch(
     const queue = deps.queue ?? (await getQueue());
     await queue.enqueue(
       DISPATCH_JOB_NAME,
-      { labOrderId },
+      { shopId, labOrderId },
       { startAfter, singletonKey },
     );
     logger.info("lab_dispatch.delayed_enqueued", {
@@ -518,7 +518,7 @@ export async function resend(
   try {
     await queue.enqueue(
       DISPATCH_JOB_NAME,
-      { labOrderId },
+      { shopId, labOrderId },
       { singletonKey: labOrderId },
     );
   } catch (err: unknown) {

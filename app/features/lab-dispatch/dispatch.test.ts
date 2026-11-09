@@ -16,6 +16,7 @@ import {
   DispatchInProgressError,
   createDispatchHandler,
   dispatchJob,
+  dispatchJobPayloadSchema,
   getAddOns,
   getLabOrder,
   getLabOrderShopId,
@@ -680,7 +681,7 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
       expect(serializedLog).not.toContain("AXIS");
     });
 
-    it("row 6-prod: production handler with { labOrderId } resolves owning shop via repository and dispatches (R1-F4)", async () => {
+    it("row 6-prod: production handler with { shopId, labOrderId } verifies tenant ownership and dispatches (INV-1, Spec 37)", async () => {
       const shop = await seedShop("shop-r1f4-found.example.test");
       const catalog = await seedCatalog(shop.id);
       const cipher = getCipher();
@@ -717,25 +718,117 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
         mailer,
       });
 
-      // Spec 23 enqueues { labOrderId } without shopId (R1-F4)
-      await handler({ labOrderId: order.id });
+      // Spec 37 enqueues { shopId, labOrderId } (INV-1)
+      await handler({ shopId: shop.id, labOrderId: order.id });
 
       expect(sentEmails).toHaveLength(1);
       const sentOrder = await prisma.labOrder.findUnique({ where: { id: order.id } });
       expect(sentOrder?.status).toBe("SENT");
     });
 
-    it("row 6b-prod: production handler with non-existent { labOrderId } logs warning with id only and does not throw (R1-F4)", async () => {
+    it("row 6b-prod: production handler with non-existent { shopId, labOrderId } logs warning with ids only and does not throw (INV-1, INV-2)", async () => {
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       const handler = createDispatchHandler({ db: prisma });
 
       // Non-existent labOrderId
-      await handler({ labOrderId: "non-existent-lab-order-id" });
+      await handler({ shopId: "shop-missing", labOrderId: "non-existent-lab-order-id" });
 
       expect(warnSpy).toHaveBeenCalledWith(
-        "[lab-dispatch] labOrder non-existent-lab-order-id not found",
+        "[lab-dispatch] labOrder non-existent-lab-order-id not found for shop shop-missing",
       );
       warnSpy.mockRestore();
+    });
+
+    it("two-shop tenant isolation: a job for Shop A with Shop B's labOrderId cannot resolve or dispatch Shop B's lab order (INV-1, Spec 37)", async () => {
+      const shopA = await seedShop("shop-dispatch-tenancy-a.example.test");
+      const shopB = await seedShop("shop-dispatch-tenancy-b.example.test");
+      const catalogB = await seedCatalog(shopB.id);
+      const cipher = getCipher();
+
+      const rxRowB = await prisma.prescription.create({
+        data: {
+          id: "rx-tenancy-b",
+          shopId: shopB.id,
+          rxType: "SINGLE_VISION",
+          source: "MANUAL",
+          cipher: cipher.encrypt(sensitiveRx, `${shopB.id}:rx-tenancy-b`),
+        },
+      });
+
+      const orderB = await prisma.labOrder.create({
+        data: {
+          shopId: shopB.id,
+          shopifyOrderId: "order-b-100",
+          orderName: "#order-b-100",
+          bundleId: "bundle-tenancy-b",
+          prescriptionId: rxRowB.id,
+          lensId: catalogB.lens.id,
+          frameTitle: "Shop B Frame",
+          status: "PENDING",
+        },
+      });
+
+      const { mailer, sentEmails } = createFakeMailer();
+      const { objectStore, storedObjects } = createFakeObjectStore();
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const handler = createDispatchHandler({
+        db: prisma,
+        cipher,
+        objectStore,
+        mailer,
+      });
+
+      // 1. Assert getLabOrderShopId scoped lookup returns null when querying with Shop A's id for Shop B's order
+      const resolvedShopId = await getLabOrderShopId(shopA.id, orderB.id, prisma);
+      expect(resolvedShopId).toBeNull();
+
+      // 2. Execute worker handler with Shop A carrying Shop B's labOrderId
+      await handler({ shopId: shopA.id, labOrderId: orderB.id });
+
+      // 3. Assert warning logged with IDs only (INV-2)
+      expect(warnSpy).toHaveBeenCalledWith(
+        `[lab-dispatch] labOrder ${orderB.id} not found for shop ${shopA.id}`,
+      );
+      warnSpy.mockRestore();
+
+      // 4. Zero emails sent and zero files stored
+      expect(sentEmails).toHaveLength(0);
+      expect(storedObjects.size).toBe(0);
+
+      // 5. Shop B's lab order remains completely untouched in PENDING status with 0 attempts
+      const orderBAfter = await prisma.labOrder.findUnique({ where: { id: orderB.id } });
+      expect(orderBAfter?.status).toBe("PENDING");
+      expect(orderBAfter?.attempts).toBe(0);
+      expect(orderBAfter?.lastErrorCode).toBeNull();
+      expect(orderBAfter?.providerId).toBeNull();
+    });
+
+    it("dispatchJobPayloadSchema requires { shopId, labOrderId } and rejects incomplete payloads (INV-1, INV-2, Spec 37)", () => {
+      // Missing shopId
+      expect(
+        dispatchJobPayloadSchema.safeParse({ labOrderId: "order_123" }).success,
+      ).toBe(false);
+
+      // Missing labOrderId
+      expect(
+        dispatchJobPayloadSchema.safeParse({ shopId: "shop_123" }).success,
+      ).toBe(false);
+
+      // Empty object
+      expect(dispatchJobPayloadSchema.safeParse({}).success).toBe(false);
+
+      // Non-string fields
+      expect(
+        dispatchJobPayloadSchema.safeParse({ shopId: 123, labOrderId: "order_123" }).success,
+      ).toBe(false);
+      expect(
+        dispatchJobPayloadSchema.safeParse({ shopId: "shop_123", labOrderId: 123 }).success,
+      ).toBe(false);
+
+      // Valid payload
+      const valid = { shopId: "shop_abc", labOrderId: "order_xyz" };
+      expect(dispatchJobPayloadSchema.safeParse(valid).success).toBe(true);
+      expect(dispatchJobPayloadSchema.parse(valid)).toEqual(valid);
     });
 
     it("row 7: Rx ciphertext tampered -> FAILED RX_DECRYPT_FAILED, no email (integrity)", async () => {
@@ -853,9 +946,11 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
       expect(await getLabOrder(shopA.id, orderB.id, prisma)).toBeNull();
       expect(await getLabOrder(shopB.id, orderA.id, prisma)).toBeNull();
 
-      // 1b. getLabOrderShopId (R1-F4)
-      expect(await getLabOrderShopId(orderA.id, prisma)).toBe(shopA.id);
-      expect(await getLabOrderShopId(orderB.id, prisma)).toBe(shopB.id);
+      // 1b. getLabOrderShopId scoped by { id, shopId } (INV-1, Spec 37)
+      expect(await getLabOrderShopId(shopA.id, orderA.id, prisma)).toBe(shopA.id);
+      expect(await getLabOrderShopId(shopA.id, orderB.id, prisma)).toBeNull();
+      expect(await getLabOrderShopId(shopB.id, orderA.id, prisma)).toBeNull();
+      expect(await getLabOrderShopId(shopB.id, orderB.id, prisma)).toBe(shopB.id);
 
       // 2. getPrescription
       expect(await getPrescription(shopA.id, rxA.id, prisma)).not.toBeNull();
@@ -1261,10 +1356,10 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
 
       markSentSpy.mockRestore();
 
-      // R3-F1: Verify delayed dispatch job was enqueued with lease expiry + margin
+      // R3-F1: Verify delayed dispatch job was enqueued with lease expiry + margin (INV-1: carries shopId)
       expect(fakeQueue.enqueue).toHaveBeenCalledWith(
         DISPATCH_JOB_NAME,
-        { labOrderId: order.id },
+        { shopId: shop.id, labOrderId: order.id },
         expect.objectContaining({
           singletonKey: expect.stringContaining(`${order.id}:delayed:`),
           startAfter: expect.any(Date),
@@ -1355,7 +1450,9 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
       });
 
       // markSent failure rethrows from processDispatch and handler rethrows for initial failure
-      await expect(handler({ labOrderId: order.id })).rejects.toThrow("Transient connection reset in markSent");
+      await expect(
+        handler({ shopId: shop.id, labOrderId: order.id }),
+      ).rejects.toThrow("Transient connection reset in markSent");
       markSentSpy.mockRestore();
 
       // Row is left in SENDING with attempts = 1, lastErrorCode = null
@@ -1373,7 +1470,7 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
 
       expect(fakeQueue.enqueue).toHaveBeenCalledWith(
         DISPATCH_JOB_NAME,
-        { labOrderId: order.id },
+        { shopId: shop.id, labOrderId: order.id },
         {
           startAfter: expectedStartAfter,
           singletonKey: expectedSingletonKey,
@@ -1385,7 +1482,9 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
       currentTime = new Date(currentTime.getTime() + 2_000);
 
       // Worker meets a fresh SENDING lease: MUST complete cleanly without burning retries!
-      await expect(handler({ labOrderId: order.id })).resolves.toBeUndefined();
+      await expect(
+        handler({ shopId: shop.id, labOrderId: order.id }),
+      ).resolves.toBeUndefined();
 
       // Row is still SENDING, attempts is still 1, no second email sent during retry
       const rowDuringRetry = await prisma.labOrder.findUnique({ where: { id: order.id } });
@@ -1397,7 +1496,7 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
       currentTime = new Date(expectedStartAfter.getTime() + 1_000);
 
       // Delayed job executes after lease expiration: reclaims stale row and dispatches
-      await handler({ labOrderId: order.id });
+      await handler({ shopId: shop.id, labOrderId: order.id });
 
       // Row is now SENT, attempts preserved at 1, sentEmails has 2 sends with identical idempotencyKey
       const finalRow = await prisma.labOrder.findUnique({ where: { id: order.id } });
@@ -1940,7 +2039,7 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
       expect(res.enqueued).toBe(true);
       expect(fakeQueue.enqueue).toHaveBeenCalledWith(
         DISPATCH_JOB_NAME,
-        { labOrderId: order.id },
+        { shopId: shop.id, labOrderId: order.id },
         { singletonKey: order.id },
       );
 
@@ -2201,10 +2300,12 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
       // and completes without burning retries (does not throw DispatchInProgressError)
       const fakeQueue = { enqueue: vi.fn() };
       const handler = createDispatchHandler({ db: prisma, cipher, queue: fakeQueue });
-      await expect(handler({ labOrderId: orderSending.id })).resolves.toBeUndefined();
+      await expect(
+        handler({ shopId: shop.id, labOrderId: orderSending.id }),
+      ).resolves.toBeUndefined();
       expect(fakeQueue.enqueue).toHaveBeenCalledWith(
         DISPATCH_JOB_NAME,
-        { labOrderId: orderSending.id },
+        { shopId: shop.id, labOrderId: orderSending.id },
         expect.objectContaining({
           singletonKey: expect.stringContaining(`${orderSending.id}:delayed:`),
           startAfter: expect.any(Date),
@@ -2514,8 +2615,9 @@ describe("Spec 30 — Lab order dispatch job (ticket → S3 → email)", () => {
           }),
         });
 
-        // Enqueue the dispatch job with { labOrderId }
+        // Enqueue the dispatch job with { shopId, labOrderId }
         await queue.enqueue(dispatchJob.name, {
+          shopId: shop.id,
           labOrderId: order.id,
         });
 

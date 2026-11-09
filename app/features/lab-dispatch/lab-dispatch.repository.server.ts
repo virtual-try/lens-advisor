@@ -30,18 +30,17 @@ export interface MarkSentData {
 }
 
 /**
- * Resolves the owning shopId for a labOrderId (R1-F4).
- * This is the only unscoped id-to-shop resolver, used for internal job processing
- * where the job queue payload contains only { labOrderId } without shopId.
- * All subsequent repository calls must be strictly scoped to the resolved shopId (INV-1).
+ * Scopes labOrderId query to shopId to verify tenant ownership (INV-1).
+ * Returns shopId if the labOrder exists for this shop, or null otherwise.
  */
 export async function getLabOrderShopId(
+  shopId: string,
   labOrderId: string,
   db?: LabDispatchDb,
 ): Promise<string | null> {
   const client = db ?? getPrisma();
-  const order = await client.labOrder.findUnique({
-    where: { id: labOrderId },
+  const order = await client.labOrder.findFirst({
+    where: { id: labOrderId, shopId },
     select: { shopId: true },
   });
   return order?.shopId ?? null;
