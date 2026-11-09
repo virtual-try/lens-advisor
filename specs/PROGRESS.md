@@ -41,6 +41,10 @@ table conflict. Under `spec-run` the session updates it in the same pass as the 
 | 32 | [Admin: lab orders list, resend and ticket download](./32-admin-lab-orders.md) | Done | 06, 09, 30 | Standard | — | PR #70 |
 | 33 | [End-to-end suite](./33-e2e-suite.md) | Done | 18, 19, 20, 21, 22, 25, 26, 27, 29, 31, 32 | Heavy | — | PR #73 |
 | 34 | [Verification pass](./34-verification-pass.md) | Done | 33 | Heavy | — | PR #75 |
+| 35 | [Configurator design token fix](./35-tokens-css.md) | Not started | 34 | Light | — | From spec 34 |
+| 36 | [Storage test process.env isolation](./36-storage-test-env.md) | Not started | 34 | Light | — | From spec 34 |
+| 37 | [Lab order dispatch tenancy scoping](./37-lab-order-tenancy.md) | Not started | 34 | Standard | — | From spec 34 (INV-1) |
+| 38 | [Webhook payload validation and route persistence decoupling](./38-webhook-hardening.md) | Not started | 34 | Standard | — | From spec 34 (INV-6) |
 
 `Notes` is a **one-line pointer**, not a summary — the real detail lives in each spec's own Log. `Model`
 is the tier from the spec's own `**Model:**` line. `Issue` is `—` until a session opens the GitHub issue,
@@ -96,3 +100,4 @@ Not started · In progress · Blocked · Done
 - **2026-11-08** — Spec 29 merged (PR #71).
 - **2026-11-08** — Spec 33 merged (PR #73).
 - **2026-11-08** — Spec 34 merged (PR #75).
+- **2026-11-09** — Withdrawn spec 35 (glob fix) removed (PR #76). Spec 34's findings filed as specs 35–38; superseded combined file `35-verification-findings.md` removed.
