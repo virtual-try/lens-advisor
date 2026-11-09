@@ -1,6 +1,6 @@
 # Spec 37 — Lab order dispatch tenancy scoping
 
-**Status:** Not started
+**Status:** Done
 **Depends on:** Spec 34
 **Model:** Standard — `claude-sonnet-4-5` · `gpt-5-codex` · `gemini-2.5-pro`
 **Issue:** —
@@ -85,4 +85,4 @@ Real, used now: `dispatch-lab-order` pg-boss worker handler. In tests: two-shop 
     - `git diff --check`: clean.
 - **2026-11-09** — Spec updated to require `{ shopId, labOrderId }` payload and scoped `{ id, shopId }` query, dropping documentation-only alternative (R3-F2).
 - **2026-11-09** — Spec created to address unscoped `getLabOrderShopId` lookup violating INV-1 (R2-F2, R2-F6).
-- **2026-11-08** — Evidence (orchestro spec verify, tree 926c01bd): install pass · typecheck pass · lint pass · build pass · test pass 1309/0/0
+- **2026-11-09** — Evidence (orchestro spec verify, tree 69d7e9c4): install pass · typecheck pass · lint pass · build pass · test pass 1309/0/0
