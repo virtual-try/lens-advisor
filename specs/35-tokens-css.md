@@ -54,11 +54,21 @@ Real, used now: configurator bundle. In tests: component tests. Stubbed: none. C
 
 ## Done when
 
-- [ ] `packages/configurator/src/steps/02-prescription/prescription.css` uses `--la-radius-pill`; `rg "radius-full" packages/configurator/` returns 0 hits. [static]
-- [ ] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
-- [ ] `pnpm build` passes. [static]
-- [ ] `pnpm test` passes with 0 failures. [unit]
+- [x] `packages/configurator/src/steps/02-prescription/prescription.css` uses `--la-radius-pill`; `rg "radius-full" packages/configurator/` returns 0 hits. [static]
+- [x] `pnpm typecheck` and `pnpm lint` pass with 0 errors, 0 warnings. [static]
+- [x] `pnpm build` passes. [static]
+- [x] `pnpm test` passes with 0 failures. [unit]
 
 ## Log
 
 - **2026-11-09** — Spec created to address design token finding R2-F6 / Spec 34 verification pass.
+- **2026-11-09** — Replaced `--la-radius-full` with canonical design token `--la-radius-pill` in `packages/configurator/src/steps/02-prescription/prescription.css:408` on `.la-progress`:
+  - Verified `rg "radius-full" packages/configurator/` returns 0 hits.
+  - Rebuilt configurator bundle via `pnpm --filter configurator build` (`extensions/lens-configurator/assets/configurator.js`).
+  - Gates:
+    - `pnpm typecheck`: 0 errors.
+    - `pnpm lint`: 0 errors, 0 warnings.
+    - `pnpm build`: cleanly built (assets: `configurator.js` 202.38 kB / 197.64 KB, `loader.css` 3.32 kB, `loader.js` 1.31 kB).
+    - `pnpm test`: 75 test files passed, 1353 tests passed, 0 failures.
+    - `pnpm test:e2e --project=server`: 30 passed, 0 failures.
+- **2026-11-09** — Evidence (orchestro spec verify, tree c5e865cf): install pass · typecheck pass · lint pass · build pass · test pass 1353/0/0
